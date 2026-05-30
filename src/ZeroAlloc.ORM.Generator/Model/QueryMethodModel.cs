@@ -1,10 +1,10 @@
 namespace ZeroAlloc.ORM.Generator.Model;
 
-// TODO(v0.2): ContainingTypeName, Namespace, and ConnectionAccess are now redundant
-// across methods of the same containing type. ContainingTypeName/Namespace are already
-// hoisted to QueryRepositoryModel; ConnectionAccess will follow in v0.2 once the real
-// body-emit code (Phase 4) lands and we can refactor the grouping pipeline without a
-// cascade of snapshot churn.
+// TODO(v0.2): hoist all type-scoped fields to QueryRepositoryModel:
+//   - ContainingTypeName, Namespace (Phase 2.2)
+//   - ConnectionAccess, ConnectionResolved, ContainingTypePartial, ContainingTypeLocation (Phase 3.3-3.10)
+// Currently stored per-method as redundancy; minor cache-key bloat (N method-models
+// instead of 1 type-model). Hoist requires updating snapshots which is why deferred.
 internal sealed record QueryMethodModel(
     string MethodName,
     string ContainingTypeFullName,

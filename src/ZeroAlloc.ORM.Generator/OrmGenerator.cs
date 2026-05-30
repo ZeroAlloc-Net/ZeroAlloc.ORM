@@ -85,7 +85,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
-        // ZAO005 — exactly one of [Query]/[Command]/[StoredProcedure] per method.
+        // ZAO005 — multiple ORM attributes on one method.
+        // NOTE: This pipeline only triggers via [Query]. A method declared with ONLY
+        // [Command] + [StoredProcedure] (no [Query]) would be invisible to us and ZAO005
+        // would not fire. Once Phase 4 wires ForAttributeWithMetadataName for Command +
+        // StoredProcedure, this limitation goes away.
         var ormAttrCount = method.GetAttributes()
             .Count(a => a.AttributeClass?.ToDisplayString() is
                 "ZeroAlloc.ORM.QueryAttribute" or
@@ -217,6 +221,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             or ("IAsyncEnumerable", 1);
     }
 
+    // Naive `;`-count statement detector. Does NOT understand SQL string literals,
+    // line comments (`--`), block comments (`/* */`), or PostgreSQL dollar-quoted
+    // strings (`$tag$...$tag$`). For v0.1 this is acceptable — the most common case
+    // (head + lines SELECT) works correctly. A proper tokeniser lands in v0.2.
+    // TODO(v0.2): replace with a real SQL statement tokeniser.
     private static int CountStatements(string sql)
     {
         if (string.IsNullOrEmpty(sql)) return 0;
@@ -327,6 +336,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // Type-scoped diagnostics — emit once per repository, keyed at the containing type.
+        // ZAO003 + ZAO004 are TYPE-scoped diagnostics but our model is per-method.
+        // We store the type-properties (ConnectionResolved, ContainingTypePartial,
+        // ContainingTypeLocation) as per-method redundancy and emit once via the
+        // first method, because TransformMethod has no ordering info across siblings.
+        // The grouping in Initialize guarantees one repo per containing type, so
+        // "first method" semantics is well-defined. See TODO(v0.2) in QueryMethodModel
+        // for the planned hoist into QueryRepositoryModel.
         var firstMethod = repo.Methods.Values.IsDefault || repo.Methods.Values.Length == 0
             ? null
             : repo.Methods.Values[0];

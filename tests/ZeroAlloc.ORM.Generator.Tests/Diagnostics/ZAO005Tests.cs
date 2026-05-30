@@ -29,6 +29,28 @@ public class ZAO005Tests
     }
 
     [Fact]
+    public void Method_with_Query_and_StoredProcedure_emits_ZAO005()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1")]
+                [StoredProcedure("usp_X")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        Assert.Contains(result.Results[0].Diagnostics, d => string.Equals(d.Id, "ZAO005", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Method_with_single_orm_attribute_does_not_emit_ZAO005()
     {
         var source = """
