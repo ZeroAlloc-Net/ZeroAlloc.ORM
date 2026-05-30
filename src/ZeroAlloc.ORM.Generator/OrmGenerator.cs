@@ -99,6 +99,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO007 — IAsyncEnumerable<T> requires a CT with [EnumeratorCancellation].
+        if (IsIAsyncEnumerable(method.ReturnType))
+        {
+            var ctParam = method.Parameters.FirstOrDefault(p =>
+                string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
+            var hasEnumeratorCancellation = ctParam is not null && ctParam.GetAttributes().Any(a =>
+                string.Equals(a.AttributeClass?.ToDisplayString(),
+                    "System.Runtime.CompilerServices.EnumeratorCancellationAttribute",
+                    StringComparison.Ordinal));
+            if (!hasEnumeratorCancellation)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO007",
+                    Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+            }
+        }
+
         // ZAO006 — at most one CancellationToken parameter (warning).
         var ctParamCount = method.Parameters.Count(p =>
             string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
