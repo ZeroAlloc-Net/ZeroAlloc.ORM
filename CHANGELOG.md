@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.1.0...v0.2.0) (2026-05-30)
+
+
+### Features
+
+* **abstractions:** re-add StoreAsStringAttribute for v0.2 enum support ([#27](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/27)) ([292dcb1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/292dcb1774a273b316aeaf1e04db93a108a727c3))
+* **generator:** Phase E (DomainEntity) + F.1 (ZAO040) ([#33](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/33)) ([1030862](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/10308621591245f17a0af543d5a0f4bc4aaca07c))
+
+
+### Documentation
+
+* **design:** v0.6 uses ZA.Telemetry composition (no built-in ActivitySource) ([#25](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/25)) ([5ffe86b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/5ffe86be9150aec0f3461558b3ede1594f146e88))
+* **plan:** v0.2 implementation plan (value-objects + enums + domain entities) ([#26](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/26)) ([72e110a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/72e110aa12b61a6b9b4a942a39ddd12b58f7bf3b))
+
 ## 0.1.0 (2026-05-30)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/abstractions-v0.1.0...abstractions-v0.2.0) (2026-05-30)
+
+
+### Features
+
+* **abstractions:** re-add StoreAsStringAttribute for v0.2 enum support ([#27](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/27)) ([292dcb1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/292dcb1774a273b316aeaf1e04db93a108a727c3))
+
 ## 0.1.0 (2026-05-30)
 
 
