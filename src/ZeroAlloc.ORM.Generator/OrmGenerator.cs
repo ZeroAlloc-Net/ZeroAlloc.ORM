@@ -58,6 +58,44 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var hadError = ReportDiagnostics(sourceCtx, repo);
             if (!hadError) EmitRepository(sourceCtx, repo);
         });
+
+        // ZAO042 — [StoreAsString] is only legal on enum types. This lives in its own
+        // pipeline (not in TransformMethod) because the attribute is type-scoped, not
+        // method-scoped: we want to fire even if no [Query] method references the
+        // mis-annotated type. ForAttributeWithMetadataName visits every type carrying
+        // the attribute, regardless of usage.
+        var storeAsStringDiagnostics = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.StoreAsStringAttribute",
+                predicate: static (node, _) => node is BaseTypeDeclarationSyntax,
+                transform: static (ctx, _) =>
+                {
+                    if (ctx.TargetSymbol is INamedTypeSymbol typeSymbol
+                        && typeSymbol.TypeKind != TypeKind.Enum)
+                    {
+                        return new DiagnosticInfo(
+                            DescriptorId: "ZAO042",
+                            Location: LocationInfo.From(ctx.TargetNode.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(
+                                ImmutableArray.Create(typeSymbol.ToDisplayString())));
+                    }
+                    return null;
+                })
+            .Where(static d => d is not null);
+
+        context.RegisterSourceOutput(storeAsStringDiagnostics, (sourceCtx, diag) =>
+        {
+            if (diag is null) return;
+            var descriptor = LookupDescriptor(diag.DescriptorId);
+            if (descriptor is null) return;
+            object[] args = diag.MessageArgs.Values.IsDefault
+                ? Array.Empty<object>()
+                : diag.MessageArgs.Values.ToArray();
+            sourceCtx.ReportDiagnostic(Diagnostic.Create(
+                descriptor,
+                diag.Location?.ToLocation(),
+                args));
+        });
     }
 
     private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx)
@@ -316,6 +354,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
                     var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+                    // ZAO041 — no binding strategy resolved for parameter. Fires when the
+                    // parameter type doesn't match any convention (no Value, no primitive,
+                    // no enum, no static From factory, no single-arg ctor). Keyed at the
+                    // parameter symbol's first declaration so the user's squiggle lands on
+                    // their parameter, not on the type definition.
+                    if (resolution.Kind == ConventionKind.Unknown)
+                    {
+                        var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO041",
+                            Location: LocationInfo.From(paramLocation),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                p.Name,
+                                underlying.ToDisplayString()))));
+                    }
+
                     var underlyingReader = resolution.Kind switch
                     {
                         ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
@@ -977,6 +1032,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
+        "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
+        "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
+        "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
+        "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
         _ => null,
     };
 
