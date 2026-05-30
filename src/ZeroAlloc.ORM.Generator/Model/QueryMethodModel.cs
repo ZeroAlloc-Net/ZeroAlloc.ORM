@@ -1,5 +1,3 @@
-using System.Collections.Immutable;
-
 namespace ZeroAlloc.ORM.Generator.Model;
 
 internal sealed record QueryMethodModel(
@@ -11,4 +9,4 @@ internal sealed record QueryMethodModel(
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
-    ImmutableArray<QueryMethodModel> Methods);
+    EquatableArray<QueryMethodModel> Methods);

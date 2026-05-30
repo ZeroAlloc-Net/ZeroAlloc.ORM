@@ -26,7 +26,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var grouped = queryMethods.Collect()
             .SelectMany(static (methods, _) =>
                 methods.GroupBy(m => m!.ContainingTypeFullName, StringComparer.Ordinal)
-                       .Select(g => new QueryRepositoryModel(g.Key, g.Cast<QueryMethodModel>().ToImmutableArray())));
+                       .Select(g => new QueryRepositoryModel(g.Key, new EquatableArray<QueryMethodModel>(g.Cast<QueryMethodModel>().ToImmutableArray()))));
 
         context.RegisterSourceOutput(grouped, EmitRepository);
     }
