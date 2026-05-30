@@ -1,0 +1,63 @@
+using Microsoft.CodeAnalysis;
+
+namespace ZeroAlloc.ORM.Generator.Diagnostics;
+
+internal static class Diagnostics
+{
+    private const string Category = "ZeroAlloc.ORM";
+
+    private static DiagnosticDescriptor Make(string id, string title, string message, DiagnosticSeverity severity)
+        => new(
+            id: id,
+            title: title,
+            messageFormat: message,
+            category: Category,
+            defaultSeverity: severity,
+            isEnabledByDefault: true,
+            helpLinkUri: $"https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/{id}.md");
+
+    public static readonly DiagnosticDescriptor ZAO001_NotPartial = Make(
+        "ZAO001", "Annotated method must be partial",
+        "Method '{0}' is annotated with [Query]/[Command]/[StoredProcedure] but is not declared partial. Add the 'partial' modifier.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO002_BadReturnType = Make(
+        "ZAO002", "Unsupported return type",
+        "Method '{0}' has return type '{1}'. Expected Task<T>, ValueTask<T>, IAsyncEnumerable<T>, Task, or ValueTask.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO003_NoConnection = Make(
+        "ZAO003", "No IAsyncDbConnection found on containing type",
+        "Type '{0}' contains [Query]/[Command]/[StoredProcedure] methods but has no IAsyncDbConnection field, primary-ctor parameter, or property. Inject IAsyncDbConnection so the generator can wire the command.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO004_TypeNotPartial = Make(
+        "ZAO004", "Containing type must be partial",
+        "Type '{0}' contains generator-annotated methods but is not declared partial. Add the 'partial' modifier.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO005_MultipleAttributes = Make(
+        "ZAO005", "Multiple ORM attributes on one method",
+        "Method '{0}' has more than one of [Query]/[Command]/[StoredProcedure]. Apply exactly one.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO006_MultipleCancellationTokens = Make(
+        "ZAO006", "Method has multiple CancellationToken parameters",
+        "Method '{0}' has more than one CancellationToken parameter. Use a single token, position it last.",
+        DiagnosticSeverity.Warning);
+
+    public static readonly DiagnosticDescriptor ZAO007_MissingEnumeratorCancellation = Make(
+        "ZAO007", "IAsyncEnumerable<T> return without [EnumeratorCancellation]",
+        "Method '{0}' returns IAsyncEnumerable<T> but its CancellationToken parameter lacks [EnumeratorCancellation]. Add the attribute so cancellation propagates correctly.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO008_SingleResultWithSemicolons = Make(
+        "ZAO008", "Multi-statement SQL with single-result return type",
+        "Method '{0}' has [Query] SQL containing ';' but returns a single result. Either remove the second statement or change the return type to a tuple.",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO009_RedundantAsync = Make(
+        "ZAO009", "Redundant async keyword on generated partial",
+        "Method '{0}' is marked 'async' but the generator emits the async state machine. Remove the 'async' keyword from the partial declaration.",
+        DiagnosticSeverity.Warning);
+}

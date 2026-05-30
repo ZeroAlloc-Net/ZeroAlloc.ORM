@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Ship the analyzer DLL in the analyzers/dotnet/cs path so Roslyn picks it up. -->
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Include="$(OutputPath)\ZeroAlloc.TypeConversions.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
