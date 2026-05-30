@@ -128,6 +128,56 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Param_name_override_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1 WHERE @orderId = 42")]
+                public partial Task<int> SearchAsync([Param(Name = "@orderId")] int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Nullable_parameter_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1 WHERE @id IS NULL OR @id = 0")]
+                public partial Task<int> SearchAsync(int? id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_parameter_name_emit_compiles_cleanly()
     {
         var source = """
