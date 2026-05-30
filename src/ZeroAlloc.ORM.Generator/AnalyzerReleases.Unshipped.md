@@ -17,3 +17,4 @@ ZAO009  | ZeroAlloc.ORM | Warning  | Redundant async keyword on generated partia
 ZAO020  | ZeroAlloc.ORM | Info     | [Query(FromResource)] not yet implemented in v0.1
 ZAO021  | ZeroAlloc.ORM | Info     | [Query(Batch = ...)] non-Auto value not yet implemented in v0.1
 ZAO022  | ZeroAlloc.ORM | Info     | Return type shape not yet supported in v0.1
+ZAO040  | ZeroAlloc.ORM | Error    | No construction strategy resolved for type
