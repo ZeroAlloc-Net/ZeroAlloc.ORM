@@ -227,21 +227,56 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method, conventionContext);
 
-        // ZAO022 — informational: the return type passed the surface check (ZAO002)
-        // but isn't yet materializable by the v0.1 emit. Fire only when ZAO002 did
-        // NOT already fire so the adopter gets one message, not two; ZAO007 covers
-        // the IAsyncEnumerable<T>-without-EnumeratorCancellation case separately so
-        // we also suppress ZAO022 for IAsyncEnumerable to avoid noise.
+        // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
+        // diagnostics:
+        //
+        //   * ZAO040 (Error)  -- the element type itself has no construction strategy
+        //                        (no [ValueObject], no static factory, no single-arg
+        //                        ctor, no multi-arg ctor with named-param convention,
+        //                        no enum, no primitive). This is an adopter-facing
+        //                        modeling problem — they need to add a factory.
+        //   * ZAO022 (Info)   -- the element type IS classifiable (ConventionDiscovery
+        //                        returns a known Kind) but the surrounding return-type
+        //                        shape (e.g. multi-result tuple) isn't yet emittable.
+        //                        Pure "generator hasn't shipped this yet" noise.
+        //
+        // ZAO007 covers IAsyncEnumerable<T>-without-EnumeratorCancellation separately,
+        // so we suppress both ZAO022 and ZAO040 for IAsyncEnumerable to avoid the
+        // double-diagnostic case.
         if (shape == EmitShape.Unknown
             && IsSupportedReturnType(method.ReturnType)
             && !IsIAsyncEnumerable(method.ReturnType))
         {
-            diagnostics.Add(new DiagnosticInfo(
-                DescriptorId: "ZAO022",
-                Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
-                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
-                    method.Name,
-                    method.ReturnType.ToDisplayString()))));
+            var elementType = TryGetReturnElementType(method.ReturnType);
+            // ZAO040 is reserved for the "single-row materialization target with no
+            // construction strategy" case. Container shapes like `Task<List<T>>` or
+            // `Task<IEnumerable<T>>` are SHAPE issues (the generator hasn't shipped
+            // the multi-row template yet) and remain ZAO022. We discriminate by
+            // checking that the element type is non-generic — generics-as-element
+            // imply a container shape, not a missing factory on the element type.
+            var elementKind = elementType is not null
+                ? ConventionDiscovery.Resolve(elementType, conventionContext).Kind
+                : ConventionKind.Unknown;
+            var elementIsContainerShape = elementType is INamedTypeSymbol en && en.IsGenericType;
+            if (elementType is not null
+                && elementKind == ConventionKind.Unknown
+                && !elementIsContainerShape)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO040",
+                    Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        elementType.ToDisplayString()))));
+            }
+            else
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO022",
+                    Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        method.ReturnType.ToDisplayString()))));
+            }
         }
 
         // Capture ALL parameters (including CancellationToken) in declaration order so
@@ -856,6 +891,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
+    // Peel the async wrapper (Task<T> / ValueTask<T> / IAsyncEnumerable<T>) AND the
+    // nullable-reference annotation to surface the element type that the materializer
+    // would actually construct. Returns null for non-generic Task / ValueTask (no
+    // element type to discover) and for return types that don't match the surface
+    // shape — caller decides whether the diagnostic still applies.
+    private static ITypeSymbol? TryGetReturnElementType(ITypeSymbol returnType)
+    {
+        if (returnType is not INamedTypeSymbol named) return null;
+        if (!named.IsGenericType) return null;
+        if (named.Name is not ("Task" or "ValueTask" or "IAsyncEnumerable")) return null;
+        if (named.TypeArguments.Length != 1) return null;
+        var element = named.TypeArguments[0];
+        // Peel `T?` (nullable reference) and `Nullable<T>` (value-type wrapper) to
+        // get the bare element type. ConventionDiscovery doesn't care about
+        // nullability; it only classifies the underlying construction shape.
+        element = element.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        element = UnwrapNullableValueType(element);
+        return element;
+    }
+
     private static ITypeSymbol? UnwrapAsyncWrapper(ITypeSymbol type)
     {
         if (type is not INamedTypeSymbol named) return type;
@@ -921,6 +976,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
         "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
+        "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
         _ => null,
     };
 

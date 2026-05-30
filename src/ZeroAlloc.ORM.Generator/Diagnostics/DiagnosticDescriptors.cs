@@ -75,4 +75,9 @@ internal static class DiagnosticDescriptors
         "ZAO022", "Return type shape not yet supported in v0.1",
         "Method '{0}' has return type '{1}' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.",
         DiagnosticSeverity.Info);
+
+    public static readonly DiagnosticDescriptor ZAO040_NoConstructionStrategy = Make(
+        "ZAO040", "No construction strategy resolved for type",
+        "Cannot materialize type '{0}': no [Materialize], [ValueObject], static From factory, single-arg ctor, enum, or primitive convention matched. Add [Materialize(Factory=\"...\")] or define a convention method.",
+        DiagnosticSeverity.Error);
 }
