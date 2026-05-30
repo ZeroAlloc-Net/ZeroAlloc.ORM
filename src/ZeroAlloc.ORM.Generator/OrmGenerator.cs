@@ -401,6 +401,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var flat = TryBuildFlatRowMaterialization(elementType, conventionContext);
             if (flat is not null)
                 return (EmitShape.FlatRow, null, flat);
+
+            // v0.2 Phase E — DomainEntity: a non-record class with a single public
+            // ctor whose parameters all resolve to known conventions. The detection
+            // sits AFTER FlatRow so record types continue to take the positional path
+            // (record ctor params have synthesized properties on the type, making
+            // them ambiguous between FlatRow-positional and DomainEntity-named; the
+            // positional path stays the default for records).
+            var domain = TryBuildDomainEntityMaterialization(elementType, conventionContext);
+            if (domain is not null)
+                return (EmitShape.DomainEntity, null, domain);
         }
 
         return (EmitShape.Unknown, null, null);
@@ -483,6 +493,95 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.FlatRow,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
+    // when it's:
+    //   * a class (not a record — records take the positional FlatRow path),
+    //   * with exactly one public ctor that has > 0 parameters,
+    //   * whose every parameter resolves to a known convention.
+    // Each ctor parameter's name (PascalCased verbatim, e.g. `customerId` -> "CustomerId")
+    // becomes the SQL column identifier; the emitter renders
+    // `__reader.GetOrdinal("CustomerId")` so SELECT column order is irrelevant.
+    private static MaterializationModel? TryBuildDomainEntityMaterialization(
+        ITypeSymbol elementType,
+        ConventionContext conventionContext)
+    {
+        if (elementType is not INamedTypeSymbol named) return null;
+        // Records take the FlatRow positional path; DomainEntity is reserved for
+        // plain classes. Excluding records here keeps the priority ladder explicit:
+        // record class / record struct / readonly record struct -> FlatRow.
+        if (named.IsRecord) return null;
+        if (named.TypeKind != TypeKind.Class) return null;
+
+        // Exactly one public ctor with > 0 parameters. If there are zero or multiple
+        // public ctors with parameters we bail — the v0.2 surface is intentionally
+        // strict (a class with an obvious "the" ctor). Implicit default ctors with
+        // zero params don't count because they cannot bind column values.
+        var publicParameterizedCtors = named.InstanceConstructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
+            .ToImmutableArray();
+        if (publicParameterizedCtors.Length != 1) return null;
+        var ctor = publicParameterizedCtors[0];
+
+        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
+
+        foreach (var p in ctor.Parameters)
+        {
+            var underlying = UnwrapNullableValueType(p.Type);
+            var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            string? reader = resolution.Kind switch
+            {
+                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(resolution),
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+                ConventionKind.EnumAsString => "GetString",
+                _ => null,
+            };
+            if (reader is null) return null;
+
+            var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
+                || (p.Type is INamedTypeSymbol pn
+                    && pn.IsGenericType
+                    && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+            var convention = BuildConventionInfo(underlying, resolution, reader);
+
+            // Column name = PascalCased ctor-param name. C# convention has ctor params
+            // in camelCase (`customerId`); SQL matches case-insensitively by default
+            // but emitting the PascalCased form keeps generated source readable and
+            // mirrors what a hand-written reader would do.
+            var columnName = ToPascalCase(p.Name);
+
+            columns.Add(new ColumnBinding(
+                GetterMethod: reader,
+                IsNullable: isNullable,
+                TypeName: p.Type.ToDisplayString(typeDisplayFormat),
+                Convention: convention,
+                ColumnName: columnName));
+        }
+
+        return new MaterializationModel(
+            Kind: MaterializationKind.DomainEntity,
+            TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // PascalCase a ctor parameter name for the SQL column lookup. C# parameter names
+    // are camelCase by convention (`customerId`); the matching SQL column is typically
+    // `CustomerId`. ASCII-only uppercase of the first letter — anything more elaborate
+    // is over-engineered for v0.2. Names that are already capitalized pass through.
+    private static string ToPascalCase(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return name;
+        if (char.IsUpper(name[0])) return name;
+        return char.ToUpperInvariant(name[0]) + name.Substring(1);
     }
 
     // For ValueObject / SingleArgCtor / StaticFactory the factory takes a single
@@ -907,6 +1006,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 case EmitShape.FlatRow:
                     EmitFlatRow(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.DomainEntity:
+                    EmitDomainEntity(sb, m, repo.ConnectionAccess);
+                    break;
                 default:
                     sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
@@ -1063,6 +1165,86 @@ public sealed class OrmGenerator : IIncrementalGenerator
             if (col.IsNullable)
             {
                 expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : {readExpr}";
+            }
+            else
+            {
+                expr = readExpr;
+            }
+            sb.AppendLine($"                {expr}{trailing}");
+        }
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // Multi-arg class materialization. Conceptually identical to EmitFlatRow but each
+    // column read goes through `__reader.GetOrdinal("ColumnName")` instead of a fixed
+    // positional index, so the SELECT column order is not load-bearing. Empty result
+    // returns null (the shape only triggers for Task<T?> at present).
+    //
+    // Phase E v0.2 ships the column-name path for primitives + Phase-C conventions +
+    // Phase-D enums. Anything not resolvable to a known convention bails out of
+    // DomainEntity detection earlier (TryBuildDomainEntityMaterialization returns null)
+    // so the emitter never sees a half-classified DomainEntity here.
+    private static void EmitDomainEntity(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null)
+        {
+            sb.AppendLine($"    // TODO: DomainEntity without Materialization model for {m.MethodName}");
+            return;
+        }
+
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("                return null;");
+        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+        var cols = mat.Columns;
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? ");" : ",";
+            // Column name comes from the ctor parameter (PascalCased). The literal
+            // is passed verbatim into GetOrdinal; SQL's case-insensitive default
+            // matching keeps `customerId` and `CustomerId` interchangeable on
+            // SQLite / PostgreSQL / SQL Server.
+            var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
+            var ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.Kind switch
+                {
+                    (int)ConventionKind.Enum
+                        => $"({conv.FactoryFullName}){readExpr}",
+                    (int)ConventionKind.EnumAsString
+                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                    _ => conv.FactoryIsCtor
+                        ? $"new {conv.FactoryFullName}({readExpr})"
+                        : $"{conv.FactoryFullName}({readExpr})",
+                };
+            }
+            string expr;
+            if (col.IsNullable)
+            {
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
             }
             else
             {

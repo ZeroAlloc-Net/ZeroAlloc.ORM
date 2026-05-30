@@ -453,6 +453,40 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void DomainEntity_class_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class Order
+            {
+                public int Id { get; }
+                public int CustomerId { get; }
+                public decimal Total { get; }
+                public Order(int id, int customerId, decimal total) =>
+                    (Id, CustomerId, Total) = (id, customerId, total);
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
+                public partial Task<Order?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a

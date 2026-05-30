@@ -57,11 +57,17 @@ internal sealed record ConventionInfo(
 //                   convention (ValueObject, SingleArgCtor, StaticFactory). When
 //                   null the emitter falls back to the primitive `reader.GetXxx(N)`
 //                   shape — identical to v0.1 behavior.
+//   ColumnName   -- SQL column identifier paired with the ctor parameter. Null for
+//                   positional FlatRow shapes (ordinal-keyed reads via index); set
+//                   for DomainEntity shapes where the emit pulls the ordinal via
+//                   `__reader.GetOrdinal("ColumnName")` so SELECT column order is
+//                   not load-bearing.
 internal sealed record ColumnBinding(
     string GetterMethod,
     bool IsNullable,
     string TypeName,
-    ConventionInfo? Convention = null);
+    ConventionInfo? Convention = null,
+    string? ColumnName = null);
 
 // Materialization plan for a single [Query] method's return row.
 //

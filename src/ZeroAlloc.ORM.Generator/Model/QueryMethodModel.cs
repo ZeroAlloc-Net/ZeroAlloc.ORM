@@ -10,6 +10,12 @@ internal enum EmitShape
     ScalarInt,
     NullableScalar,
     FlatRow,
+    // Multi-arg class with column-name-keyed reads. Detected when the return-type
+    // element is a `class` (not a record) with exactly one public ctor whose params
+    // all resolve to known conventions. Distinct from FlatRow because the column
+    // bind uses GetOrdinal("ColumnName") instead of a positional index — class ctor
+    // parameter names map to PascalCased column identifiers.
+    DomainEntity,
 }
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,
