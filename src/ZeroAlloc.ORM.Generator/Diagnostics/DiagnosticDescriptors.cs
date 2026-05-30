@@ -85,4 +85,9 @@ internal static class DiagnosticDescriptors
         "ZAO041", "No binding strategy resolved for parameter",
         "Cannot bind parameter '{0}' of type '{1}': no Value property, primitive, or enum match. Add [Param(Bind=...)] or define a Value property.",
         DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO042_StoreAsStringNonEnum = Make(
+        "ZAO042", "[StoreAsString] requires an enum type",
+        "Type '{0}' carries [StoreAsString] but is not an enum. Apply [StoreAsString] to enum types only.",
+        DiagnosticSeverity.Error);
 }

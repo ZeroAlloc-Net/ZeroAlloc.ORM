@@ -58,6 +58,44 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var hadError = ReportDiagnostics(sourceCtx, repo);
             if (!hadError) EmitRepository(sourceCtx, repo);
         });
+
+        // ZAO042 — [StoreAsString] is only legal on enum types. This lives in its own
+        // pipeline (not in TransformMethod) because the attribute is type-scoped, not
+        // method-scoped: we want to fire even if no [Query] method references the
+        // mis-annotated type. ForAttributeWithMetadataName visits every type carrying
+        // the attribute, regardless of usage.
+        var storeAsStringDiagnostics = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.StoreAsStringAttribute",
+                predicate: static (node, _) => node is BaseTypeDeclarationSyntax,
+                transform: static (ctx, _) =>
+                {
+                    if (ctx.TargetSymbol is INamedTypeSymbol typeSymbol
+                        && typeSymbol.TypeKind != TypeKind.Enum)
+                    {
+                        return new DiagnosticInfo(
+                            DescriptorId: "ZAO042",
+                            Location: LocationInfo.From(ctx.TargetNode.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(
+                                ImmutableArray.Create(typeSymbol.ToDisplayString())));
+                    }
+                    return null;
+                })
+            .Where(static d => d is not null);
+
+        context.RegisterSourceOutput(storeAsStringDiagnostics, (sourceCtx, diag) =>
+        {
+            if (diag is null) return;
+            var descriptor = LookupDescriptor(diag.DescriptorId);
+            if (descriptor is null) return;
+            object[] args = diag.MessageArgs.Values.IsDefault
+                ? Array.Empty<object>()
+                : diag.MessageArgs.Values.ToArray();
+            sourceCtx.ReportDiagnostic(Diagnostic.Create(
+                descriptor,
+                diag.Location?.ToLocation(),
+                args));
+        });
     }
 
     private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx)
@@ -995,6 +1033,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
         "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
+        "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         _ => null,
     };
 
