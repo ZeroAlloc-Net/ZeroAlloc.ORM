@@ -99,6 +99,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO006 — at most one CancellationToken parameter (warning).
+        var ctParamCount = method.Parameters.Count(p =>
+            string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
+        if (ctParamCount > 1)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO006",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
         // ZAO002 — return type must be Task[<T>], ValueTask[<T>], or IAsyncEnumerable<T>.
         if (!IsSupportedReturnType(method.ReturnType))
         {
