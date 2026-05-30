@@ -285,14 +285,7 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 
 ---
 
-## P1 — Milestone v0.6 (1 week): observability + diagnostics polish
-
-### v0.6-T1 — Built-in `ActivitySource`
-
-- `ZeroAlloc.ORM` ActivitySource in the runtime package.
-- One span per annotated method invocation.
-- OpenTelemetry semantic-convention tags: `db.system`, `db.statement` (truncated), `db.operation`, `za.orm.method`, `za.orm.batch`, `za.orm.result.rows`.
-- Verify zero overhead when no listener registered.
+## P1 — Milestone v0.6 (3-4 days): diagnostics polish + observability composition recipe
 
 ### v0.6-T2 — Full diagnostics catalog audit
 
@@ -300,15 +293,14 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 - `helpLinkUri` points to per-code docs.
 - Each diagnostic has a unit test (1 case where it should fire, 1 where it should not).
 
-### v0.6-T3 — Provider quirk doc comments in emit
-
-- Generator emits inline comments in `.g.cs` files explaining provider-specific behaviour (e.g. Sqlite decimal-as-text round-trip, Npgsql timestamp vs timestamptz).
-- Helps debuggers stepping through the emitted code.
-
 ### v0.6-T4 — `docs/diagnostics/` reference pages
 
 - One markdown file per ZAO code with: trigger, fix hint, code example, related codes.
 - Pre-published on `main` so the `helpLinkUri` resolves.
+
+### v0.6-T5 — ZA.Telemetry composition cookbook recipe
+
+Single `docs/cookbook/observability.md` page showing the `[Instrument]` interface + `[Query]` partial class composition pattern. ZA.ORM ships no ActivitySource of its own; observability lives at consumer seam via ZA.Telemetry.
 
 ---
 
@@ -431,6 +423,17 @@ These need resolution but don't block v0.1 startup:
 - ZA.ORM PackageReference uses `[1.*]` floating-minor on AdoNet.Async (current ZA-repo pattern).
 - AdoNet.Async major bumps require a matching ZA.ORM release in the same window.
 - AdoNet.Async PR #101 (AOT) + PR #102 (`IAsyncDbBatch`) already merged — both required before ZA.ORM v0.1 starts.
+
+### ZA.Telemetry composition (no runtime coupling)
+
+ZA.ORM does NOT ship its own ActivitySource. Adopters who want observability declare
+a repository interface decorated with ZA.Telemetry's `[Instrument]` + `[Trace]` /
+`[Count]` / `[Histogram]` attributes, implement it as a ZA.ORM-annotated partial class,
+and DI-wire the ZA.Telemetry-generated proxy on top of the ZA.ORM implementation.
+
+Both libraries' source generators run independently with zero coupling. No ZA.Telemetry
+dependency in ZA.ORM's package graph. Pattern documented in `docs/cookbook/observability.md`
+(lands in v0.6).
 
 ### ZeroAlloc.Templates adoption
 
