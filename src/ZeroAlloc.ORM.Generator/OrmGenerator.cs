@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using ZeroAlloc.ORM.Generator.Diagnostics;
 using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator;
@@ -41,8 +42,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         context.RegisterSourceOutput(grouped, (sourceCtx, repo) =>
         {
-            ReportDiagnostics(sourceCtx, repo);
-            EmitRepository(sourceCtx, repo);
+            var hadError = ReportDiagnostics(sourceCtx, repo);
+            if (!hadError) EmitRepository(sourceCtx, repo);
         });
     }
 
@@ -62,6 +63,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
         // ZAO001 — method must be partial.
+        // TODO(Phase 3.3-3.10): emit additional method-scoped diagnostics here:
+        //   ZAO002 (return type), ZAO005 (multiple attrs), ZAO006 (multiple CTs),
+        //   ZAO007 (missing [EnumeratorCancellation]), ZAO008 (multi-statement SQL,
+        //   single-result), ZAO009 (async keyword). ZAO003/ZAO004 are type-scoped —
+        //   emit during grouping in Initialize.
         if (!methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -154,59 +160,43 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     private static DiagnosticDescriptor? LookupDescriptor(string id) => id switch
     {
-        "ZAO001" => Diagnostics.Diagnostics.ZAO001_NotPartial,
-        "ZAO002" => Diagnostics.Diagnostics.ZAO002_BadReturnType,
-        "ZAO003" => Diagnostics.Diagnostics.ZAO003_NoConnection,
-        "ZAO004" => Diagnostics.Diagnostics.ZAO004_TypeNotPartial,
-        "ZAO005" => Diagnostics.Diagnostics.ZAO005_MultipleAttributes,
-        "ZAO006" => Diagnostics.Diagnostics.ZAO006_MultipleCancellationTokens,
-        "ZAO007" => Diagnostics.Diagnostics.ZAO007_MissingEnumeratorCancellation,
-        "ZAO008" => Diagnostics.Diagnostics.ZAO008_SingleResultWithSemicolons,
-        "ZAO009" => Diagnostics.Diagnostics.ZAO009_RedundantAsync,
+        "ZAO001" => DiagnosticDescriptors.ZAO001_NotPartial,
+        "ZAO002" => DiagnosticDescriptors.ZAO002_BadReturnType,
+        "ZAO003" => DiagnosticDescriptors.ZAO003_NoConnection,
+        "ZAO004" => DiagnosticDescriptors.ZAO004_TypeNotPartial,
+        "ZAO005" => DiagnosticDescriptors.ZAO005_MultipleAttributes,
+        "ZAO006" => DiagnosticDescriptors.ZAO006_MultipleCancellationTokens,
+        "ZAO007" => DiagnosticDescriptors.ZAO007_MissingEnumeratorCancellation,
+        "ZAO008" => DiagnosticDescriptors.ZAO008_SingleResultWithSemicolons,
+        "ZAO009" => DiagnosticDescriptors.ZAO009_RedundantAsync,
         _ => null,
     };
 
-    private static void ReportDiagnostics(SourceProductionContext context, QueryRepositoryModel repo)
+    private static bool ReportDiagnostics(SourceProductionContext context, QueryRepositoryModel repo)
     {
+        var hadError = false;
         foreach (var method in repo.Methods)
         {
             foreach (var diag in method.Diagnostics)
             {
                 var descriptor = LookupDescriptor(diag.DescriptorId);
                 if (descriptor is null) continue;
-                var args = diag.MessageArgs.Values.IsDefault
-                    ? Array.Empty<object?>()
-                    : diag.MessageArgs.Values.Cast<object?>().ToArray();
+                if (descriptor.DefaultSeverity == DiagnosticSeverity.Error) hadError = true;
+                object[] args = diag.MessageArgs.Values.IsDefault
+                    ? Array.Empty<object>()
+                    : diag.MessageArgs.Values.ToArray();
                 context.ReportDiagnostic(Diagnostic.Create(
                     descriptor,
                     diag.Location?.ToLocation(),
                     args));
             }
         }
-    }
-
-    private static bool HasErrorDiagnostic(QueryRepositoryModel repo)
-    {
-        foreach (var m in repo.Methods)
-        {
-            foreach (var d in m.Diagnostics)
-            {
-                var desc = LookupDescriptor(d.DescriptorId);
-                if (desc?.DefaultSeverity == DiagnosticSeverity.Error)
-                    return true;
-            }
-        }
-        return false;
+        return hadError;
     }
 
     private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo)
     {
-        System.Diagnostics.Debug.Assert(repo.Methods.Length > 0, "EmitRepository called with empty methods");
-
-        // Skip emit if any method has an error-severity diagnostic; the diagnostic itself
-        // will surface in the IDE/build and any generated source would only add noise
-        // (typically a CS-level compile error on the partial-method-without-body case).
-        if (HasErrorDiagnostic(repo)) return;
+        // Invariant: GroupBy never yields empty groups; repo.Methods is always non-empty.
 
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated/>");

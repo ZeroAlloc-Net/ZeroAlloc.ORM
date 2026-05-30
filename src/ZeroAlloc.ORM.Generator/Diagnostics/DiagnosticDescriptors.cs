@@ -2,7 +2,7 @@ using Microsoft.CodeAnalysis;
 
 namespace ZeroAlloc.ORM.Generator.Diagnostics;
 
-internal static class Diagnostics
+internal static class DiagnosticDescriptors
 {
     private const string Category = "ZeroAlloc.ORM";
 
