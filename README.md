@@ -18,13 +18,52 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 | Package | Description | NativeAOT |
 |---------|-------------|---|
 | **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[Materialize]`, `[StoreAsString]`), exception types. | ✅ |
+| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Param]`) + exception types. Other attributes (`[Command]`, `[StoredProcedure]`, `[Materialize]`, `[StoreAsString]`) land in their implementing milestones (v0.2–v0.5). | ✅ |
 | **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
 | **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
 
 ## Quick Start
 
-_Not yet — v0.1 milestone is in progress. Once the generator emits its first partial method, the canonical Quick Start lands here._
+### Scalar query
+
+```csharp
+using System.Data.Async;
+using System.Threading;
+using System.Threading.Tasks;
+using ZeroAlloc.ORM;
+
+public sealed partial class Repo(IAsyncDbConnection connection)
+{
+    [Query("SELECT count(*) FROM Orders")]
+    public partial Task<int> CountOrdersAsync(CancellationToken ct);
+}
+```
+
+The source generator emits the open / execute / close pipeline against AdoNet.Async's `IAsyncDbConnection`. Zero runtime reflection; the emit composes through `global::`-qualified identifiers so it doesn't care about the consumer's `using` directives.
+
+### Row materialization (FlatRow)
+
+```csharp
+public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+public sealed partial class OrderRepo(IAsyncDbConnection connection)
+{
+    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
+    public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
+}
+```
+
+Positional record + matching SELECT column order = no mapping config. Nullable return = empty result set yields `null`.
+
+### Available in v0.1
+
+- `[Query]` with scalar (`Task<int>`, `Task<T?>`) and FlatRow (`Task<TRow?>`) return shapes.
+- 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants.
+- `[Param(Name = "...")]` SQL-side parameter name override.
+- Compile-time diagnostics (ZAO001–ZAO009 + informational ZAO020–ZAO022) for signature contract violations.
+- NativeAOT-clean publish (verified by `aot-smoke` CI gate).
+
+Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), `IAsyncEnumerable<T>` streaming (v0.3), multi-result-set tuples (v0.3), value-objects + enums (v0.2), composite types (v0.5).
 
 ## Design + roadmap
 
