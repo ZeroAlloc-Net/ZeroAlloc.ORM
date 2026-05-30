@@ -259,4 +259,33 @@ public class CompileSmokeTests
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    [Fact]
+    public void Keyword_CancellationToken_name_emit_compiles_cleanly()
+    {
+        // Regression: when a user names their CancellationToken parameter with a
+        // C# keyword (e.g. `@event`), the emitted body must `@`-prefix the identifier
+        // when forwarding to OpenAsync/ReadAsync/ExecuteScalarAsync. Otherwise the
+        // emit reads `OpenAsync(event)` which trips CS1525.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1")]
+                public partial Task<int> GetAsync(CancellationToken @event);  // @event = C# keyword
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS1525")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
 }

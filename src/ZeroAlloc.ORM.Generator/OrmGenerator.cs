@@ -623,7 +623,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
-        var ct = m.CancellationTokenParameterName ?? "default";
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
@@ -657,7 +657,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
         var paramList = BuildParameterList(m.MethodParameters);
-        var ct = m.CancellationTokenParameterName ?? "default";
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
@@ -705,7 +705,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
-        var ct = m.CancellationTokenParameterName ?? "default";
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
@@ -778,6 +778,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
+    }
+
+    // Forward the user's CancellationToken parameter to OpenAsync / ReadAsync /
+    // ExecuteScalarAsync. If the user named their CT parameter with a C# keyword
+    // (e.g. `@event`), the body must reference it with an `@`-prefix or the emit
+    // produces `OpenAsync(event)` and trips CS1525.
+    //
+    // We ONLY `@`-prefix when the name actually is a keyword — for ordinary names
+    // like `ct` or `cancellationToken` the bare identifier compiles cleanly and
+    // keeps existing snapshots stable.
+    //
+    // Fallback `"default"` (no CT param) is the literal `default` expression, not
+    // an identifier, so it must NEVER be `@`-prefixed.
+    private static string FormatCancellationTokenReference(string? cancellationTokenName)
+    {
+        if (cancellationTokenName is null) return "default";
+        return SyntaxFacts.GetKeywordKind(cancellationTokenName) != SyntaxKind.None
+            ? "@" + cancellationTokenName
+            : cancellationTokenName;
     }
 
     // Render the partial method's parameter list, preserving the user's declared order
