@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class Repo
 {
-    public partial async global::System.Threading.Tasks.Task<int> SearchAsync(int id, global::System.Threading.CancellationToken ct)
+    public partial async global::System.Threading.Tasks.Task<int> SearchAsync(int @id, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -17,7 +17,7 @@ partial class Repo
             __cmd.CommandText = "SELECT 1 WHERE @orderId = 42";
             var __p_id = __cmd.CreateParameter();
             __p_id.ParameterName = "@orderId";
-            __p_id.Value = id;
+            __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);

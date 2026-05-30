@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class OrderRepository
 {
-    public partial async global::System.Threading.Tasks.Task<int> GetOneAsync(global::System.Threading.CancellationToken ct)
+    public partial async global::System.Threading.Tasks.Task<int> GetOneAsync(global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;

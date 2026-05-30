@@ -770,11 +770,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // explicitly. Non-nullable parameters skip the cast for cleaner emit.
             if (p.IsNullable)
             {
-                sb.AppendLine($"            {local}.Value = (object?){p.Name} ?? global::System.DBNull.Value;");
+                sb.AppendLine($"            {local}.Value = (object?)@{p.Name} ?? global::System.DBNull.Value;");
             }
             else
             {
-                sb.AppendLine($"            {local}.Value = {p.Name};");
+                sb.AppendLine($"            {local}.Value = @{p.Name};");
             }
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
@@ -793,7 +793,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             if (!first) sb.Append(", ");
             first = false;
-            sb.Append(p.TypeDisplay).Append(' ').Append(p.Name);
+            sb.Append(p.TypeDisplay).Append(" @").Append(p.Name);
         }
         return sb.ToString();
     }

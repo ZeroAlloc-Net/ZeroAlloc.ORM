@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class Repo
 {
-    public partial async global::System.Threading.Tasks.Task<int?> GetAgeAsync(global::System.Threading.CancellationToken ct)
+    public partial async global::System.Threading.Tasks.Task<int?> GetAgeAsync(global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;

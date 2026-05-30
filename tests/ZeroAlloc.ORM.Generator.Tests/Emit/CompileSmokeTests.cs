@@ -128,6 +128,32 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Keyword_parameter_name_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                // 'class' is a C# keyword; the generator must escape its reference in the emitted body.
+                [Query("SELECT 1 WHERE @class = 1")]
+                public partial Task<int> SearchAsync(int @class, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS1525")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Scalar_emit_honors_user_cancellation_token_name()
     {
         // Regression: scalar emitters used to hardcode `(CancellationToken ct)` and
