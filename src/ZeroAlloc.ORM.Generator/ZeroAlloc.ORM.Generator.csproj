@@ -12,6 +12,13 @@
     <DevelopmentDependency>true</DevelopmentDependency>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
 
+    <!-- Source generators ship only analyzers/dotnet/cs content (no lib/ref output).
+         Without this, dotnet pack raises NU5128 because the nuspec dependency group
+         lists netstandard2.0 but the package has no matching lib/ref folder. The
+         ProjectReference below is PrivateAssets="all" so consumers were never going
+         to see it as a transitive dependency anyway. Mirrors ZA.Mediator.Generator. -->
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+
     <!-- Build-time-only assembly: never AOT-published. Override any inherited
          PublishAot=true from a consuming project's publish graph (see AotSmoke). -->
     <IsAotCompatible>false</IsAotCompatible>
