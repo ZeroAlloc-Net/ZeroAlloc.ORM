@@ -85,6 +85,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO005 — exactly one of [Query]/[Command]/[StoredProcedure] per method.
+        var ormAttrCount = method.GetAttributes()
+            .Count(a => a.AttributeClass?.ToDisplayString() is
+                "ZeroAlloc.ORM.QueryAttribute" or
+                "ZeroAlloc.ORM.CommandAttribute" or
+                "ZeroAlloc.ORM.StoredProcedureAttribute");
+        if (ormAttrCount > 1)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO005",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
         // ZAO002 — return type must be Task[<T>], ValueTask[<T>], or IAsyncEnumerable<T>.
         if (!IsSupportedReturnType(method.ReturnType))
         {
