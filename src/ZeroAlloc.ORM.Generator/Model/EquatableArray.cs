@@ -24,7 +24,10 @@ internal readonly record struct EquatableArray<T>(ImmutableArray<T> Values) : IE
 
     public override int GetHashCode()
     {
-        if (Values.IsDefault) return 0;
+        // Treat default-state and empty-state as hash-equal — Equals() already treats
+        // them as equal (both yield an empty span), so the hash must agree to satisfy
+        // the GetHashCode contract.
+        if (Values.IsDefault || Values.Length == 0) return 0;
         var hash = 17;
         foreach (var v in Values)
         {

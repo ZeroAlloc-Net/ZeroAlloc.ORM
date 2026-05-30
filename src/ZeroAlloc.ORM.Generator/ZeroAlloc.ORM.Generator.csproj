@@ -44,6 +44,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Test project consumes a few internal helpers (EquatableArray<T>, model records)
+         directly to assert generator-internal invariants without going through the
+         full source-generator harness. The InternalsVisibleTo grant is build-time-only
+         and travels with the assembly metadata; it does not affect the analyzer package. -->
+    <InternalsVisibleTo Include="ZeroAlloc.ORM.Generator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Ship the analyzer DLL in the analyzers/dotnet/cs path so Roslyn picks it up. -->
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Include="$(OutputPath)\ZeroAlloc.TypeConversions.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
