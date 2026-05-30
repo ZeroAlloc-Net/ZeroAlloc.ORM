@@ -37,12 +37,43 @@ public static class ConventionDiscovery
                 ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
         }
 
-        if (type is INamedTypeSymbol named && TryValueObject(named) is { } voResult)
+        if (type is INamedTypeSymbol named)
         {
-            return voResult;
+            if (TryValueObject(named) is { } voResult) return voResult;
+            if (TrySingleArgCtor(named, context) is { } ctorResult) return ctorResult;
         }
 
         return UnknownResult;
+    }
+
+    // Records with a single primary-ctor parameter that resolves to a primitive are
+    // the idiomatic "lightweight value-object without ZA.ValueObjects" shape. We
+    // match `record class Foo(int X)` and `record struct Foo(int X)` alike — both
+    // produce a public instance ctor with exactly one parameter.
+    private static ConventionResult? TrySingleArgCtor(INamedTypeSymbol type, ConventionContext context)
+    {
+        if (!type.IsRecord) return null;
+
+        var ctor = type.InstanceConstructors.FirstOrDefault(c =>
+            c.DeclaredAccessibility == Accessibility.Public &&
+            c.Parameters.Length == 1);
+
+        if (ctor is null) return null;
+
+        // Only declare SingleArgCtor when the inner type itself is primitive; nested
+        // wrappers (record A(B b) where B is another VO) are out of scope for v0.2.
+        var paramType = ctor.Parameters[0].Type;
+        if (!PrimitiveCatalog.IsPrimitive(paramType)) return null;
+
+        // Records synthesize a property named after the ctor parameter verbatim.
+        var paramName = ctor.Parameters[0].Name;
+        var valueProp = type.GetMembers(paramName).OfType<IPropertySymbol>().FirstOrDefault();
+
+        return new ConventionResult(
+            ConventionKind.SingleArgCtor,
+            Factory: ctor,
+            Value: valueProp,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
     private const string ValueObjectAttributeFqn = "ZeroAlloc.ValueObjects.ValueObjectAttribute";
