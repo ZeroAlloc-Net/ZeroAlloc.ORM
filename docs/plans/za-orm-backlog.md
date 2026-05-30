@@ -40,7 +40,7 @@ Branch: `main` (local-only). Tasks shipped (commits in chronological order):
 - Task 6.7 — Keyword-named CancellationToken `@`-prefix in emit (`619f55a`)
 - Task 7.1 — AOT smoke test consumer + CI gate activation (`1fdeedc`)
 
-**v0.1 milestone complete pending NuGet publish.** Ready for release-please bump to `0.1.0-preview.1`.
+**v0.1 milestone complete pending NuGet publish.** Ready for release-please bump to `0.1.0`.
 
 ---
 
@@ -140,9 +140,9 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 - Three smoke scenarios: read one row, read zero rows (null return), parameter type round-trips.
 - Sets up xUnit fixture pattern; later milestones add more scenarios.
 
-### v0.1-T10 — `0.1.0-preview` NuGet pre-release
+### v0.1-T10 — `0.1.0` NuGet release
 
-- release-please configured to bump to `0.1.0-preview`.
+- release-please configured to bump to `0.1.0`.
 - All 5 packages publish.
 - README adds Quick Start section.
 
@@ -398,7 +398,7 @@ These need resolution but don't block v0.1 startup:
 - **Generator-side resource discovery** (for `[Query(FromResource = true)]`) — namespace convention TBD. Likely settles when writing first integration test.
 - **Diagnostic doc URLs** — need doc site live before generator emits real `helpLinkUri`. Stub to GitHub markdown until then.
 - **GitHub Actions permissions** — verify NuGet API key + release-please permissions land cleanly in the new repo.
-- **Per-milestone design re-check** — each preview release should pause to compare emit against the design doc and update the doc with any divergence.
+- **Per-milestone design re-check** — each milestone release should pause to compare emit against the design doc and update the doc with any divergence.
 
 ---
 

@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class OrderRepository
 {
-    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0-preview.1")]
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<int> GetOneAsync(global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
