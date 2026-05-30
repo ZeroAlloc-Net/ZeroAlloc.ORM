@@ -6,7 +6,7 @@ Things to work on for the `ZeroAlloc-Net/ZeroAlloc.ORM` project. Refined as we g
 
 ---
 
-## v0.1 implementation status (live)
+## v0.1 + v0.2 implementation status (live)
 
 Branch: `main` (local-only). Tasks shipped (commits in chronological order):
 
@@ -56,6 +56,31 @@ Branch: `main` (local-only). Tasks shipped (commits in chronological order):
 - R11 — Exception ctor symmetry + Roslyn pin rationale + backlog reconciliation (this commit)
 
 **v0.1 milestone complete. Ready for release-please bump to `0.1.0` (R12).**
+
+### v0.2 — value-objects + enums + domain entities (post-v0.1.0 release)
+
+Commits in chronological order, all merged via PR on `main` after `v0.1.0` shipped:
+
+- Phase A — v0.2 implementation plan (`72e110a`)
+- Phase A.1 — re-add `[StoreAsString]` attribute to Abstractions (`292dcb1`)
+- Phase B — `ConventionDiscovery` API build-out in TypeConversions (`f02359d`)
+- Phase C — value-object materialization + binding (Phase C.1-C.5) (`4f99275`)
+- Phase D — enum support: default-int round-trip + `[StoreAsString]` (D.1-D.2) (`a211b25`)
+- Phase E + F.1 — DomainEntity emit shape + ZAO040 diagnostic (`1030862`)
+- Phase F.2-F.5 — ZAO041-044 materialization diagnostics (`c6b14fd`)
+- Phase G — integration round-trip coverage + README + release-please reset + this entry (this PR)
+
+v0.2 milestone scoreboard:
+
+- ~~v0.2-T1 — ZA.ValueObjects integration~~ — ✅ shipped 0.2.0
+- ~~v0.2-T2 — Single-arg-ctor record discovery~~ — ✅ shipped 0.2.0
+- ~~v0.2-T3 — Static factory discovery~~ — ✅ shipped 0.2.0
+- ~~v0.2-T4 — Enum default int round-trip~~ — ✅ shipped 0.2.0
+- ~~v0.2-T5 — `[StoreAsString]` attribute~~ — ✅ shipped 0.2.0
+- ~~v0.2-T6 — Multi-arg domain entity materialization~~ — ✅ shipped 0.2.0
+- ~~v0.2-T7 — Diagnostics ZAO040-ZAO044~~ — ✅ shipped 0.2.0
+
+**v0.2 milestone complete. Release-please will propose 0.2.0 from conventional commits.**
 
 ---
 
@@ -165,38 +190,38 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 
 ## P1 — Milestone v0.2 (2 weeks): value-objects + enums
 
-### v0.2-T1 — ZA.ValueObjects integration (shared TypeConversions)
+### ~~v0.2-T1 — ZA.ValueObjects integration (shared TypeConversions)~~ — ✅ shipped 0.2.0
 
 - Build out `ZeroAlloc.TypeConversions` package: `ConventionDiscovery.Resolve(INamedTypeSymbol)`.
 - Detect `[ValueObject]` attribute from ZA.ValueObjects.
 - Emit `OrderId.From(reader.GetInt32(ord))` for materialization, `p.Value = id.Value` for binding.
 
-### v0.2-T2 — Single-arg-ctor record discovery
+### ~~v0.2-T2 — Single-arg-ctor record discovery~~ — ✅ shipped 0.2.0
 
 - `record OrderId(int Value)` shape (without ZA.ValueObjects attribute).
 - Same emit shape as v0.2-T1 — different discovery path.
 
-### v0.2-T3 — Static factory discovery
+### ~~v0.2-T3 — Static factory discovery~~ — ✅ shipped 0.2.0
 
 - `T From(TPrim)` or `T FromValue(TPrim)` static methods.
 - Generator emits the factory call.
 
-### v0.2-T4 — Enum default int round-trip
+### ~~v0.2-T4 — Enum default int round-trip~~ — ✅ shipped 0.2.0
 
 - `(OrderStatus)reader.GetInt32(ord)` for materialization.
 - `p.Value = (int)status` for binding.
 
-### v0.2-T5 — `[StoreAsString]` attribute
+### ~~v0.2-T5 — `[StoreAsString]` attribute~~ — ✅ shipped 0.2.0
 
 - Type-level attribute on enums.
 - Switches emit to `Enum.Parse<OrderStatus>(reader.GetString(ord))` / `p.Value = status.ToString()`.
 
-### v0.2-T6 — Multi-arg domain entity materialization
+### ~~v0.2-T6 — Multi-arg domain entity materialization~~ — ✅ shipped 0.2.0
 
 - `class T` with single public ctor whose params match column names.
 - Column-name-to-ctor-param resolution via `reader.GetOrdinal("ParamName")`.
 
-### v0.2-T7 — Diagnostics ZAO040-ZAO044
+### ~~v0.2-T7 — Diagnostics ZAO040-ZAO044~~ — ✅ shipped 0.2.0
 
 - ZAO040: no resolvable construction strategy.
 - ZAO041: no resolvable unwrap strategy.
