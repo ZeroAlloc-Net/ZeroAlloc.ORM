@@ -19,5 +19,8 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="FluentAssertions" Version="6.12.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+    <!-- ZA.ValueObjects supplies the [ValueObject] attribute + its source generator
+         (fills in Value, From, ToString, equality). Required by v0.2 round-trip tests. -->
+    <PackageReference Include="ZeroAlloc.ValueObjects" Version="$(ZeroAllocValueObjectsVersion)" />
   </ItemGroup>
 </Project>
