@@ -48,7 +48,7 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO007_MissingEnumeratorCancellation = Make(
         "ZAO007", "IAsyncEnumerable<T> return without [EnumeratorCancellation]",
-        "Method '{0}' returns IAsyncEnumerable<T> but has no CancellationToken parameter marked [EnumeratorCancellation]. Add a CancellationToken parameter with [EnumeratorCancellation] so cancellation propagates correctly.",
+        "Method '{0}' returns IAsyncEnumerable<T> but {1}. Add a CancellationToken parameter with [EnumeratorCancellation] so cancellation propagates correctly.",
         DiagnosticSeverity.Error);
 
     public static readonly DiagnosticDescriptor ZAO008_SingleResultWithSemicolons = Make(

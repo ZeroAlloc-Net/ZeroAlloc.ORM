@@ -124,6 +124,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO007 — IAsyncEnumerable<T> requires a CT with [EnumeratorCancellation].
+        // Two distinct cases share the diagnostic id; the second message arg disambiguates
+        // them so the adopter sees a fix that actually applies to their code:
+        //   * a CT param exists but is missing the attribute — they need to add it
+        //   * no CT param at all — they need to add the param itself
         if (IsIAsyncEnumerable(method.ReturnType))
         {
             var ctParam = method.Parameters.FirstOrDefault(p =>
@@ -134,10 +138,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     StringComparison.Ordinal));
             if (!hasEnumeratorCancellation)
             {
+                var reason = ctParam is null
+                    ? "has no CancellationToken parameter"
+                    : "its CancellationToken parameter lacks [EnumeratorCancellation]";
                 diagnostics.Add(new DiagnosticInfo(
                     DescriptorId: "ZAO007",
                     Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
-                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, reason))));
             }
         }
 
