@@ -161,7 +161,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     method.ReturnType.ToDisplayString()))));
         }
 
-        var (shape, nullableReaderMethod) = ClassifyEmitShape(method);
+        var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method);
+
+        // Capture user parameters (everything except CancellationToken) so the emit
+        // can render the partial method signature. Parameter BINDING to the command
+        // is Phase 6 — for now we only need the signature shape.
+        var parameterDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        var userParameters = method.Parameters
+            .Where(p => !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal))
+            .Select(p => new ParameterInfo(p.Name, p.Type.ToDisplayString(parameterDisplayFormat)))
+            .ToImmutableArray();
 
         // Fully-qualified, includes `?` for nullable reference types so the emitted
         // partial signature matches the user's partial declaration verbatim.
@@ -186,6 +198,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Shape: shape,
             ReturnTypeDisplay: returnTypeDisplay,
             NullableScalarReaderMethod: nullableReaderMethod,
+            Materialization: materialization,
+            UserParameters: new EquatableArray<ParameterInfo>(userParameters),
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
 
@@ -198,43 +212,123 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // For NullableScalar we also return the IDataReader.GetXxx method name to use
     // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
     // that no longer carries the symbol.
-    private static (EmitShape Shape, string? NullableReaderMethod) ClassifyEmitShape(IMethodSymbol method)
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization) ClassifyEmitShape(IMethodSymbol method)
     {
-        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null);
+        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null);
         // Restrict to Task<T> for now; ValueTask<T> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null);
+        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null);
 
-        // Only zero user parameters (CT-only). User-parameter binding is Phase 6.
         var userParamCount = method.Parameters.Count(p =>
             !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
-        if (userParamCount != 0) return (EmitShape.Unknown, null);
 
         var inner = named.TypeArguments[0];
 
-        // Nullable reference: Task<string?> (and any other supported nullable primitive).
+        // Scalar shapes (Task 4.1 + 4.3) only ever apply when there are no user parameters
+        // — they don't bind any. FlatRow (Task 5.1) tolerates user params at the SIGNATURE
+        // level even though binding lands in Phase 6.
+        if (userParamCount == 0)
+        {
+            // Nullable reference: Task<string?> (and any other supported nullable primitive).
+            if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
+            {
+                var readerMethod = GetScalarPrimitiveReaderInfo(inner);
+                if (readerMethod is not null)
+                    return (EmitShape.NullableScalar, readerMethod, null);
+            }
+
+            // Nullable value type: Task<int?> / Task<Nullable<T>>.
+            if (inner is INamedTypeSymbol innerNamed
+                && innerNamed.IsGenericType
+                && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+            {
+                var underlying = innerNamed.TypeArguments[0];
+                var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
+                if (readerMethod is not null)
+                    return (EmitShape.NullableScalar, readerMethod, null);
+            }
+
+            // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
+            // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
+            if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null);
+        }
+
+        // FlatRow (Task 5.1) — positional record with primitive ctor params.
+        // v0.1 only handles Task<T?> (nullable reference) so an empty result set maps
+        // cleanly to `return null;`. Non-nullable Task<T> would require an exception
+        // on empty and is deferred to v0.2.
         if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
         {
-            var readerMethod = GetScalarPrimitiveReaderInfo(inner);
-            if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod);
+            // Peel the nullable annotation so we look at the underlying record type.
+            var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            var flat = TryBuildFlatRowMaterialization(elementType);
+            if (flat is not null)
+                return (EmitShape.FlatRow, null, flat);
         }
 
-        // Nullable value type: Task<int?> / Task<Nullable<T>>.
-        if (inner is INamedTypeSymbol innerNamed
-            && innerNamed.IsGenericType
-            && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+        return (EmitShape.Unknown, null, null);
+    }
+
+    // Attempt to classify `elementType` as a positional record whose constructor takes
+    // only supported primitive scalar types. Returns null if the type isn't a record,
+    // has no public ctor with parameters, or any parameter isn't a primitive scalar.
+    //
+    // v0.1 scope: primitives + string/Guid/DateTime via GetScalarPrimitiveReaderInfo.
+    // Value-object support (single-field records wrapping a primitive) lands in v0.2.
+    private static MaterializationModel? TryBuildFlatRowMaterialization(ITypeSymbol elementType)
+    {
+        if (elementType is not INamedTypeSymbol named || !named.IsRecord) return null;
+
+        // Pick the widest public instance ctor — positional records synthesize one
+        // ctor matching the parameter list. Multiple public ctors stay supported by
+        // taking the widest, mirroring how Dapper resolves materialization ctors.
+        var ctor = named.InstanceConstructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
+            .OrderByDescending(c => c.Parameters.Length)
+            .FirstOrDefault();
+        if (ctor is null) return null;
+
+        var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
+        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+        foreach (var p in ctor.Parameters)
         {
-            var underlying = innerNamed.TypeArguments[0];
-            var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
-            if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod);
+            // For nullable value types (`int?`) we strongly-type-read the underlying
+            // primitive. For nullable reference types (`string?`) the reference type
+            // IS the reader-target — string is read with GetString regardless of nullability.
+            var underlying = UnwrapNullableValueType(p.Type);
+            var reader = GetScalarPrimitiveReaderInfo(underlying);
+            if (reader is null) return null;
+
+            var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
+                || (p.Type is INamedTypeSymbol pn
+                    && pn.IsGenericType
+                    && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+            columns.Add(new ColumnBinding(
+                GetterMethod: reader,
+                IsNullable: isNullable,
+                TypeName: p.Type.ToDisplayString(typeDisplayFormat)));
         }
 
-        // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
-        // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
-        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null);
+        return new MaterializationModel(
+            Kind: MaterializationKind.FlatRow,
+            TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
 
-        return (EmitShape.Unknown, null);
+    // Peel `Nullable<T>` to `T`; otherwise return the input unchanged.
+    private static ITypeSymbol UnwrapNullableValueType(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol named
+            && named.IsGenericType
+            && named.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+        {
+            return named.TypeArguments[0];
+        }
+        return type;
     }
 
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
@@ -475,6 +569,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m);
                     break;
+                case EmitShape.FlatRow:
+                    EmitFlatRow(sb, m);
+                    break;
                 default:
                     sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {m.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
@@ -544,5 +641,81 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+    }
+
+    // Single-row positional-record materialization. Each ctor parameter binds to the
+    // reader column at the same ordinal — purely positional because the v0.1 surface
+    // requires the SELECT column order to match the record ctor order. Column-name
+    // matching lands in v0.2.
+    //
+    // For nullable columns we wrap the GetXxx call in an IsDBNull(N) guard so the
+    // ctor receives `null` instead of throwing on DBNull. Non-nullable columns are
+    // read directly — if the DB returns NULL there it's a schema/SQL bug surfaced
+    // as an InvalidCastException at runtime.
+    //
+    // No-row case returns null because this shape only triggers for Task<T?>.
+    // Parameter binding (e.g. @id <- the `int id` arg) lands in Phase 6; for now
+    // the SQL is sent as-is, which means unbound placeholders read as NULL.
+    private static void EmitFlatRow(StringBuilder sb, QueryMethodModel m)
+    {
+        var mat = m.Materialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign FlatRow without a model.
+            sb.AppendLine($"    // TODO: FlatRow without Materialization model for {m.MethodName}");
+            return;
+        }
+
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.UserParameters);
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        sb.AppendLine("            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("            if (!await __reader.ReadAsync(ct).ConfigureAwait(false))");
+        sb.AppendLine("                return null;");
+        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+        var cols = mat.Columns;
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? ");" : ",";
+            string expr;
+            if (col.IsNullable)
+            {
+                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : __reader.{col.GetterMethod}({i})";
+            }
+            else
+            {
+                expr = $"__reader.{col.GetterMethod}({i})";
+            }
+            sb.AppendLine($"                {expr}{trailing}");
+        }
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // Render the partial method's parameter list. Always appends the CancellationToken
+    // last so the emit body can call ...Async(ct) unconditionally; user parameters
+    // come from m.UserParameters (CT already filtered out).
+    private static string BuildParameterList(EquatableArray<ParameterInfo> userParameters)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in userParameters)
+        {
+            sb.Append(p.TypeDisplay).Append(' ').Append(p.Name).Append(", ");
+        }
+        sb.Append("global::System.Threading.CancellationToken ct");
+        return sb.ToString();
     }
 }

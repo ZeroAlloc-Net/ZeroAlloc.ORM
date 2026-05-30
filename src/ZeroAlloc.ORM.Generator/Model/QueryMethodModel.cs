@@ -9,6 +9,7 @@ internal enum EmitShape
     Unknown,
     ScalarInt,
     NullableScalar,
+    FlatRow,
 }
 
 // TODO(v0.2): hoist all type-scoped fields to QueryRepositoryModel:
@@ -29,6 +30,8 @@ internal sealed record QueryMethodModel(
     EmitShape Shape,
     string ReturnTypeDisplay,
     string? NullableScalarReaderMethod,
+    MaterializationModel? Materialization,
+    EquatableArray<ParameterInfo> UserParameters,
     EquatableArray<DiagnosticInfo> Diagnostics);
 
 internal sealed record QueryRepositoryModel(
