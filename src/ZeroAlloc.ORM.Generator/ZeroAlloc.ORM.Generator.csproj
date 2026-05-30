@@ -27,7 +27,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
     <!-- The generator depends on ZeroAlloc.TypeConversions at analyzer load time. We
          reference it with ReferenceOutputAssembly="true" so the compiler resolves the
          reference, but the analyzer load context (Roslyn) only loads assemblies that
