@@ -1,0 +1,36 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+
+## VS / Rider
+.vs/
+.idea/
+*.DotSettings.user
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+[Aa]rtifacts/
+BenchmarkDotNet.Artifacts/
+aot-out/
+publish/
+TestResults/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Roslyn / Verify snapshots — keep verified, ignore received
+**/*.received.*
+
+## GitVersion cache
+.gitversion

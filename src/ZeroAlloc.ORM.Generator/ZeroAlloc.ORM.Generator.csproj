@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM.Generator</RootNamespace>
+    <PackageId>ZeroAlloc.ORM.Generator</PackageId>
+    <Title>ZeroAlloc.ORM.Generator</Title>
+    <Description>Roslyn incremental source generator that materialises [Query] / [Command] / [StoredProcedure]-annotated partial methods into typed ADO.NET pipelines against AdoNet.Async. Build-time only; never loaded at the consumer's runtime.</Description>
+    <PackageTags>zeroalloc;orm;source-generator;roslyn;incremental-generator;ado.net</PackageTags>
+
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IsPackable>true</IsPackable>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
+    <ProjectReference Include="..\ZeroAlloc.TypeConversions\ZeroAlloc.TypeConversions.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Ship the analyzer DLL in the analyzers/dotnet/cs path so Roslyn picks it up. -->
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)\ZeroAlloc.TypeConversions.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+</Project>

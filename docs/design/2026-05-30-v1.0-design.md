@@ -1,0 +1,662 @@
+# ZeroAlloc.ORM v1.0 — Design Document
+
+> **Status:** Approved 2026-05-30. Authoritative reference for the implementation work in the `ZeroAlloc-Net/ZeroAlloc.ORM` repo (to be created — see Section 5 §Repo bootstrap).
+>
+> **Scope:** Source-generator-based, NativeAOT-clean raw-SQL data access library. Sits in the ZeroAlloc ecosystem alongside ZA.Mediator, ZA.Validation, ZA.Mapping, ZA.ValueObjects, AdoNet.Async.
+>
+> **History:** Brainstormed in conversation 2026-05-30 across five design sections, each separately reviewed and approved before moving on. Section ordering reflects the brainstorming flow — Section 1 is foundational, Section 5 is delivery planning. Amendments (Section 2.5 sprocs, Section 4.5 ecosystem) are spliced where they belong topically.
+
+---
+
+## Section 1 — Architecture & scope
+
+### Goals (v1.0)
+
+1. **AOT-clean, source-gen-only data access for raw SQL.** No runtime reflection in the emitted code path. `<IsAotCompatible>true</IsAotCompatible>` declarable on every shipped runtime package.
+2. **Annotated partial methods as the only call-site shape.** Consistent with ZA.Mediator / ZA.Validation / ZA.Authorization ergonomics. No interceptors, no extension methods, no fluent builder.
+3. **Return-type-driven materialization dispatch.** Flat positional records OR domain entities, depending on what the partial method's return type looks like. Generator picks the shape statically at compile time.
+4. **`IAsyncDbBatch`-first for multi-result reads.** The `;`-joined fallback is available but not the default.
+5. **Hard dependency on `AdoNet.Async` + `AdoNet.Async.Adapters`.** Generator emits code targeting `IAsyncDbConnection`, `IAsyncDbBatch`, `IAsyncDataReader`. Dogfoods both AOT-declared packages (shipped as `AdoNet.Async` 1.x post-PR-#101).
+6. **First-class `IAsyncEnumerable<T>` streaming**, including correct cancellation propagation and reader cleanup on early exit.
+7. **Convention-discovery for value-objects, enums, and `Money`-style multi-column composites** — shared with ZA.Mapping where the conventions overlap.
+8. **Diagnostic-rich.** Every misuse (mismatched parameter name, return-type ambiguity, missing factory) is a compile-time error with a stable `ZAO0xx` code and a doc link.
+
+### Non-goals (deferred to v2+)
+
+- LINQ-to-SQL translation. That's where EF Core's complexity lives. Stay raw SQL.
+- Migration management. Templates already own this via embedded `schema.sql` + `dotnet ef migrations script`.
+- Schema-drift detection (compile-time DB connection). Adds an infrastructure dependency the generator shouldn't own. Future opt-in via a separate analyzer package.
+- ORM-side change tracking / unit-of-work. Out of scope; consumers do that at the application layer if they want it.
+- Convention-based query generation (`Where<T>(...)`). Raw-SQL-only is the contract.
+
+### Stack diagram
+
+```
+                 application / handler code
+                          ↓
+   ZeroAlloc.ORM                   ← partial method codegen, materialization, param binding
+   (consumes IAsyncDbConnection)
+                          ↓
+   AdoNet.Async.Adapters           ← AsAsync(), DI, IAsyncDbBatch adapter
+                          ↓
+   AdoNet.Async                    ← IAsyncDbConnection / IAsyncDbCommand / IAsyncDbBatch
+                          ↓
+   System.Data.Common              ← DbConnection, DbCommand, DbBatch
+                          ↓
+   Npgsql / Microsoft.Data.Sqlite / SqlClient
+
+   side-by-side:
+   ZeroAlloc.Mapping ← consumed by application code for entity↔DTO mapping;
+                       shares Type-Conversion Catalog with ZeroAlloc.ORM
+```
+
+### Package layout
+
+| Package | Purpose | TFM | AOT |
+|---|---|---|---|
+| `ZeroAlloc.ORM.Abstractions` | Public attributes (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[Materialize]`, `[StoreAsString]`), exception types, marker interfaces | netstandard2.0 + net10.0 | ✅ |
+| `ZeroAlloc.ORM` | Runtime helpers (parameter binding helpers, `IAsyncDbConnectionExtensions`, exception messages, ActivitySource), depends on `AdoNet.Async` | net10.0 | ✅ |
+| `ZeroAlloc.ORM.Generator` | Roslyn incremental generator emitting partial method implementations | netstandard2.0 (Roslyn requirement) | N/A — build-time |
+| `ZeroAlloc.TypeConversions` | Shared type-conversion catalog (value-object factory discovery, enum round-trip, multi-column composites). Used by both `ZeroAlloc.ORM.Generator` and (eventually) `ZeroAlloc.Mapping.Generator`. **Note: separate package name with no `.ORM` prefix so ZA.Mapping can adopt without a dependency on the ORM** | netstandard2.0 | N/A — build-time |
+| `ZeroAlloc.ORM.Analyzers` | Compile-time diagnostics (ZAO001–ZAO0xx) | netstandard2.0 | N/A — build-time |
+
+Five packages. The `Abstractions` / `ORM` split mirrors the ZA.Mediator pattern: consumer projects reference `Abstractions` for the attribute surface and unit-test mocking; runtime helpers come in via the main `ORM` package. Source-gen ships separately via `ORM.Generator`.
+
+### Repo
+
+`ZeroAlloc-Net/ZeroAlloc.ORM` — new repo. Same conventions as AdoNet.Async (`Directory.Build.props` with ZeroAlloc.Analyzers + Meziantou + Roslynator + ErrorProne, GitVersion, release-please).
+
+---
+
+## Section 2 — Generator surface & annotation grammar
+
+### Attributes (Abstractions package)
+
+```csharp
+namespace ZeroAlloc.ORM;
+
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class QueryAttribute(string sql) : Attribute
+{
+    public string Sql { get; } = sql;
+
+    // When set, sql is treated as a resource name in the consuming assembly
+    // (e.g. "MyApp.Sql.GetOrderById") so larger SQL bodies live in .sql files
+    // instead of string literals. Resource discovery happens at generator time.
+    public bool FromResource { get; init; }
+
+    // Optional: when true, the generator picks IAsyncDbBatch over a single
+    // command even if the SQL appears to be a single statement. Defaults to
+    // auto-detect: ;-statement-count > 1 ∧ CanCreateBatch ⇒ batch.
+    public BatchMode Batch { get; init; } = BatchMode.Auto;
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class CommandAttribute(string sql) : Attribute
+{
+    public string Sql { get; } = sql;
+    public bool FromResource { get; init; }
+
+    // What does the partial method return?
+    //   Default: number of rows affected (int)
+    //   Scalar:  ExecuteScalarAsync result, materialized to declared return type
+    //   Identity: scope_identity() / LASTVAL() / RETURNING id depending on provider
+    public CommandKind Kind { get; init; } = CommandKind.NonQuery;
+}
+
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class StoredProcedureAttribute(string procedureName) : Attribute
+{
+    public string ProcedureName { get; } = procedureName;
+    public BatchMode Batch { get; init; } = BatchMode.Never;
+}
+
+[AttributeUsage(AttributeTargets.Parameter)]
+public sealed class ParamAttribute : Attribute
+{
+    public string? Name { get; init; }
+    public DbType DbType { get; init; }
+}
+
+[AttributeUsage(AttributeTargets.ReturnValue
+              | AttributeTargets.GenericParameter
+              | AttributeTargets.Class
+              | AttributeTargets.Struct)]
+public sealed class MaterializeAttribute : Attribute
+{
+    public MaterializeStrategy Strategy { get; init; } = MaterializeStrategy.Auto;
+    public string? Factory { get; init; }
+}
+
+[AttributeUsage(AttributeTargets.Enum)]
+public sealed class StoreAsStringAttribute : Attribute { }
+
+public enum BatchMode { Auto, Always, Never }
+public enum CommandKind { NonQuery, Scalar, Identity }
+public enum MaterializeStrategy { Auto, FlatRow, DomainEntity, Custom }
+```
+
+### Method signature contract
+
+A `[Query]`, `[Command]`, or `[StoredProcedure]`-annotated method MUST be:
+
+1. **`partial`** — generator fills the implementation.
+2. **`async`-compatible return** — one of: `Task<T>`, `Task<T?>`, `ValueTask<T>`, `ValueTask<T?>`, `Task<List<T>>`, `IAsyncEnumerable<T>`, `Task` / `ValueTask` for `[Command]` `NonQuery`.
+3. **Last parameter must be `CancellationToken`** — or no `CancellationToken` (generator emits `CancellationToken.None`).
+4. **Containing type must be `partial class`** and have an `IAsyncDbConnection` field, constructor parameter, or property the generator can locate. Convention: prefer primary-constructor injection.
+
+Compile-time errors for each violation: ZAO001 not partial, ZAO002 bad return type, ZAO003 no `IAsyncDbConnection` source, etc. (full catalog in Section 4).
+
+### Return-type dispatch
+
+The generator inspects the unwrapped element type (peeling `Task<>`, `ValueTask<>`, `List<>`, `IAsyncEnumerable<>`, `Nullable<>`) and dispatches:
+
+| Element type shape | Strategy | What gets emitted |
+|---|---|---|
+| `record T(p1, p2, ...)` with all-positional ctor | **FlatRow** | `new T(reader.GetXxx(0), reader.GetXxx(1), ...)` — column order matches positional-ctor order |
+| `class T` with a single public ctor whose params match column names | **DomainEntity** | `new T(reader.GetXxx(ord("ParamName")), ...)` — column-name-to-ctor-param resolution |
+| `class T` with `[Materialize(Factory = "...")]` or `static T From(...)` discovered | **Custom** | Calls the named factory |
+| `record T(...)` AND `class T` ambiguity | **Diagnostic ZAO031** | Error: add `[Materialize(Strategy = ...)]` |
+| Primitive / `string` / `Guid` / `DateTime` / `decimal` | **Scalar** | `reader.GetXxx(0)` directly |
+| `(T1 head, List<T2> lines)` tuple | **MultiResultSet** | First batch command/result set → T1; second → List\<T2\>. Requires `Batch != Never` AND `CanCreateBatch` OR `;`-joined SQL |
+
+### Parameter binding
+
+- **Default name match:** C# parameter name → SQL parameter name (`@id` for `id`). Provider prefix `@` always emitted; AdoNet.Async normalizes for Npgsql.
+- **`[Param(Name = "...")]`** overrides for SQL-side names that don't follow C# casing.
+- **Value-object unwrap:** if parameter type is a value object (e.g. `OrderId` wrapping `int`), generator emits `p.Value = id.Value` using the convention-discovery catalog (Section 3 covers this).
+- **Enum binding:** by default, enums bind as their underlying integer. `[StoreAsString]` on the enum type forces string round-trip.
+- **Decimal / DateTime / Guid:** straight-through.
+
+### Multi-result-set strategy
+
+When `BatchMode` is `Auto` (default):
+
+1. Generator counts statements in the SQL string (split on `;` outside of literals).
+2. If statements > 1 AND return type is tuple/compound:
+   - Emit `if (connection.CanCreateBatch) { /* IAsyncDbBatch path */ } else { /* CommandText = ;-joined, NextResultAsync */ }`
+   - Both paths produce the same `(T1, List<T2>)` result.
+3. If statements > 1 AND return type is single:
+   - Diagnostic ZAO008: "Multiple statements emitted but return type is single-result-set."
+
+### Example — what consumers write
+
+```csharp
+[Scoped]
+public sealed partial class OrderRepository(IAsyncDbConnection connection)
+{
+    // FlatRow — positional record matches column order.
+    [Query("SELECT \"Id\", \"CustomerId\", \"Total\" FROM \"Orders\" WHERE \"Id\" = @id")]
+    public partial Task<OrderRow?> GetRowByIdAsync(OrderId id, CancellationToken ct);
+
+    // DomainEntity — single-arg ctor with matching name.
+    [Query("SELECT \"CustomerId\", \"Status\", \"Total\" FROM \"Orders\" WHERE \"Id\" = @id")]
+    public partial Task<Order?> GetByIdAsync(OrderId id, CancellationToken ct);
+
+    // MultiResultSet — tuple of (head, lines), generator picks IAsyncDbBatch.
+    [Query("""
+        SELECT "Id", "CustomerId", "Total" FROM "Orders" WHERE "Id" = @id;
+        SELECT "Sku", "Quantity", "Price" FROM "OrderLines" WHERE "OrderId" = @id;
+        """)]
+    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(
+        OrderId id, CancellationToken ct);
+
+    // Streaming — IAsyncEnumerable yields rows as they arrive.
+    [Query("SELECT \"Id\", \"CustomerId\", \"Total\" FROM \"Orders\" ORDER BY \"Id\"")]
+    public partial IAsyncEnumerable<OrderRow> StreamAllAsync([EnumeratorCancellation] CancellationToken ct);
+
+    // Command — INSERT returns identity.
+    [Command("INSERT INTO \"Orders\" (\"CustomerId\", \"Status\", \"Total\") VALUES (@cust, @status, @total) RETURNING \"Id\"",
+             Kind = CommandKind.Identity)]
+    public partial Task<int> InsertAsync(int cust, string status, decimal total, CancellationToken ct);
+}
+
+public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+public sealed record OrderLineRow(string Sku, int Quantity, decimal Price);
+```
+
+The generator emits a sibling `OrderRepository.g.cs` file completing each `partial` declaration. Zero reflection at runtime.
+
+---
+
+## Section 2.5 — Stored procedures & user-defined functions (amendment)
+
+**Functions need no new annotation.** Scalar UDFs and table-valued functions look like regular SQL from the caller's perspective. `[Query("SELECT * FROM fn(@id)")]` covers both Postgres rowset-returning functions and SQL Server table-valued functions.
+
+**Stored procedures get a `[StoredProcedure]` sugar attribute** because the `CommandType = StoredProcedure` flip + output-parameter handling deserve a discoverable surface. Behaviorally equivalent to `[Query(name, CommandType = StoredProcedure)]` but visually distinct in domain code.
+
+**Output parameters via named-tuple returns, NOT `out`/`ref`.** C# spec forbids `out`/`ref` on `async` methods. v1.0 approach: declare return type as `Task<(T result, int newOrderId, ...)>` named-tuple where the tuple-field names match `@param` names on the procedure side. Generator emits `Direction = ParameterDirection.Output` setup on the parameter, runs the command, copies values back into the tuple. v2 ergonomic if there's adopter demand for an `out`-flavored sugar.
+
+**Provider quirks worth flagging in docs:**
+
+- **Postgres functions vs procedures.** Postgres functions returning rowsets are *not* called via `CommandType.StoredProcedure` — they're called via `SELECT * FROM fn(...)`. So `[StoredProcedure("my_pg_function")]` would do the wrong thing on Postgres. Convention: `[StoredProcedure]` is for things that need `CommandType.StoredProcedure` (SQL Server `usp_X`, Postgres `CALL proc_name(...)` procedures since PG 11). Postgres functions → use `[Query("SELECT * FROM my_pg_function(@arg)")]`.
+- **Output parameters on Postgres procedures.** Postgres procedures returning values via OUT params work, but the syntax is `CALL proc(arg, NULL)` with the OUT marker — Npgsql handles this via `Parameter.Direction = Output` like SQL Server. Same generator emit.
+- **Return values vs result sets.** SQL Server sprocs can have both `RETURN value` (an `int`) and result sets. Generator treats the `RETURN` value as discarded by default; capture it via a named-tuple field for an `@RETURN_VALUE` parameter if needed.
+
+### Construct-to-annotation cheat-sheet
+
+| Construct | Annotation | Notes |
+|---|---|---|
+| Scalar UDF | `[Query("SELECT fn(@x)")]` | Just SQL; no special annotation |
+| Table-valued function | `[Query("SELECT ... FROM fn(@x)")]` | Just SQL |
+| Stored procedure (single result set) | `[StoredProcedure("usp_X")]` | Sugar for `CommandType.StoredProcedure` |
+| Stored procedure (output params) | `[StoredProcedure("usp_X")]` returning `Task<(T, int, ...)>` | Named-tuple fields match `@param` names |
+| Stored procedure (multi result set) | `[StoredProcedure("usp_X")]` returning `Task<(T1, List<T2>)>` | Same multi-result-set dispatch as `[Query]` |
+| Postgres function (rowset) | `[Query("SELECT * FROM fn(@x)")]` | Looks like normal SQL |
+| Postgres procedure (CALL) | `[StoredProcedure("proc")]` | Provider routes `CALL` syntax |
+
+### What's NOT in v1.0 sproc/function scope
+
+- Table-valued parameters (SQL Server `READONLY` types) — v2.
+- Array parameters (Postgres `int[]`) — v2.
+- `SqlBulkCopy` semantics — out of scope indefinitely (Dapper.AOT covers it; we don't reinvent).
+
+---
+
+## Section 3 — Convention discovery & type-conversion catalog
+
+### Discovery order for materialization (column → C# type)
+
+```
+1. [Materialize(Factory = "X")] on the type   ← explicit always wins
+2. Type is a built-in primitive / string / Guid / DateTime / decimal / TimeSpan / DateTimeOffset / byte[]
+3. Type has the ZeroAlloc.ValueObjects [ValueObject] attribute   ← ZA-ecosystem dogfood
+4. Type has a static factory T From(TPrim) or T FromValue(TPrim) with single primitive arg
+5. Type is a record with a single positional ctor parameter   ← record OrderId(int Value)
+6. Type is an enum   ← default int round-trip, [StoreAsString] forces string
+7. Type has a multi-arg positional ctor   ← Money(decimal Amount, string Currency)
+8. ZAO040 diagnostic — can't materialize, add [Materialize] or implement convention
+```
+
+### Discovery order for binding (C# value → SQL parameter)
+
+```
+1. [Param(...)] on the C# parameter   ← explicit override
+2. Type is a built-in primitive   ← direct assignment
+3. Type has a Value property/field of primitive type   ← record struct OrderId(int Value)
+4. Type has an Unwrap() / GetValue() method returning a primitive   ← rare, opt-in
+5. Type is an enum   ← default int, [StoreAsString] forces string
+6. Type has a multi-arg shape (Money)   ← unpack into multiple parameters
+7. ZAO041 diagnostic — can't bind, add [Param] or convention method
+```
+
+### Worked examples
+
+```csharp
+// 1. Simple value-object (record struct with Value property)
+public readonly record struct OrderId(int Value);
+// Materialization: new OrderId(reader.GetInt32(ord))
+// Binding:         p.Value = id.Value;
+
+// 2. Enum (default int round-trip)
+public enum OrderStatus { Pending = 0, Cancelled = 1 }
+// Materialization: (OrderStatus)reader.GetInt32(ord)
+// Binding:         p.Value = (int)status;
+
+// 3. Enum (string round-trip via type-level attribute)
+[StoreAsString]
+public enum OrderStatus { Pending, Cancelled }
+// Materialization: Enum.Parse<OrderStatus>(reader.GetString(ord))
+// Binding:         p.Value = status.ToString();
+
+// 4. Multi-column composite — Money
+public readonly record struct Money(decimal Amount, string Currency);
+// Used inside a flat row:
+public sealed record OrderRow(int Id, Money Total);
+// SELECT clause must produce: Id, Total_Amount, Total_Currency  (3 columns)
+// Materialization:
+//   new OrderRow(reader.GetInt32(0), new Money(reader.GetDecimal(1), reader.GetString(2)))
+// Binding (when Money is a method parameter):
+//   p_total_amount.Value = total.Amount;
+//   p_total_currency.Value = total.Currency;
+
+// 5. Domain entity with explicit factory
+public sealed class Order
+{
+    public static Order Materialize(OrderId id, CustomerId cust, OrderStatus status, Money total, IEnumerable<OrderLine> lines)
+        => /* ... */;
+}
+[return: Materialize(Factory = "Materialize")]
+[Query("...")]
+public partial Task<Order?> GetByIdAsync(OrderId id, CancellationToken ct);
+```
+
+### Nullable handling
+
+| C# shape | Materialization | Binding |
+|---|---|---|
+| `int?` | `reader.IsDBNull(ord) ? (int?)null : reader.GetInt32(ord)` | `p.Value = v.HasValue ? (object)v.Value : DBNull.Value;` |
+| `string?` | `reader.IsDBNull(ord) ? null : reader.GetString(ord)` | Same DBNull guard |
+| `OrderId?` (Nullable\<struct\>) | `IsDBNull(ord) ? null : new OrderId(reader.GetInt32(ord))` | Same DBNull guard |
+| `Money?` (composite) | If **all** composite columns are DBNull → `null`; if **any** are DBNull → ZAO050 / runtime throw | All-or-nothing |
+| Non-nullable reference type | `reader.GetString(ord)` — throws on DBNull | Throws on null |
+
+### ZeroAlloc.ValueObjects integration (dogfood)
+
+When the generator sees a type marked `[ValueObject]` from `ZeroAlloc.ValueObjects`, it short-circuits the discovery and uses ZA.ValueObjects' generated shape (`From(...)` static factory + `Value` property + implicit operator). Result: **adopters who use ZA.ValueObjects + ZA.ORM together write zero materialization attributes for value-objects.**
+
+### The shared TypeConversions package
+
+`ZeroAlloc.TypeConversions` is a build-time-only netstandard2.0 helper library consumed by both `ZeroAlloc.ORM.Generator` and (later) `ZeroAlloc.Mapping.Generator`. Single source of truth for "what is a value-object" and "how do I round-trip a Money." When ZA.Mapping adopts it (separate PR on that library), the conventions stay locked-step automatically.
+
+### Built-in primitive ↔ DbType catalog (locked at v1.0)
+
+```
+int / int?            → DbType.Int32      → reader.GetInt32 / IsDBNull
+long / long?          → DbType.Int64
+short / short?        → DbType.Int16
+byte / byte?          → DbType.Byte
+bool / bool?          → DbType.Boolean
+decimal / decimal?    → DbType.Decimal
+double / double?      → DbType.Double
+float / float?        → DbType.Single
+string / string?      → DbType.String (provider defaults; [Param(DbType = ...)] for overrides)
+Guid / Guid?          → DbType.Guid
+DateTime / DateTime?  → DbType.DateTime
+DateTimeOffset / DateTimeOffset? → DbType.DateTimeOffset
+TimeSpan / TimeSpan?  → DbType.Time
+byte[] / byte[]?      → DbType.Binary
+```
+
+**Not built-in (v1.0):** `BigInteger`, `Half`, `Int128`/`UInt128`, custom date types. Add via `[Materialize]` until v2 broadens the catalog.
+
+### Provider quirks — documented, not generator-encoded
+
+- **Npgsql `timestamp` vs `timestamptz`:** default `DateTime → timestamp without time zone`. Use `DateTimeOffset` for `timestamptz`.
+- **SqlClient `VARCHAR` vs `NVARCHAR`:** default `string → NVARCHAR`. Use `[Param(DbType = DbType.AnsiString)]` for legacy VARCHAR columns.
+- **Sqlite `decimal`:** Microsoft.Data.Sqlite stores `decimal` as text. The existing `MoneyConverter.FromStorage` pattern in za-clean migrates to a `[Materialize(Factory = "FromStorage")]` annotation on `Money`.
+
+### Generator validation — what we CAN check at compile time
+
+| Check | Diagnostic |
+|---|---|
+| Materialization type has no resolvable construction strategy | ZAO040 (error) |
+| Binding parameter type has no resolvable unwrap strategy | ZAO041 (error) |
+| `[StoreAsString]` on non-enum | ZAO042 (error) |
+| Composite type used in a nullable position | ZAO050 (warning) |
+| `[Materialize(Factory = "X")]` references missing method | ZAO043 (error) |
+| SQL parameter name has no matching C# parameter | ZAO011 (warning) |
+
+### What we CAN'T check
+
+- SQL column count vs expected materialization column count (no SQL parser).
+- DB schema vs C# types (no compile-time DB connection).
+- Provider-specific syntax errors.
+
+Runtime errors with clear messages. v2+ could add a SQL-parser-based analyzer.
+
+---
+
+## Section 4 — Diagnostics catalog, versioning, AOT contract, error model
+
+### Diagnostic catalog (stable codes)
+
+Severity tiers: **Error** blocks build, **Warning** surfaces but doesn't block, **Hidden** only fires when explicitly enabled.
+
+#### Method signature contract (ZAO001-ZAO009)
+
+| Code | Severity | Trigger |
+|---|---|---|
+| ZAO001 | Error | Annotated method is not `partial` |
+| ZAO002 | Error | Return type isn't `Task<T>`, `ValueTask<T>`, `IAsyncEnumerable<T>`, `Task`, or `ValueTask` |
+| ZAO003 | Error | Containing type has no resolvable `IAsyncDbConnection` |
+| ZAO004 | Error | Containing type is not `partial class` / `partial struct` |
+| ZAO005 | Error | More than one of `[Query]` / `[Command]` / `[StoredProcedure]` on the same method |
+| ZAO006 | Warning | Method has more than one `CancellationToken` parameter |
+| ZAO007 | Error | `IAsyncEnumerable<T>` return without `[EnumeratorCancellation]` on the CT param |
+| ZAO008 | Error | `[Query]` SQL contains a `;` and return type is single-result |
+| ZAO009 | Warning | Method has redundant `async` keyword |
+
+#### SQL + parameters (ZAO010-ZAO029)
+
+| Code | Severity | Trigger |
+|---|---|---|
+| ZAO010 | Error | `Sql` argument is empty/whitespace |
+| ZAO011 | Warning | SQL has `@param` token with no matching C# parameter |
+| ZAO012 | Warning | C# parameter has no matching `@param` token |
+| ZAO013 | Error | `FromResource = true` but resource not found |
+| ZAO014 | Error | `[Param(Name = "X")]` collides with another parameter |
+| ZAO015 | Error | `[Param(DbType = ...)]` incompatible with C# type |
+
+#### Materialization & dispatch (ZAO030-ZAO059)
+
+| Code | Severity | Trigger |
+|---|---|---|
+| ZAO030 | Warning | Generator can't validate SQL column count |
+| ZAO031 | Error | Return-type dispatch is ambiguous |
+| ZAO032 | Error | Multi-result-set tuple > `;`-separated statements |
+| ZAO033 | Error | Multi-result-set tuple < `;`-separated statements |
+| ZAO040 | Error | No resolvable construction strategy |
+| ZAO041 | Error | No resolvable unwrap strategy |
+| ZAO042 | Error | `[StoreAsString]` on non-enum |
+| ZAO043 | Error | `[Materialize(Factory = "X")]` references missing method |
+| ZAO044 | Error | Type pattern matches multiple discovery rules with equal priority |
+| ZAO050 | Warning | Composite nullable position — partial-null undetectable at compile time |
+
+#### Stored procedures (ZAO060-ZAO069)
+
+| Code | Severity | Trigger |
+|---|---|---|
+| ZAO060 | Error | `[StoredProcedure]` method uses `out`/`ref` parameter |
+| ZAO061 | Error | `[StoredProcedure]` name is empty |
+| ZAO062 | Warning | Named-tuple return field doesn't match any procedure parameter |
+
+#### Ecosystem (ZAO070-ZAO079)
+
+| Code | Severity | Trigger |
+|---|---|---|
+| ZAO070 | Hidden | Parameter has `[Validate]` and class implements `IRequestHandler<,>` (teaching aid: validate at request boundary, not repo) |
+
+#### Generator-internal (ZAO900-ZAO999)
+
+Reserved for source-gen-side errors. ZAO900: "generator failed with internal exception — file an issue."
+
+### Runtime error model
+
+The generator emits raw ADO.NET calls; runtime exceptions propagate as the provider throws them (`NpgsqlException`, `SqliteException`, `SqlException`). **We do not wrap provider exceptions.** Wrapping would lose provider-specific diagnostic info (Postgres error codes, SqlServer error numbers) consumers need for retry policies and observability.
+
+What we DO wrap:
+
+| Scenario | Exception type |
+|---|---|
+| `[Materialize(Factory = "X")]` factory throws | `ZeroAllocOrmMaterializationException` (wraps inner) |
+| Composite `Money?` has mixed-null columns | `ZeroAllocOrmMaterializationException` |
+| Output-parameter readback type coercion fails | `ZeroAllocOrmMaterializationException` |
+| Generator-version vs runtime-version mismatch | `ZeroAllocOrmVersionMismatchException` |
+
+Four cases. Everything else passes through.
+
+### Generator output discipline
+
+- One generated file per annotated source file: `OrderRepository.cs` → `OrderRepository.g.cs`.
+- Deterministic output: same input + same generator version = byte-identical output.
+- Human-readable emit: indented, commented, no obfuscation.
+- No `<auto-generated>` header trickery to skip analyzer rules — emit passes the same gates as hand-written code.
+- `[GeneratedCodeAttribute]` on emitted partial-method declarations.
+- `#nullable enable` + correct nullable annotations.
+
+### AOT contract
+
+`ZeroAlloc.ORM` and `ZeroAlloc.ORM.Abstractions` ship with `<IsAotCompatible>true</IsAotCompatible>` + `<IsTrimmable>true</IsTrimmable>`. Emitted code is reflection-free by construction. CI `aot-publish-smoke` mirrors AdoNet.Async's pattern.
+
+**Not covered:** consumer-side `JsonSerializer.Serialize` without `JsonTypeInfo<T>`, or reflection on materialized POCOs — those are downstream contracts. IL2026 fires at the consumer's call site, not ours.
+
+### Versioning policy
+
+Strict SemVer. **MAJOR bumps:**
+
+- Adding a required member to any public interface in `Abstractions`.
+- Removing/renaming a public attribute or its property.
+- Changing emit shape requiring a different runtime helper signature.
+- Removing a diagnostic code.
+- Tightening discovery order.
+
+**MINOR:** new attributes, optional properties, new diagnostic codes, loosening discovery, new built-in primitives.
+
+**PATCH:** bug fixes preserving emit-shape and analyzer behavior.
+
+**Generator + runtime package version coupling.** Lockstep — same version on every release. Runtime helpers carry `[GeneratorVersionRequirement(major: 1)]`; generator emits ZAO901 if mismatched.
+
+### Future-ZA-ecosystem compatibility
+
+- **ZA.Mapping bumps:** shared `ZeroAlloc.TypeConversions` package version is the contract. Both downstream libraries bump alongside on major catalog changes.
+- **AdoNet.Async bumps:** PackageReference uses `[1.*]` floating-minor. Major bumps require a matching ZA.ORM release.
+- **ZA.ValueObjects bumps:** depend on `[ValueObject]` attribute being stable. Worst case: ZA.ORM handles both shapes for one release cycle before dropping v1.
+
+---
+
+## Section 4.5 — ZeroAlloc ecosystem integration matrix (amendment)
+
+| Package | Integration | v1.0 verdict |
+|---|---|---|
+| **ZA.ValueObjects** | Core dependency (build-time via TypeConversions) | ✅ Integrated |
+| **ZA.Mapping** | Soft coupling via shared TypeConversions | ✅ Composable |
+| **ZA.Mediator** | None — orthogonal layer | ⚪ No coupling |
+| **ZA.Validation** | None — orthogonal layer | ⚪ No coupling |
+| **ZA.Authorization** | None — orthogonal layer | ⚪ No coupling |
+| **ZA.Inject** | Consumer-controlled (consumer writes `[Scoped]` on partial class; generators independent) | ✅ Compatible |
+| **ZA.Rest** | None — different call-site surface | ⚪ Must verify no source-gen collision in CI |
+| **ZA.Telemetry** | Built-in `ActivitySource` (always-emit, low-cost when unobserved) | ✅ Ship own ActivitySource |
+| **ZA.Analyzers** | Transitive via `Directory.Build.props` | ✅ Standard plumbing |
+| **ZA.AsyncEvents** | None | ⚪ Not relevant |
+| **ZA.Results** | None — return raw types | ⚪ No coupling in v1.0 |
+
+### Two cases elaborated
+
+**ZA.Inject — generator-transparent.** Consumer writes `[Scoped]` on the partial class declaration. ZA.Inject's source-gen sees the class declaration; ZA.ORM's source-gen emits the partial method body. Both generators write into different parts of the same partial type without coordination. Generator order is irrelevant because ZA.Inject registers a *type* (not methods), and at runtime the type has both the declaration and the emit merged.
+
+**ZA.Telemetry — built-in `ActivitySource`.** Named `ZeroAlloc.ORM`, lives in the runtime package as a public static field. One span per `[Query]`/`[Command]`/`[StoredProcedure]` invocation with OTel semantic-convention tags:
+
+```
+db.system          = "postgresql" | "sqlite" | "sqlserver"
+db.statement       = first 256 chars of SQL
+db.operation       = "Query" | "Command" | "StoredProcedure"
+za.orm.method      = "OrderRepository.GetByIdAsync"
+za.orm.batch       = true | false
+za.orm.result.rows = <count>
+```
+
+Opt-in at consumer side via `t.AddSource("ZeroAlloc.ORM")`. Zero overhead when unobserved. **NOT the same thing as ZA.Telemetry's `[Trace]` attribute** — that's general-purpose method-level instrumentation, layerable on top of ZA.ORM. Our built-in source is the always-emit baseline.
+
+### Verified-in-v1.0 collision case
+
+**ZA.Rest source-generator + ZA.ORM source-generator in the same project.** Gated by `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke` — single project consuming both generators, AOT-publishing, runs successfully. Blocks v1.0 release until green.
+
+### Future-work candidates
+
+- `ZeroAlloc.ORM.Results` — detects `Task<Result<T, E>>` return types, emits Result-wrapped versions. v2.
+- `ZeroAlloc.ORM.Validation` — pre-execution validation pipeline. v2+ if demand.
+
+---
+
+## Section 5 — Test strategy, milestones, repo bootstrap
+
+### Test strategy (five layers + collision gate)
+
+| Layer | Project | What it proves |
+|---|---|---|
+| **Unit** | `tests/ZeroAlloc.ORM.Tests` | Runtime helpers in isolation |
+| **Generator snapshot** | `tests/ZeroAlloc.ORM.Generator.Tests` | Emit matches expected output (Verify.NET) |
+| **Integration** | `tests/ZeroAlloc.ORM.Integration.Tests` | Full pipeline against Sqlite in-memory (default) + Testcontainers-Postgres (provider-specific) |
+| **AOT smoke** | `tests/ZeroAlloc.ORM.AotSmoke` | Linux-x64 `PublishAot=true` consumer runs cleanly. Mandatory CI gate. |
+| **Benchmark** | `tests/ZeroAlloc.ORM.Benchmarks` | BDN overhead vs hand-written ADO.NET and Dapper.AOT |
+| **Collision smoke** | `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke` | ZA.Rest + ZA.ORM in one AOT-published project. Gates v1.0 release. |
+
+**Tooling:** Verify.NET for snapshots, Sqlite in-memory for default integration tests, Testcontainers-Postgres for provider tests, NSubstitute + FluentAssertions matching AdoNet.Async's toolchain.
+
+**Coverage:** 90% line coverage on `ZeroAlloc.ORM` runtime; generator coverage measured separately.
+
+### Milestones — 13-week v0.1→v1.0
+
+| Milestone | Duration | Scope | Ships as |
+|---|---|---|---|
+| **v0.1** | 4 weeks | Core attributes, single-result returns, FlatRow on positional records, primitive parameter binding, `IAsyncDbConnection` primary-ctor injection, snapshot rig, AOT gate, ZAO001-ZAO012 | `0.1.0-preview` |
+| **v0.2** | 2 weeks | Value-object discovery (ZA.ValueObjects), enum int round-trip + `[StoreAsString]`, multi-arg domain entities | `0.2.0-preview` |
+| **v0.3** | 2 weeks | Multi-result-set via `IAsyncDbBatch`, `IAsyncEnumerable<T>` streaming, tuple-of-result-sets dispatch | `0.3.0-preview` |
+| **v0.4** | 2 weeks | `[Command]` (NonQuery / Scalar / Identity), `[StoredProcedure]` with named-tuple outputs, `RETURNING` per provider | `0.4.0-preview` |
+| **v0.5** | 1 week | Multi-column composites (`Money`), `[Materialize(Factory)]` custom resolution, nullable composite handling | `0.5.0-preview` |
+| **v0.6** | 1 week | Built-in `ActivitySource`, full diagnostics catalog (ZAO013-ZAO070), provider-quirk doc notes in emit | `0.6.0-preview` |
+| **v0.7** | 1 week | Benchmark suite, ZA.Rest collision smoke test, README, API review | `0.7.0-preview` |
+| **v1.0** | API freeze | Polish, doc-link finalization | `1.0.0` |
+
+Total: ~13 weeks single-developer pace. Independently shippable as pre-release NuGet per milestone.
+
+### Repo bootstrap
+
+```
+ZeroAlloc-Net/ZeroAlloc.ORM/
+├── README.md
+├── CHANGELOG.md                                ← release-please-managed
+├── Directory.Build.props                       ← Meziantou + Roslynator + ZA.Analyzers + ErrorProne
+├── GitVersion.yml
+├── release-please-config.json
+├── ZeroAlloc.ORM.slnx
+├── docs/
+│   ├── design/
+│   │   └── 2026-05-30-v1.0-design.md          ← copy of this doc
+│   └── diagnostics/
+│       └── ZAO001.md ... ZAO070.md             ← one per diagnostic
+├── src/
+│   ├── ZeroAlloc.ORM.Abstractions/
+│   ├── ZeroAlloc.ORM/
+│   ├── ZeroAlloc.ORM.Generator/
+│   ├── ZeroAlloc.TypeConversions/             ← separate package name, no .ORM prefix
+│   └── ZeroAlloc.ORM.Analyzers/
+├── tests/
+│   ├── ZeroAlloc.ORM.Tests/
+│   ├── ZeroAlloc.ORM.Generator.Tests/
+│   ├── ZeroAlloc.ORM.Integration.Tests/
+│   ├── ZeroAlloc.ORM.AotSmoke/                ← Mandatory CI gate
+│   ├── ZeroAlloc.ORM.GeneratorCollision.AotSmoke/  ← Gates v1.0 release
+│   └── ZeroAlloc.ORM.Benchmarks/
+└── .github/workflows/
+    ├── ci.yml
+    ├── aot-smoke.yml
+    ├── collision-smoke.yml
+    └── release-please.yml
+```
+
+### Documentation
+
+- **In-repo:** `docs/design/` for design docs, `docs/diagnostics/` per-code reference.
+- **Website:** Docusaurus at `https://zeroalloc-net.github.io/ZeroAlloc.ORM/`, mirroring AdoNet.Async's site.
+- **API reference:** DocFX-generated from XML doc comments.
+- **Cookbook:** focused recipes in `docs/cookbook/`:
+   - Read single row → flat record
+   - Read head + lines tuple
+   - Stream large result sets via `IAsyncEnumerable`
+   - Insert and return identity
+   - Stored procedure with output parameters
+   - Custom materialization via `[Materialize(Factory)]`
+   - Provider quirks
+
+### Day-1 actions (after design approval)
+
+1. Create `ZeroAlloc-Net/ZeroAlloc.ORM` repo (user-owned action — org permissions).
+2. First commit: skeleton (`Directory.Build.props`, workflow placeholders, empty src/tests folders, README placeholder, `ZeroAlloc.ORM.slnx`).
+3. Second commit: this design doc as `docs/design/2026-05-30-v1.0-design.md`.
+4. Third commit: v0.1 milestone planning issue / project board scaffolding.
+
+Then implementation work begins per milestone.
+
+---
+
+## Appendix — Open questions deferred to implementation
+
+- **SQL placement: `FromResource = true` ergonomics.** Generator-side resource discovery from MSBuild item-group `<EmbeddedResource>` declarations. Decide on namespace convention (`MyApp.Sql.GetOrderById` vs `MyApp.Resources.GetOrderById.sql`). Likely settles when we write the first integration test.
+- **Diagnostic doc URLs.** Need a doc site live before generator emits `helpLinkUri`. Pre-1.0 the URLs can be stubbed to `github.com/...`/diagnostics/ZAO0xx.md`.
+- **GitHub Actions repo permissions.** AdoNet.Async's existing `ZeroAlloc-Net` org membership is the template; verify ZA.ORM repo gets the same NuGet API key and release-please permissions.
+- **Initial author of release-please-config.json.** AdoNet.Async's existing config is the starting point — port it and adjust `packages` for the 5 NuGet artifacts.
+- **Per-milestone "feature complete" review gate.** Each milestone preview release should have a 1-day stop where we re-check the design doc against the emit and update Sections 2-3 with any divergence.
+
+## Appendix — Locked design decisions
+
+These were settled during the brainstorm and should not be reopened without strong cause:
+
+- **Q1 / call-site shape:** Annotated `partial` methods. Not interceptors, not extension methods.
+- **Q3 / batch strategy:** `IAsyncDbBatch` first, `;`-joined SQL as auto-fallback when `!CanCreateBatch`.
+- **Q4 / AdoNet.Async dependency:** Hard dependency on `AdoNet.Async` + `AdoNet.Async.Adapters`. Dogfood.
+- **Q5 / materialization:** Both flat records and domain entities, with return-type-driven dispatch.
+- **Ecosystem matrix:** Section 4.5. Eight orthogonal, three integrated (ValueObjects core, Mapping soft-coupled, Inject consumer-controlled), one needs collision test (Rest).
+- **Versioning:** Generator + runtime lockstep, single version train.
+- **Built-in `ActivitySource`:** Yes. Always-emit baseline.

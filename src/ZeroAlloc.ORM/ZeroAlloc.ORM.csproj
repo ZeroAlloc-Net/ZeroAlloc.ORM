@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM</RootNamespace>
+    <PackageId>ZeroAlloc.ORM</PackageId>
+    <Title>ZeroAlloc.ORM</Title>
+    <Description>Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate partial methods with [Query] / [Command] / [StoredProcedure]; the generator emits typed parameter binding + materialization against AdoNet.Async's IAsyncDbConnection. Zero runtime reflection.</Description>
+    <PackageTags>zeroalloc;orm;ado.net;source-generator;nativeaot;trimming;dapper-aot-alternative;adonet-async</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ZeroAlloc.ORM.Abstractions\ZeroAlloc.ORM.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AdoNet.Async substrate (hard dependency per design doc Section 1, Goal 5). -->
+    <PackageReference Include="AdoNet.Async" Version="$(AdoNetAsyncVersion)" />
+    <PackageReference Include="AdoNet.Async.Adapters" Version="$(AdoNetAsyncVersion)" />
+  </ItemGroup>
+</Project>

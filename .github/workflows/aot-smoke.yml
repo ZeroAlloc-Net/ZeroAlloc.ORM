@@ -1,0 +1,63 @@
+name: AOT Smoke
+
+# Mandatory gate: publishes tests/ZeroAlloc.ORM.AotSmoke with PublishAot=true on
+# linux-x64 and runs the resulting native binary. Fails on any new IL2026/IL2046/IL3050
+# surfaced by the publish-time trimmer, or on runtime correctness check failures.
+#
+# The smoke test is added to the repo in milestone v0.1 (see docs/plans/za-orm-backlog.md).
+# Until then this workflow is a no-op placeholder so the wiring exists.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  aot-publish-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Skip when smoke project does not exist yet
+        id: check
+        run: |
+          if [ -d "tests/ZeroAlloc.ORM.AotSmoke" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "AOT smoke project not present yet — skipping. Will activate when v0.1 lands."
+          fi
+
+      - name: Restore smoke test
+        if: steps.check.outputs.exists == 'true'
+        run: dotnet restore tests/ZeroAlloc.ORM.AotSmoke/ZeroAlloc.ORM.AotSmoke.csproj
+
+      - name: Publish AOT smoke test (linux-x64)
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          dotnet publish tests/ZeroAlloc.ORM.AotSmoke/ZeroAlloc.ORM.AotSmoke.csproj \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -p:PublishAot=true \
+            -o ./aot-smoke-out
+
+      - name: Run AOT-published smoke test
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          chmod +x ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
+          ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
+
+      - name: Report binary size
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          ls -lh ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
+          file ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke

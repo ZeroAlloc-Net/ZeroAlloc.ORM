@@ -1,0 +1,58 @@
+name: Collision Smoke
+
+# Verifies that ZeroAlloc.ORM.Generator composes with ZeroAlloc.Rest.Generator
+# (and any other in-ecosystem source generator) in the same compilation unit
+# under PublishAot=true. This is the gap EF Core's precompile-queries pipeline
+# can't bridge — proving we don't fall into the same trap is the v1.0 release gate.
+#
+# The collision smoke project is added in milestone v0.7. Until then this workflow
+# is a no-op placeholder so the wiring exists.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  collision-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Skip when collision smoke project does not exist yet
+        id: check
+        run: |
+          if [ -d "tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Collision smoke project not present yet — skipping. Will activate in v0.7."
+          fi
+
+      - name: Restore
+        if: steps.check.outputs.exists == 'true'
+        run: dotnet restore tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj
+
+      - name: Publish AOT (linux-x64)
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          dotnet publish tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -p:PublishAot=true \
+            -o ./collision-out
+
+      - name: Run AOT-published collision smoke
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          chmod +x ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
+          ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke

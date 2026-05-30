@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "ZeroAlloc.ORM",
+      "component": "orm",
+      "include-component-in-tag": false
+    },
+    "src/ZeroAlloc.ORM.Abstractions": {
+      "release-type": "simple",
+      "package-name": "ZeroAlloc.ORM.Abstractions",
+      "component": "abstractions",
+      "include-component-in-tag": true
+    },
+    "src/ZeroAlloc.ORM.Generator": {
+      "release-type": "simple",
+      "package-name": "ZeroAlloc.ORM.Generator",
+      "component": "generator",
+      "include-component-in-tag": true
+    },
+    "src/ZeroAlloc.TypeConversions": {
+      "release-type": "simple",
+      "package-name": "ZeroAlloc.TypeConversions",
+      "component": "typeconversions",
+      "include-component-in-tag": true
+    },
+    "src/ZeroAlloc.ORM.Analyzers": {
+      "release-type": "simple",
+      "package-name": "ZeroAlloc.ORM.Analyzers",
+      "component": "analyzers",
+      "include-component-in-tag": true
+    }
+  },
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix",  "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "refactor", "section": "Code Refactoring" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "test", "section": "Tests" },
+    { "type": "deps", "section": "Dependencies" },
+    { "type": "build", "section": "Build System", "hidden": true },
+    { "type": "ci",   "section": "Continuous Integration", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous", "hidden": true }
+  ]
+}

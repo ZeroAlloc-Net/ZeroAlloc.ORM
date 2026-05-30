@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM.Analyzers</RootNamespace>
+    <PackageId>ZeroAlloc.ORM.Analyzers</PackageId>
+    <Title>ZeroAlloc.ORM.Analyzers</Title>
+    <Description>Compile-time diagnostics (ZAO001-ZAO070) for ZeroAlloc.ORM. Catches misuse of [Query] / [Command] / [StoredProcedure] / [Param] / [Materialize] / [StoreAsString] attributes before codegen runs. Build-time only.</Description>
+    <PackageTags>zeroalloc;orm;analyzer;roslyn;diagnostics</PackageTags>
+
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IsPackable>true</IsPackable>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+</Project>
