@@ -414,7 +414,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     EmitScalarInt(sb, m);
                     break;
                 default:
-                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses this.{m.ConnectionAccess}) -- v0.1 Task 4.x");
+                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {m.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
             }
         }
@@ -434,7 +434,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}(global::System.Threading.CancellationToken ct)");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = this.{m.ConnectionAccess};");
+        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
         sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
         sb.AppendLine("        try");

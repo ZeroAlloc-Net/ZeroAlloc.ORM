@@ -8,7 +8,7 @@ partial class Repo
 {
     public partial async global::System.Threading.Tasks.Task<int> GetOneAsync(global::System.Threading.CancellationToken ct)
     {
-        var __conn = this.connection;
+        var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
         if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);
         try
