@@ -124,6 +124,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO007 — IAsyncEnumerable<T> requires a CT with [EnumeratorCancellation].
+        // Two distinct cases share the diagnostic id; the second message arg disambiguates
+        // them so the adopter sees a fix that actually applies to their code:
+        //   * a CT param exists but is missing the attribute — they need to add it
+        //   * no CT param at all — they need to add the param itself
         if (IsIAsyncEnumerable(method.ReturnType))
         {
             var ctParam = method.Parameters.FirstOrDefault(p =>
@@ -134,10 +138,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     StringComparison.Ordinal));
             if (!hasEnumeratorCancellation)
             {
+                var reason = ctParam is null
+                    ? "has no CancellationToken parameter"
+                    : "its CancellationToken parameter lacks [EnumeratorCancellation]";
                 diagnostics.Add(new DiagnosticInfo(
                     DescriptorId: "ZAO007",
                     Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
-                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, reason))));
             }
         }
 
@@ -487,16 +494,74 @@ public sealed class OrmGenerator : IIncrementalGenerator
             or ("IAsyncEnumerable", 1);
     }
 
-    // Naive `;`-count statement detector. Does NOT understand SQL string literals,
-    // line comments (`--`), block comments (`/* */`), or PostgreSQL dollar-quoted
-    // strings (`$tag$...$tag$`). For v0.1 this is acceptable — the most common case
-    // (head + lines SELECT) works correctly. A proper tokeniser lands in v0.2.
-    // TODO(v0.2): replace with a real SQL statement tokeniser.
+    // Statement detector that recognizes single- and double-quoted SQL string
+    // literals (with `''` / `""` escapes) before counting `;`. A bare `;` ends
+    // a statement; a `;` inside a quoted literal does not.
+    // Handles SQL string literals; comments + dollar-quoted strings still TODO(v0.2).
     private static int CountStatements(string sql)
     {
         if (string.IsNullOrEmpty(sql)) return 0;
-        var trimmed = sql.TrimEnd().TrimEnd(';');
-        return trimmed.Count(c => c == ';') + 1;
+        var count = 1;
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        for (var i = 0; i < sql.Length; i++)
+        {
+            var c = sql[i];
+            if (inSingleQuote)
+            {
+                // SQL string escape: '' inside '...' is a literal '.
+                if (c == '\'')
+                {
+                    if (i + 1 < sql.Length && sql[i + 1] == '\'')
+                    {
+                        i++; // skip the escaped quote
+                        continue;
+                    }
+                    inSingleQuote = false;
+                }
+                continue;
+            }
+            if (inDoubleQuote)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < sql.Length && sql[i + 1] == '"')
+                    {
+                        i++;
+                        continue;
+                    }
+                    inDoubleQuote = false;
+                }
+                continue;
+            }
+            switch (c)
+            {
+                case '\'':
+                    inSingleQuote = true;
+                    break;
+                case '"':
+                    inDoubleQuote = true;
+                    break;
+                case ';':
+                    // A trailing `;` (with only whitespace after) doesn't open a new
+                    // statement. Walk the remainder inline to avoid the substring
+                    // allocation of `sql[(i + 1)..].TrimStart()`.
+                    if (IsOnlyWhitespaceAfter(sql, i + 1))
+                        return count;
+                    count++;
+                    break;
+            }
+        }
+        return count;
+    }
+
+    private static bool IsOnlyWhitespaceAfter(string sql, int startIndex)
+    {
+        for (var j = startIndex; j < sql.Length; j++)
+        {
+            if (!char.IsWhiteSpace(sql[j])) return false;
+        }
+        return true;
     }
 
     private static bool IsMultiResultReturnType(ITypeSymbol returnType)
@@ -615,7 +680,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var firstMethod = repo.Methods.Values.IsDefault || repo.Methods.Values.Length == 0
             ? null
             : repo.Methods.Values[0];
-        if (firstMethod is not null && !firstMethod.ConnectionResolved)
+        // ZAO003 fires when no IAsyncDbConnection source is found on the containing
+        // type. ZAO004 fires when the containing type itself isn't `partial`. When both
+        // apply, ZAO004 is the dominant problem: a non-partial type cannot host generated
+        // code at all, so the missing-connection guidance is premature noise. Surface
+        // only ZAO004 in that combined case so the adopter sees one actionable error,
+        // fixes it, and re-evaluates the rest (including a possibly still-missing
+        // connection) on the next compile.
+        if (firstMethod is not null && !firstMethod.ConnectionResolved && firstMethod.ContainingTypePartial)
         {
             hadError = true;
             context.ReportDiagnostic(Diagnostic.Create(
