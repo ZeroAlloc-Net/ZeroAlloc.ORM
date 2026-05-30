@@ -14,3 +14,5 @@ ZAO006  | ZeroAlloc.ORM | Warning  | Method has multiple CancellationToken param
 ZAO007  | ZeroAlloc.ORM | Error    | IAsyncEnumerable<T> return without [EnumeratorCancellation]
 ZAO008  | ZeroAlloc.ORM | Error    | Multi-statement SQL with single-result return type
 ZAO009  | ZeroAlloc.ORM | Warning  | Redundant async keyword on generated partial
+ZAO020  | ZeroAlloc.ORM | Info     | [Query(FromResource)] not yet implemented in v0.1
+ZAO021  | ZeroAlloc.ORM | Info     | [Query(Batch = ...)] non-Auto value not yet implemented in v0.1

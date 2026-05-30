@@ -60,4 +60,14 @@ internal static class DiagnosticDescriptors
         "ZAO009", "Redundant async keyword on generated partial",
         "Method '{0}' is marked 'async' but the generator emits the async state machine. Remove the 'async' keyword from the partial declaration.",
         DiagnosticSeverity.Warning);
+
+    public static readonly DiagnosticDescriptor ZAO020_FromResourceNotImplemented = Make(
+        "ZAO020", "[Query(FromResource)] not yet implemented in v0.1",
+        "Method '{0}' uses [Query(FromResource = true)] but the embedded-resource lookup path is deferred to a future milestone. The Sql string is currently treated as literal inline SQL.",
+        DiagnosticSeverity.Info);
+
+    public static readonly DiagnosticDescriptor ZAO021_BatchNotImplemented = Make(
+        "ZAO021", "[Query(Batch = ...)] non-Auto value not yet implemented in v0.1",
+        "Method '{0}' uses [Query(Batch = {1})] but BatchMode dispatch is deferred to v0.3. The Batch value is currently ignored; queries always use single-command emit.",
+        DiagnosticSeverity.Info);
 }
