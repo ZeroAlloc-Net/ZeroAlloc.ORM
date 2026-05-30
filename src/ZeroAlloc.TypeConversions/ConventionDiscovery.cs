@@ -42,9 +42,44 @@ public static class ConventionDiscovery
             if (TryValueObject(named) is { } voResult) return voResult;
             if (TryStaticFactory(named) is { } facResult) return facResult;
             if (TrySingleArgCtor(named, context) is { } ctorResult) return ctorResult;
+            if (TryEnum(named) is { } enumResult) return enumResult;
         }
 
         return UnknownResult;
+    }
+
+    private const string StoreAsStringAttributeFqn = "ZeroAlloc.ORM.StoreAsStringAttribute";
+
+    // Enums round-trip as their underlying integral type by default. The
+    // [StoreAsString] opt-in marker (defined in ZA.ORM.Abstractions) flips that to
+    // string round-trip so wire-format diffs survive enum reordering. The attribute
+    // match is FQN-based so the discovery layer doesn't depend on Abstractions.
+    private static ConventionResult? TryEnum(INamedTypeSymbol type)
+    {
+        if (type.TypeKind != TypeKind.Enum) return null;
+
+        var kind = HasStoreAsStringAttribute(type)
+            ? ConventionKind.EnumAsString
+            : ConventionKind.Enum;
+
+        return new ConventionResult(
+            kind,
+            Factory: null,
+            Value: null,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
+    }
+
+    private static bool HasStoreAsStringAttribute(INamedTypeSymbol type)
+    {
+        foreach (var attr in type.GetAttributes())
+        {
+            var name = attr.AttributeClass?.ToDisplayString();
+            if (string.Equals(name, StoreAsStringAttributeFqn, System.StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Hand-rolled wrapper types frequently expose `static T From(TPrim)` or
