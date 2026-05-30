@@ -6,9 +6,9 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
-using ZeroAlloc.ORM.Generator.Catalog;
 using ZeroAlloc.ORM.Generator.Diagnostics;
 using ZeroAlloc.ORM.Generator.Model;
+using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator;
 
@@ -418,7 +418,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
     // strongly-typed-reads it. Thin pass-through to PrimitiveCatalog so the rest of
     // the generator keeps its existing call shape; the canonical table lives in
-    // ZeroAlloc.ORM.Generator.Catalog.PrimitiveCatalog.
+    // ZeroAlloc.TypeConversions.PrimitiveCatalog.
     private static string? GetScalarPrimitiveReaderInfo(ITypeSymbol type)
         => PrimitiveCatalog.GetScalarReaderMethod(type);
 

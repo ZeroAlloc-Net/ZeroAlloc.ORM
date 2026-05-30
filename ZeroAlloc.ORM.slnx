@@ -4,7 +4,6 @@
     <Project Path="src/ZeroAlloc.ORM/ZeroAlloc.ORM.csproj" />
     <Project Path="src/ZeroAlloc.ORM.Generator/ZeroAlloc.ORM.Generator.csproj" />
     <Project Path="src/ZeroAlloc.TypeConversions/ZeroAlloc.TypeConversions.csproj" />
-    <Project Path="src/ZeroAlloc.ORM.Analyzers/ZeroAlloc.ORM.Analyzers.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ZeroAlloc.ORM.Abstractions.Tests/ZeroAlloc.ORM.Abstractions.Tests.csproj" />

@@ -21,7 +21,6 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 | **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[Materialize]`, `[StoreAsString]`), exception types. | ✅ |
 | **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
 | **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
-| **ZeroAlloc.ORM.Analyzers** | Compile-time diagnostics (ZAO001-ZAO070). Build-time only. | N/A |
 
 ## Quick Start
 

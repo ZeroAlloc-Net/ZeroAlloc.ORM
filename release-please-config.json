@@ -36,15 +36,6 @@
       "release-as": "0.1.0-preview.1",
       "prerelease": true,
       "prerelease-type": "preview"
-    },
-    "src/ZeroAlloc.ORM.Analyzers": {
-      "release-type": "simple",
-      "package-name": "ZeroAlloc.ORM.Analyzers",
-      "component": "analyzers",
-      "include-component-in-tag": true,
-      "release-as": "0.1.0-preview.1",
-      "prerelease": true,
-      "prerelease-type": "preview"
     }
   },
   "changelog-sections": [

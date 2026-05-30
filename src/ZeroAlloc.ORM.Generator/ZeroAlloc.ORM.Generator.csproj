@@ -21,6 +21,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
+    <!-- The generator depends on ZeroAlloc.TypeConversions at analyzer load time. We
+         reference it with ReferenceOutputAssembly="true" so the compiler resolves the
+         reference, but the analyzer load context (Roslyn) only loads assemblies that
+         appear in the Analyzer ItemGroup of the consumer. The GetDependencyTargetPaths
+         target below augments GetTargetPathWithTargetPlatformMoniker output so that
+         downstream <ProjectReference ... OutputItemType="Analyzer"/> consumers also
+         see TypeConversions.dll as an analyzer. -->
     <ProjectReference Include="..\ZeroAlloc.TypeConversions\ZeroAlloc.TypeConversions.csproj" PrivateAssets="all" />
   </ItemGroup>
 
@@ -34,4 +41,16 @@
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Include="$(OutputPath)\ZeroAlloc.TypeConversions.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
+
+  <!-- Propagate ZeroAlloc.TypeConversions.dll into the Analyzer ItemGroup of any
+       project that references this generator with OutputItemType="Analyzer". Without
+       this, Roslyn fails with FileNotFoundException when OrmGenerator tries to use
+       PrimitiveCatalog from the TypeConversions assembly. -->
+  <Target Name="GetDependencyTargetPaths" AfterTargets="ResolveReferences" Returns="@(TargetPathWithTargetPlatformMoniker)">
+    <ItemGroup>
+      <TargetPathWithTargetPlatformMoniker Include="@(ReferencePath)"
+        Condition="'%(ReferencePath.NuGetPackageId)' == '' AND '%(ReferencePath.Filename)' == 'ZeroAlloc.TypeConversions'"
+        IncludeRuntimeDependency="false" />
+    </ItemGroup>
+  </Target>
 </Project>
