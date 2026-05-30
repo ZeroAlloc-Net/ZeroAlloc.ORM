@@ -22,7 +22,7 @@ public class MaterializeAttributeTests
     }
 
     [Fact]
-    public void Targets_return_value_generic_class_and_struct()
+    public void Targets_return_value_class_and_struct()
     {
         var usage = typeof(MaterializeAttribute)
             .GetCustomAttributes(typeof(AttributeUsageAttribute), inherit: false)
@@ -31,7 +31,6 @@ public class MaterializeAttributeTests
 
         const AttributeTargets expected =
             AttributeTargets.ReturnValue
-            | AttributeTargets.GenericParameter
             | AttributeTargets.Class
             | AttributeTargets.Struct;
 

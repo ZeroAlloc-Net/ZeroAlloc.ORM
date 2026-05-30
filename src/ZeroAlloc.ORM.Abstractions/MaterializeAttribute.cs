@@ -2,12 +2,10 @@ namespace ZeroAlloc.ORM;
 
 /// <summary>
 /// Overrides how the generator materializes a result row. Can be applied to the return
-/// value of a [Query]/[Command] method, to a generic type parameter, or to the target
-/// type itself (class or struct).
+/// value of a [Query]/[Command] method or to the target type itself (class or struct).
 /// </summary>
 [AttributeUsage(
     AttributeTargets.ReturnValue
-    | AttributeTargets.GenericParameter
     | AttributeTargets.Class
     | AttributeTargets.Struct)]
 public sealed class MaterializeAttribute : Attribute
