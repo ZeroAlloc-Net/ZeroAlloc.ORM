@@ -103,11 +103,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // The v0.1 abstraction package doesn't define IAsyncDbConnection yet (it lands in
         // a later phase), so the test compilations see it as an unresolved error type
         // whose ToDisplayString() yields the simple name. In real consumer code the
-        // namespace will be resolvable. Accept both forms.
+        // namespace will be resolvable.
         var display = type.ToDisplayString();
-        return string.Equals(display, IAsyncDbConnectionFullName, StringComparison.Ordinal)
-            || string.Equals(display, IAsyncDbConnectionSimpleName, StringComparison.Ordinal)
-            || string.Equals(type.Name, IAsyncDbConnectionSimpleName, StringComparison.Ordinal);
+        if (string.Equals(display, IAsyncDbConnectionFullName, StringComparison.Ordinal))
+            return true;
+        if (string.Equals(display, IAsyncDbConnectionSimpleName, StringComparison.Ordinal))
+        {
+            // Error-type case (Abstractions doesn't ship IAsyncDbConnection yet — comes from AdoNet.Async).
+            // Accept only when namespace is empty (genuine error type) OR matches the expected namespace.
+            var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+            return ns is "" or "<global namespace>" or "System.Data.Async";
+        }
+        // type.Name fallback removed — too permissive (would match user-defined IAsyncDbConnection
+        // in any namespace).
+        return false;
     }
 
     private static bool IsPrimaryConstructorParameter(IParameterSymbol p)
