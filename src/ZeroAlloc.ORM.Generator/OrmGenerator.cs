@@ -99,6 +99,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO008 — multi-statement SQL with a single-result return type.
+        if (CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO008",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
         // ZAO007 — IAsyncEnumerable<T> requires a CT with [EnumeratorCancellation].
         if (IsIAsyncEnumerable(method.ReturnType))
         {
@@ -197,6 +206,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return (name, arity) is ("Task", 0) or ("Task", 1)
             or ("ValueTask", 0) or ("ValueTask", 1)
             or ("IAsyncEnumerable", 1);
+    }
+
+    private static int CountStatements(string sql)
+    {
+        if (string.IsNullOrEmpty(sql)) return 0;
+        var trimmed = sql.TrimEnd().TrimEnd(';');
+        return trimmed.Count(c => c == ';') + 1;
+    }
+
+    private static bool IsMultiResultReturnType(ITypeSymbol returnType)
+    {
+        // A multi-result-aware shape is any return whose unwrapped (post-Task/ValueTask) type
+        // is a tuple. Naïve check: look for "ValueTuple" / "Tuple" in the display string.
+        var display = returnType.ToDisplayString();
+        return display.Contains("ValueTuple", StringComparison.Ordinal)
+            || display.Contains("Tuple", StringComparison.Ordinal)
+            || display.Contains("(", StringComparison.Ordinal); // tuple syntax sugar like (int, List<int>)
     }
 
     private static bool IsIAsyncEnumerable(ITypeSymbol returnType)
