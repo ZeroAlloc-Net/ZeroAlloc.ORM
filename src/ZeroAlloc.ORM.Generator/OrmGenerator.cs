@@ -973,14 +973,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
+            // Primitive: direct GetXxx. Value-object / single-arg-ctor / static-factory:
+            // wrap the primitive read in the discovered factory call (Phase C tasks
+            // C.2/C.4/C.5). Nullable columns short-circuit to `null` via IsDBNull —
+            // the cast carries the nullable type so the ternary types correctly.
+            var readExpr = $"__reader.{col.GetterMethod}({i})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({readExpr})"
+                    : $"{conv.FactoryFullName}({readExpr})";
+            }
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : __reader.{col.GetterMethod}({i})";
+                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : {readExpr}";
             }
             else
             {
-                expr = $"__reader.{col.GetterMethod}({i})";
+                expr = readExpr;
             }
             sb.AppendLine($"                {expr}{trailing}");
         }
