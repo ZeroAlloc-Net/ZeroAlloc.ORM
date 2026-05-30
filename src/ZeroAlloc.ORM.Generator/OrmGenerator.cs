@@ -85,6 +85,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // (b) Field or (c) get-only property of the right type. Skip compiler-synthesized
         // members (e.g. auto-property backing fields, primary-ctor capture fields) so we
         // return the user-facing identifier instead of `<Foo>k__BackingField`.
+        // First match in source-declaration order wins; ambiguity (multiple connection
+        // sources) will be caught by a future ZAO00x diagnostic.
         foreach (var member in containing.GetMembers())
         {
             if (member.IsImplicitlyDeclared) continue;
