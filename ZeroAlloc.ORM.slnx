@@ -9,6 +9,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/ZeroAlloc.ORM.Abstractions.Tests/ZeroAlloc.ORM.Abstractions.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Generator.Tests/ZeroAlloc.ORM.Generator.Tests.csproj" />
+    <Project Path="tests/ZeroAlloc.ORM.Integration.Tests/ZeroAlloc.ORM.Integration.Tests.csproj" />
   </Folder>
   <Folder Name="/docs/" />
 </Solution>
