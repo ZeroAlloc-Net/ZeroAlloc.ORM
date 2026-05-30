@@ -8,5 +8,6 @@
     <PackageTags>zeroalloc;orm;ado.net;source-generator;nativeaot;trimming</PackageTags>
     <!-- Pure attribute + interface surface, zero runtime reflection. -->
     <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
   </PropertyGroup>
 </Project>

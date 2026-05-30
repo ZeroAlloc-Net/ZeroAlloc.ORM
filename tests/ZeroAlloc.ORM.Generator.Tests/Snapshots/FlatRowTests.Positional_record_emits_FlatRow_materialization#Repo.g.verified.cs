@@ -6,6 +6,7 @@ namespace TestApp;
 
 partial class Repo
 {
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0-preview.1")]
     public partial async global::System.Threading.Tasks.Task<global::TestApp.OrderRow?> GetByIdAsync(int @id, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;

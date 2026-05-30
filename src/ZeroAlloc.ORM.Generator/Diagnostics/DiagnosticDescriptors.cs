@@ -70,4 +70,9 @@ internal static class DiagnosticDescriptors
         "ZAO021", "[Query(Batch = ...)] non-Auto value not yet implemented in v0.1",
         "Method '{0}' uses [Query(Batch = {1})] but BatchMode dispatch is deferred to v0.3. The Batch value is currently ignored; queries always use single-command emit.",
         DiagnosticSeverity.Info);
+
+    public static readonly DiagnosticDescriptor ZAO022_UnknownReturnShape = Make(
+        "ZAO022", "Return type shape not yet supported in v0.1",
+        "Method '{0}' has return type '{1}' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.",
+        DiagnosticSeverity.Info);
 }
