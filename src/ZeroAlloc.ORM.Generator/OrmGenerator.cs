@@ -290,6 +290,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         // with the materialization path so the column emit can pull a
                         // single source of truth.
                         ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+                        // [StoreAsString] enums round-trip as strings; reader is
+                        // GetString and the binding emit calls `.ToString()`.
+                        ConventionKind.EnumAsString => "GetString",
                         _ => null,
                     };
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
@@ -455,6 +458,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // through their matching reader (GetByte / GetInt16 / GetInt64). The
                 // emitter then wraps the read in a `(EnumType)` cast.
                 ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+                // [StoreAsString] enums round-trip as strings; reader is GetString
+                // and the emitter wraps the read in `global::System.Enum.Parse<T>(...)`.
+                ConventionKind.EnumAsString => "GetString",
                 _ => null,
             };
             if (reader is null) return null;
@@ -555,13 +561,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         UnderlyingReader: underlyingReader);
                 }
             case ConventionKind.Enum:
+            case ConventionKind.EnumAsString:
                 {
                     // Enums have no factory method or unwrap property — the emitter
-                    // renders a cast directly. FactoryFullName carries the enum's
-                    // globally-qualified type name so the emitter doesn't have to
-                    // re-format it (`(global::TestApp.OrderStatus)__reader.GetInt32(N)`).
-                    // ValueProperty is intentionally null; parameter binding emits
-                    // `(int)@x` instead of property access.
+                    // renders a cast (`Enum`) or `Enum.Parse<T>(...)` (`EnumAsString`)
+                    // directly. FactoryFullName carries the enum's globally-qualified
+                    // type name so the emitter doesn't have to re-format it; ValueProperty
+                    // is intentionally null. Parameter binding inspects Kind: int-backed
+                    // enums emit `(int)@x`, string-backed enums emit `@x.ToString()`.
                     var typeFqn = resolvedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                     return new ConventionInfo(
                         Kind: (int)resolution.Kind,
@@ -1041,6 +1048,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     (int)ConventionKind.Enum
                         => $"({conv.FactoryFullName}){readExpr}",
+                    // AOT note: Enum.Parse<T> is annotated [RequiresUnreferencedCode]
+                    // but is safe for closed enum types with a finite member set.
+                    // v0.2 ships this baseline; v0.3+ can switch to a source-generated
+                    // parse table if AOT-trim warnings bite a real consumer.
+                    (int)ConventionKind.EnumAsString
+                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
                     _ => conv.FactoryIsCtor
                         ? $"new {conv.FactoryFullName}({readExpr})"
                         : $"{conv.FactoryFullName}({readExpr})",
@@ -1103,6 +1116,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the integral value; SQL stores it as INTEGER.
                     var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
                     valueExpr = $"({castType})@{p.Name}";
+                }
+                else if (conv.Kind == (int)ConventionKind.EnumAsString)
+                {
+                    // Round-trip as the enum member name. ToString() is allocating but
+                    // [StoreAsString] is opt-in; a source-generated parse/format table
+                    // is a v0.3+ optimization.
+                    valueExpr = $"@{p.Name}.ToString()";
                 }
                 else if (conv.ValuePropertyName is { } propName)
                 {

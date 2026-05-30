@@ -423,6 +423,36 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Enum_StoreAsString_round_trip_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [StoreAsString]
+            public enum OrderStatus { Pending, Cancelled }
+
+            public sealed record OrderRow(int Id, OrderStatus Status);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Status FROM Orders WHERE Status = @status LIMIT 1")]
+                public partial Task<OrderRow?> SearchAsync(OrderStatus status, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS0030" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a
