@@ -266,10 +266,19 @@ After R1-R11 all merge:
 
 ### v0.6 — observability + diagnostics polish (~1 week)
 
-**Re-add stripped package (from R2):**
-- Reintroduce `ZeroAlloc.ORM.Analyzers` package — but this time with real ZAO010+ rules (or move existing diagnostics from `Generator` into `Analyzers` if the architectural split makes sense by then).
+**Updated scope based on 2026-05-31 decision** — composition with ZA.Telemetry instead of building our own ActivitySource. v0.6 becomes documentation-heavy.
 
-**Original scope holds:** built-in `ActivitySource`, full diagnostics catalog (ZAO010-070), provider-quirk doc comments in emit, `docs/diagnostics/` per-code reference pages.
+**Original scope dropped:** built-in `ActivitySource`, provider-quirk doc comments in emit (move to v0.7 if still applicable).
+
+**New scope:**
+
+1. Full diagnostics catalog audit (ZAO codes ZAO001-070 each have positive + negative tests; `helpLinkUri` resolves).
+2. `docs/diagnostics/` per-code reference pages — expand from v0.1's 11 stubs to the complete catalog.
+3. Cookbook recipe at `docs/cookbook/observability.md` — explains the ZA.Telemetry composition pattern with a worked example.
+
+**Time estimate:** ~3-4 days (was ~1 week). The ActivitySource emit work was the bulk; documentation is lighter.
+
+**Re-add stripped package (unchanged from prior plan):** Reintroduce `ZeroAlloc.ORM.Analyzers` package when ZAO010+ rules land — or move existing diagnostics from Generator into Analyzers if the architectural split makes sense by then.
 
 ### v0.7 — benchmarks + collision + polish (~1 week)
 
