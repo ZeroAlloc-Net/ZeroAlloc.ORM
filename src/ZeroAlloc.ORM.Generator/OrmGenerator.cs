@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using ZeroAlloc.ORM.Generator.Catalog;
 using ZeroAlloc.ORM.Generator.Diagnostics;
 using ZeroAlloc.ORM.Generator.Model;
 
@@ -230,39 +231,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Restrict to Task<T> for now; ValueTask<T> lands later.
         if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null);
 
-        var userParamCount = method.Parameters.Count(p =>
-            !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
-
         var inner = named.TypeArguments[0];
 
-        // Scalar shapes (Task 4.1 + 4.3) only ever apply when there are no user parameters
-        // — they don't bind any. FlatRow (Task 5.1) tolerates user params at the SIGNATURE
-        // level even though binding lands in Phase 6.
-        if (userParamCount == 0)
+        // Scalar shapes now tolerate user parameters at the signature level — Phase 6
+        // emits the binding loop so the SQL placeholders resolve at runtime. FlatRow
+        // followed the same path in Task 5.1.
+
+        // Nullable reference: Task<string?> (and any other supported nullable primitive).
+        if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
         {
-            // Nullable reference: Task<string?> (and any other supported nullable primitive).
-            if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
-            {
-                var readerMethod = GetScalarPrimitiveReaderInfo(inner);
-                if (readerMethod is not null)
-                    return (EmitShape.NullableScalar, readerMethod, null);
-            }
-
-            // Nullable value type: Task<int?> / Task<Nullable<T>>.
-            if (inner is INamedTypeSymbol innerNamed
-                && innerNamed.IsGenericType
-                && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
-            {
-                var underlying = innerNamed.TypeArguments[0];
-                var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
-                if (readerMethod is not null)
-                    return (EmitShape.NullableScalar, readerMethod, null);
-            }
-
-            // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
-            // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
-            if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null);
+            var readerMethod = GetScalarPrimitiveReaderInfo(inner);
+            if (readerMethod is not null)
+                return (EmitShape.NullableScalar, readerMethod, null);
         }
+
+        // Nullable value type: Task<int?> / Task<Nullable<T>>.
+        if (inner is INamedTypeSymbol innerNamed
+            && innerNamed.IsGenericType
+            && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var underlying = innerNamed.TypeArguments[0];
+            var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
+            if (readerMethod is not null)
+                return (EmitShape.NullableScalar, readerMethod, null);
+        }
+
+        // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
+        // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
+        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null);
 
         // FlatRow (Task 5.1) — positional record with primitive ctor params.
         // v0.1 only handles Task<T?> (nullable reference) so an empty result set maps
@@ -344,25 +340,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
-    // strongly-typed-reads it. Returns null for unsupported types.
+    // strongly-typed-reads it. Thin pass-through to PrimitiveCatalog so the rest of
+    // the generator keeps its existing call shape; the canonical table lives in
+    // ZeroAlloc.ORM.Generator.Catalog.PrimitiveCatalog.
     private static string? GetScalarPrimitiveReaderInfo(ITypeSymbol type)
-    {
-        return type.SpecialType switch
-        {
-            SpecialType.System_Int32 => "GetInt32",
-            SpecialType.System_Int64 => "GetInt64",
-            SpecialType.System_Int16 => "GetInt16",
-            SpecialType.System_Byte => "GetByte",
-            SpecialType.System_Boolean => "GetBoolean",
-            SpecialType.System_Decimal => "GetDecimal",
-            SpecialType.System_Double => "GetDouble",
-            SpecialType.System_Single => "GetFloat",
-            SpecialType.System_String => "GetString",
-            SpecialType.System_DateTime => "GetDateTime",
-            _ when string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal) => "GetGuid",
-            _ => null,
-        };
-    }
+        => PrimitiveCatalog.GetScalarReaderMethod(type);
 
     private static (string Access, bool Resolved) ResolveConnectionAccess(INamedTypeSymbol containing)
     {
@@ -614,6 +596,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         sb.AppendLine("        }");
@@ -647,6 +630,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
@@ -694,6 +678,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
@@ -720,6 +705,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+    }
+
+    // Emit DbParameter binding for each user-declared method parameter (CancellationToken
+    // skipped — it's a runtime control signal, not a SQL value). v0.1 surface: bind the
+    // C# value directly to `DbParameter.Value` and let the provider infer the DbType
+    // from the runtime type. Explicit DbType override + null-guard land in 6.2 and 6.3.
+    //
+    // Emit shape per parameter:
+    //     var __p_<name> = __cmd.CreateParameter();
+    //     __p_<name>.ParameterName = "@<name>";
+    //     __p_<name>.Value = <name>;
+    //     __cmd.Parameters.Add(__p_<name>);
+    private static void EmitParameterBinding(StringBuilder sb, QueryMethodModel m)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (p.IsCancellationToken) continue;
+            var local = "__p_" + p.Name;
+            var paramName = "@" + p.Name;
+            sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
+            sb.AppendLine($"            {local}.ParameterName = \"{paramName}\";");
+            sb.AppendLine($"            {local}.Value = {p.Name};");
+            sb.AppendLine($"            __cmd.Parameters.Add({local});");
+        }
     }
 
     // Render the partial method's parameter list, preserving the user's declared order

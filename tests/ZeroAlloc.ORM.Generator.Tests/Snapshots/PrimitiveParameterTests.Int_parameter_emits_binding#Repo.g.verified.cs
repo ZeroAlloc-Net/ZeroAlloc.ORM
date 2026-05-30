@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class Repo
 {
-    public partial async global::System.Threading.Tasks.Task<global::TestApp.OrderRow?> GetByIdAsync(int id, global::System.Threading.CancellationToken ct)
+    public partial async global::System.Threading.Tasks.Task<int> SearchAsync(int id, global::System.Threading.CancellationToken ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -14,18 +14,13 @@ partial class Repo
         try
         {
             await using var __cmd = __conn.CreateCommand();
-            __cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            __cmd.CommandText = "SELECT 1 WHERE @id = 42";
             var __p_id = __cmd.CreateParameter();
             __p_id.ParameterName = "@id";
             __p_id.Value = id;
             __cmd.Parameters.Add(__p_id);
-            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
-                return null;
-            return new global::TestApp.OrderRow(
-                __reader.GetInt32(0),
-                __reader.GetInt32(1),
-                __reader.GetDecimal(2));
+            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
         {
