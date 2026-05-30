@@ -42,4 +42,16 @@ internal sealed record MaterializationModel(
 // emitted partial must match verbatim, otherwise partial-method matching fails
 // (CS8795/CS0759). The IsCancellationToken flag lets emit reference the CT by the
 // user's chosen name (e.g. `await ...Async(cancellationToken)`).
-internal sealed record ParameterInfo(string Name, string TypeDisplay, bool IsCancellationToken);
+// Method parameter info used to render the partial method signature and the
+// per-parameter DbParameter binding block.
+//   Name              -- C# parameter name (used as the local-variable suffix and
+//                        as the default SQL parameter name).
+//   TypeDisplay       -- fully-qualified type display incl. nullable annotation.
+//   IsCancellationToken -- skip binding; CT is a runtime control signal.
+//   ParamNameOverride -- when set via [Param(Name = "...")], emit uses this string
+//                        verbatim as `ParameterName`. Null falls back to "@" + Name.
+internal sealed record ParameterInfo(
+    string Name,
+    string TypeDisplay,
+    bool IsCancellationToken,
+    string? ParamNameOverride = null);

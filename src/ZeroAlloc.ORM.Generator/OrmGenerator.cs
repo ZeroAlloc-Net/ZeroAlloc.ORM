@@ -181,7 +181,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Select(p =>
             {
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
-                return new ParameterInfo(p.Name, p.Type.ToDisplayString(parameterDisplayFormat), isCt);
+                var paramNameOverride = ReadParamNameOverride(p);
+                return new ParameterInfo(
+                    p.Name,
+                    p.Type.ToDisplayString(parameterDisplayFormat),
+                    isCt,
+                    paramNameOverride);
             })
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
@@ -325,6 +330,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.FlatRow,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // Read the optional `Name` argument from `[ZeroAlloc.ORM.ParamAttribute]` on a
+    // method parameter. Returns null when the attribute is absent or doesn't set Name.
+    // The named argument is a string literal; null/empty values fall back to the C# name.
+    private static string? ReadParamNameOverride(IParameterSymbol p)
+    {
+        foreach (var attr in p.GetAttributes())
+        {
+            if (!string.Equals(
+                attr.AttributeClass?.ToDisplayString(),
+                "ZeroAlloc.ORM.ParamAttribute",
+                StringComparison.Ordinal))
+            {
+                continue;
+            }
+            foreach (var kvp in attr.NamedArguments)
+            {
+                if (!string.Equals(kvp.Key, "Name", StringComparison.Ordinal)) continue;
+                if (kvp.Value.Value is string s && !string.IsNullOrEmpty(s))
+                    return s;
+            }
+        }
+        return null;
     }
 
     // Peel `Nullable<T>` to `T`; otherwise return the input unchanged.
@@ -723,9 +752,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             if (p.IsCancellationToken) continue;
             var local = "__p_" + p.Name;
-            var paramName = "@" + p.Name;
+            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
-            sb.AppendLine($"            {local}.ParameterName = \"{paramName}\";");
+            sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             sb.AppendLine($"            {local}.Value = {p.Name};");
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
