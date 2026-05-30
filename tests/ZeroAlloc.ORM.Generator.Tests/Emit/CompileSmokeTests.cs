@@ -204,6 +204,34 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Extended_primitive_types_emit_compiles_cleanly()
+    {
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record TimestampedRow(int Id, DateTimeOffset CreatedAt, TimeSpan Duration, byte[] Payload);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CreatedAt, Duration, Payload FROM Events LIMIT 1")]
+                public partial Task<TimestampedRow?> GetLatestAsync(CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Scalar_emit_honors_user_cancellation_token_name()
     {
         // Regression: scalar emitters used to hardcode `(CancellationToken ct)` and
