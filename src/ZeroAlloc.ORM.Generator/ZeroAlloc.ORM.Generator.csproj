@@ -27,6 +27,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Pinned to the Roslyn version shipped by our minimum-supported SDK (.NET 10
+         SDK 10.0.x ships Roslyn 4.14). Bump when a future SDK ships a newer Roslyn
+         AND we want to consume new APIs; otherwise leave alone — generators run
+         inside the consumer's Roslyn host, not against this referenced version, so
+         floating ahead buys us nothing but risk. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
     <!-- The generator depends on ZeroAlloc.TypeConversions at analyzer load time. We
          reference it with ReferenceOutputAssembly="true" so the compiler resolves the
