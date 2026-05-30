@@ -37,6 +37,9 @@ internal sealed record MaterializationModel(
     EquatableArray<ColumnBinding> Columns);
 
 // Method parameter info used to render the partial method signature.
-// Excludes CancellationToken (passed through separately so the emit body can call
-// `await ...Async(ct)` without having to scan the parameter list at emit time).
-internal sealed record ParameterInfo(string Name, string TypeDisplay);
+// Includes the CancellationToken parameter so we can preserve the user's original
+// parameter ordering — if the user declares `(CancellationToken ct, int id)` the
+// emitted partial must match verbatim, otherwise partial-method matching fails
+// (CS8795/CS0759). The IsCancellationToken flag lets emit reference the CT by the
+// user's chosen name (e.g. `await ...Async(cancellationToken)`).
+internal sealed record ParameterInfo(string Name, string TypeDisplay, bool IsCancellationToken);

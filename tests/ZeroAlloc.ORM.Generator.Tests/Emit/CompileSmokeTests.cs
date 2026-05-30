@@ -94,4 +94,65 @@ public class CompileSmokeTests
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    [Fact]
+    public void FlatRow_preserves_user_parameter_order()
+    {
+        // Regression: BuildParameterList used to always append CancellationToken last,
+        // ignoring the user's declared parameter order. Declarations like
+        // `(CancellationToken ct, int id)` produced mismatched partials (CS8795/CS0759).
+        // The generator must emit the parameter list verbatim in the user's order.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(CancellationToken ct, int id);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+
+        var partialMismatch = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS8795" or "CS0759" or "CS1061" or "CS0103")
+            .ToArray();
+        Assert.Empty(partialMismatch);
+    }
+
+    [Fact]
+    public void Scalar_emit_honors_user_cancellation_token_name()
+    {
+        // Regression: scalar emitters used to hardcode `(CancellationToken ct)` and
+        // reference `ct` in the body. A user who named their CT parameter
+        // `cancellationToken` would see a partial-signature/name mismatch.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1")]
+                public partial Task<int> GetOneAsync(CancellationToken cancellationToken);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS0103" or "CS8795" or "CS0759" or "CS1061")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
 }

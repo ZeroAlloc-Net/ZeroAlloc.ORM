@@ -31,7 +31,8 @@ internal sealed record QueryMethodModel(
     string ReturnTypeDisplay,
     string? NullableScalarReaderMethod,
     MaterializationModel? Materialization,
-    EquatableArray<ParameterInfo> UserParameters,
+    EquatableArray<ParameterInfo> MethodParameters,
+    string? CancellationTokenParameterName,
     EquatableArray<DiagnosticInfo> Diagnostics);
 
 internal sealed record QueryRepositoryModel(

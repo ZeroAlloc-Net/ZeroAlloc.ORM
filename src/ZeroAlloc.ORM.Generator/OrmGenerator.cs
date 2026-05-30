@@ -163,17 +163,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method);
 
-        // Capture user parameters (everything except CancellationToken) so the emit
-        // can render the partial method signature. Parameter BINDING to the command
-        // is Phase 6 — for now we only need the signature shape.
+        // Capture ALL parameters (including CancellationToken) in declaration order so
+        // the emit can render the partial method signature verbatim. If we filtered CT
+        // out and appended it at emit time, declarations like `(CancellationToken ct,
+        // int id)` would produce mismatched partials (CS8795/CS0759). We also track
+        // the CT parameter NAME — the body needs to forward the user's named CT to
+        // `OpenAsync(...)`, `ReadAsync(...)`, etc., not a hardcoded `ct`.
+        //
+        // Parameter BINDING to the command (e.g. `@id <- id`) is Phase 6 — for now we
+        // only need the signature shape and the CT-name forwarding.
         var parameterDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
             .WithMiscellaneousOptions(
                 SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
                 | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
-        var userParameters = method.Parameters
-            .Where(p => !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal))
-            .Select(p => new ParameterInfo(p.Name, p.Type.ToDisplayString(parameterDisplayFormat)))
+        var methodParameters = method.Parameters
+            .Select(p =>
+            {
+                var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
+                return new ParameterInfo(p.Name, p.Type.ToDisplayString(parameterDisplayFormat), isCt);
+            })
             .ToImmutableArray();
+        var cancellationTokenParameterName = methodParameters
+            .FirstOrDefault(p => p.IsCancellationToken)?.Name;
 
         // Fully-qualified, includes `?` for nullable reference types so the emitted
         // partial signature matches the user's partial declaration verbatim.
@@ -199,7 +210,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ReturnTypeDisplay: returnTypeDisplay,
             NullableScalarReaderMethod: nullableReaderMethod,
             Materialization: materialization,
-            UserParameters: new EquatableArray<ParameterInfo>(userParameters),
+            MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
+            CancellationTokenParameterName: cancellationTokenParameterName,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
 
@@ -591,16 +603,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m)
     {
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
-        sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}(global::System.Threading.CancellationToken ct)");
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = m.CancellationTokenParameterName ?? "default";
+        sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
-        sb.AppendLine("            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
@@ -622,17 +636,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}(global::System.Threading.CancellationToken ct)");
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = m.CancellationTokenParameterName ?? "default";
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
-        sb.AppendLine("            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);");
-        sb.AppendLine("            if (!await __reader.ReadAsync(ct).ConfigureAwait(false))");
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
         sb.AppendLine($"            return __reader.IsDBNull(0) ? null : __reader.{readerMethod}(0);");
         sb.AppendLine("        }");
@@ -667,18 +683,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
-        var paramList = BuildParameterList(m.UserParameters);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = m.CancellationTokenParameterName ?? "default";
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
-        sb.AppendLine("            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);");
-        sb.AppendLine("            if (!await __reader.ReadAsync(ct).ConfigureAwait(false))");
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
         sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
         var cols = mat.Columns;
@@ -705,17 +722,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
-    // Render the partial method's parameter list. Always appends the CancellationToken
-    // last so the emit body can call ...Async(ct) unconditionally; user parameters
-    // come from m.UserParameters (CT already filtered out).
-    private static string BuildParameterList(EquatableArray<ParameterInfo> userParameters)
+    // Render the partial method's parameter list, preserving the user's declared order
+    // verbatim (including where they placed the CancellationToken). The emitted partial
+    // must match the user's signature exactly or partial-method binding fails with
+    // CS8795 / CS0759. The CT parameter is referenced in the body via
+    // m.CancellationTokenParameterName so we never assume a hardcoded name.
+    private static string BuildParameterList(EquatableArray<ParameterInfo> methodParameters)
     {
         var sb = new StringBuilder();
-        foreach (var p in userParameters)
+        var first = true;
+        foreach (var p in methodParameters)
         {
-            sb.Append(p.TypeDisplay).Append(' ').Append(p.Name).Append(", ");
+            if (!first) sb.Append(", ");
+            first = false;
+            sb.Append(p.TypeDisplay).Append(' ').Append(p.Name);
         }
-        sb.Append("global::System.Threading.CancellationToken ct");
         return sb.ToString();
     }
 }
