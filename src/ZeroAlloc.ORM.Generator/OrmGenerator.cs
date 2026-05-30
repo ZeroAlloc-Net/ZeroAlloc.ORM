@@ -66,6 +66,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
         if (ctx.TargetNode is not MethodDeclarationSyntax methodSyntax) return null;
 
+        // ConventionDiscovery needs a Compilation for well-known attribute lookups. We
+        // construct the context once per method and re-use it across return-type and
+        // per-parameter classification so the lookup cost amortizes.
+        var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
+
         var queryAttribute = ctx.Attributes.FirstOrDefault();
         var sql = queryAttribute?
             .ConstructorArguments
@@ -220,7 +225,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
 
-        var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method);
+        var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method, conventionContext);
 
         // ZAO022 — informational: the return type passed the surface check (ZAO002)
         // but isn't yet materializable by the v0.1 emit. Fire only when ZAO002 did
@@ -264,12 +269,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     || (p.Type is INamedTypeSymbol pn
                         && pn.IsGenericType
                         && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+                // Convention discovery for parameter binding — the binding emit
+                // unwraps ValueObject / SingleArgCtor / StaticFactory parameters via
+                // their `Value` property before assigning to DbParameter.Value. CT
+                // parameters skip discovery (they're a control signal, not a SQL
+                // value). Primitives produce a null ConventionInfo so the existing
+                // `@id` emit path is byte-identical to v0.1.
+                ConventionInfo? paramConvention = null;
+                if (!isCt)
+                {
+                    var underlying = UnwrapNullableValueType(p.Type);
+                    var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+                    var underlyingReader = resolution.Kind switch
+                    {
+                        ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                            => ResolveUnderlyingReaderForFactory(resolution),
+                        _ => null,
+                    };
+                    paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
+                }
+
                 return new ParameterInfo(
                     p.Name,
                     p.Type.ToDisplayString(parameterDisplayFormat),
                     isCt,
                     paramNameOverride,
-                    isNullable);
+                    isNullable,
+                    paramConvention);
             })
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
@@ -316,7 +343,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // For NullableScalar we also return the IDataReader.GetXxx method name to use
     // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
     // that no longer carries the symbol.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization) ClassifyEmitShape(IMethodSymbol method)
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization) ClassifyEmitShape(
+        IMethodSymbol method,
+        ConventionContext conventionContext)
     {
         if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null);
         // Restrict to Task<T> for now; ValueTask<T> lands later.
@@ -351,7 +380,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
         if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null);
 
-        // FlatRow (Task 5.1) — positional record with primitive ctor params.
+        // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
+        // conventions. v0.2 Phase C extends column resolution from "primitive only" to
+        // anything ConventionDiscovery surfaces (ValueObject, SingleArgCtor, StaticFactory).
         // v0.1 only handles Task<T?> (nullable reference) so an empty result set maps
         // cleanly to `return null;`. Non-nullable Task<T> would require an exception
         // on empty and is deferred to v0.2.
@@ -359,7 +390,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             // Peel the nullable annotation so we look at the underlying record type.
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var flat = TryBuildFlatRowMaterialization(elementType);
+            var flat = TryBuildFlatRowMaterialization(elementType, conventionContext);
             if (flat is not null)
                 return (EmitShape.FlatRow, null, flat);
         }
@@ -367,13 +398,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return (EmitShape.Unknown, null, null);
     }
 
-    // Attempt to classify `elementType` as a positional record whose constructor takes
-    // only supported primitive scalar types. Returns null if the type isn't a record,
-    // has no public ctor with parameters, or any parameter isn't a primitive scalar.
+    // Attempt to classify `elementType` as a positional record whose constructor params
+    // resolve to known conventions. Returns null if the type isn't a record, has no
+    // public ctor with parameters, or any parameter falls outside the conventions
+    // currently emittable (primitive scalars + Phase-C value-object shapes).
     //
-    // v0.1 scope: primitives + string/Guid/DateTime via GetScalarPrimitiveReaderInfo.
-    // Value-object support (single-field records wrapping a primitive) lands in v0.2.
-    private static MaterializationModel? TryBuildFlatRowMaterialization(ITypeSymbol elementType)
+    // Each column's primitive/value-object/factory disposition is captured via
+    // ConventionDiscovery.Resolve and projected onto a cache-safe ConventionInfo. The
+    // primitive path stays byte-identical to v0.1 (ColumnBinding.Convention is null);
+    // non-primitive resolutions carry ConventionInfo for the emitter to consume.
+    private static MaterializationModel? TryBuildFlatRowMaterialization(
+        ITypeSymbol elementType,
+        ConventionContext conventionContext)
     {
         if (elementType is not INamedTypeSymbol named || !named.IsRecord) return null;
 
@@ -398,7 +434,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // primitive. For nullable reference types (`string?`) the reference type
             // IS the reader-target — string is read with GetString regardless of nullability.
             var underlying = UnwrapNullableValueType(p.Type);
-            var reader = GetScalarPrimitiveReaderInfo(underlying);
+            var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            // Pull the reader-method that lets the emitter read the wrapped primitive.
+            // For Primitive conventions this IS the read; for ValueObject /
+            // SingleArgCtor / StaticFactory we read the underlying primitive then
+            // pass it to the factory.
+            string? reader = resolution.Kind switch
+            {
+                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(resolution),
+                _ => null,
+            };
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -406,16 +454,73 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && pn.IsGenericType
                     && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
 
+            var convention = BuildConventionInfo(underlying, resolution, reader);
+
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
                 IsNullable: isNullable,
-                TypeName: p.Type.ToDisplayString(typeDisplayFormat)));
+                TypeName: p.Type.ToDisplayString(typeDisplayFormat),
+                Convention: convention));
         }
 
         return new MaterializationModel(
             Kind: MaterializationKind.FlatRow,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // For ValueObject / SingleArgCtor / StaticFactory the factory takes a single
+    // primitive parameter. Map that primitive to its IDataReader.GetXxx method so the
+    // emitter can do `Type.From(reader.GetInt32(N))`. Returns null if the factory's
+    // parameter type isn't a known primitive.
+    private static string? ResolveUnderlyingReaderForFactory(ConventionResult resolution)
+    {
+        ITypeSymbol? underlying = resolution.Factory switch
+        {
+            IMethodSymbol m when m.Parameters.Length == 1 => m.Parameters[0].Type,
+            _ => null,
+        };
+        return underlying is null ? null : PrimitiveCatalog.GetScalarReaderMethod(underlying);
+    }
+
+    // Project a ConventionResult onto a cache-safe ConventionInfo. The string-only
+    // shape lets QueryMethodModel/MaterializationModel stay equatable across
+    // incremental-generator runs — the symbols on ConventionResult are NOT cache-safe.
+    // Returns null when the resolution is Primitive (or anything else the v0.1 emit
+    // path already handles without auxiliary discovery data).
+    private static ConventionInfo? BuildConventionInfo(
+        ITypeSymbol resolvedType,
+        ConventionResult resolution,
+        string? underlyingReader)
+    {
+        switch (resolution.Kind)
+        {
+            case ConventionKind.ValueObject:
+            case ConventionKind.StaticFactory:
+                {
+                    if (resolution.Factory is not IMethodSymbol factory) return null;
+                    var typeFqn = resolvedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    var factoryFqn = typeFqn + "." + factory.Name;
+                    return new ConventionInfo(
+                        Kind: (int)resolution.Kind,
+                        FactoryFullName: factoryFqn,
+                        FactoryIsCtor: false,
+                        ValuePropertyName: resolution.Value?.Name,
+                        UnderlyingReader: underlyingReader);
+                }
+            case ConventionKind.SingleArgCtor:
+                {
+                    var typeFqn = resolvedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    return new ConventionInfo(
+                        Kind: (int)resolution.Kind,
+                        FactoryFullName: typeFqn,
+                        FactoryIsCtor: true,
+                        ValuePropertyName: resolution.Value?.Name,
+                        UnderlyingReader: underlyingReader);
+                }
+            default:
+                return null;
+        }
     }
 
     // Read the optional `Name` argument from `[ZeroAlloc.ORM.ParamAttribute]` on a
@@ -868,14 +973,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
+            // Primitive: direct GetXxx. Value-object / single-arg-ctor / static-factory:
+            // wrap the primitive read in the discovered factory call (Phase C tasks
+            // C.2/C.4/C.5). Nullable columns short-circuit to `null` via IsDBNull —
+            // the cast carries the nullable type so the ternary types correctly.
+            var readExpr = $"__reader.{col.GetterMethod}({i})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({readExpr})"
+                    : $"{conv.FactoryFullName}({readExpr})";
+            }
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : __reader.{col.GetterMethod}({i})";
+                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : {readExpr}";
             }
             else
             {
-                expr = $"__reader.{col.GetterMethod}({i})";
+                expr = readExpr;
             }
             sb.AppendLine($"                {expr}{trailing}");
         }
@@ -907,17 +1023,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
+
+            // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
+            // through their discovered `Value` property before binding to the
+            // DbParameter so the provider sees the underlying primitive. Falls back
+            // to the raw value when no convention applies — the v0.1 emit path.
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv && conv.ValuePropertyName is { } propName)
+            {
+                valueExpr = $"@{p.Name}.{propName}";
+            }
+
             // Nullable parameters need a DBNull sentinel — assigning a CLR null to
             // DbParameter.Value is provider-dependent (some treat it as "missing
             // parameter" rather than "SQL NULL"), so we route through DBNull.Value
             // explicitly. Non-nullable parameters skip the cast for cleaner emit.
             if (p.IsNullable)
             {
-                sb.AppendLine($"            {local}.Value = (object?)@{p.Name} ?? global::System.DBNull.Value;");
+                sb.AppendLine($"            {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
             }
             else
             {
-                sb.AppendLine($"            {local}.Value = @{p.Name};");
+                sb.AppendLine($"            {local}.Value = {valueExpr};");
             }
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }

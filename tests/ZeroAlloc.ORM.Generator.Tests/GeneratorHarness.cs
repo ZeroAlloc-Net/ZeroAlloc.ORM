@@ -68,6 +68,7 @@ internal static class GeneratorHarness
         var forceLoadAssemblies = new[]
         {
             typeof(ZeroAlloc.ORM.QueryAttribute).Assembly,   // ZeroAlloc.ORM.Abstractions
+            typeof(ZeroAlloc.ValueObjects.ValueObjectAttribute).Assembly, // ZA.ValueObjects (Phase C)
             // AdoNet.Async is force-loaded transitively through the generator's
             // ProjectReference graph; no explicit touch needed in v0.1. If a future
             // test references a type that lives only in AdoNet.Async (not also in
