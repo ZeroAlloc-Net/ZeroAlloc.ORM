@@ -11,6 +11,12 @@ namespace ZeroAlloc.TypeConversions;
 /// </summary>
 public static class ConventionDiscovery
 {
+    private static readonly ConventionResult UnknownResult = new(
+        ConventionKind.Unknown,
+        Factory: null,
+        Value: null,
+        ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
+
     /// <summary>
     /// Classify <paramref name="type"/> for materialization. Returns
     /// <see cref="ConventionKind.Unknown"/> when no rule matches.
@@ -19,12 +25,17 @@ public static class ConventionDiscovery
     /// <param name="context">Compilation-scoped lookups for attributes and well-known types.</param>
     public static ConventionResult Resolve(ITypeSymbol type, ConventionContext context)
     {
-        _ = type;
         _ = context;
-        return new ConventionResult(
-            ConventionKind.Unknown,
-            Factory: null,
-            Value: null,
-            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
+
+        if (PrimitiveCatalog.IsPrimitive(type))
+        {
+            return new ConventionResult(
+                ConventionKind.Primitive,
+                Factory: null,
+                Value: null,
+                ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
+        }
+
+        return UnknownResult;
     }
 }

@@ -38,6 +38,12 @@ public static class PrimitiveCatalog
         };
     }
 
+    // Convention-discovery shortcut: "does this type round-trip via a single GetXxx
+    // call?" Equivalent to "GetScalarReaderMethod returns non-null" but expressed as
+    // a predicate so callers don't have to encode the null-check pattern themselves.
+    public static bool IsPrimitive(ITypeSymbol type)
+        => GetScalarReaderMethod(type) is not null;
+
     // byte[] is the canonical BLOB carrier in ADO.NET. It is recognized as an
     // array of SpecialType.System_Byte; the array itself has no SpecialType.
     private static bool IsByteArray(ITypeSymbol type)
