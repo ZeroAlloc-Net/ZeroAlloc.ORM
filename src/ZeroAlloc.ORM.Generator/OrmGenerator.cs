@@ -126,7 +126,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var syntax = syntaxRef.GetSyntax();
             // ParameterSyntax -> ParameterListSyntax -> TypeDeclarationSyntax means primary ctor.
             // For a regular ctor, the grandparent is ConstructorDeclarationSyntax.
-            if (syntax.Parent?.Parent is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax)
+            if (syntax.Parent?.Parent is TypeDeclarationSyntax)
                 return true;
         }
         return false;
