@@ -6,5 +6,5 @@ namespace TestApp;
 
 partial class Repo
 {
-    // TODO: emit body for GetAsync (uses this.connection) -- v0.1 Task 4.x
+    // TODO: emit body for GetAsync (uses this.db) -- v0.1 Task 4.x
 }

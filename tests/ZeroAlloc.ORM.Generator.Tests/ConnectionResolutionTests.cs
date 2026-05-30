@@ -17,7 +17,7 @@ public class ConnectionResolutionTests
 
             namespace TestApp;
 
-            public sealed partial class Repo(IAsyncDbConnection connection)
+            public sealed partial class Repo(IAsyncDbConnection db)
             {
                 [Query("SELECT 1")]
                 public partial Task<int> GetAsync(CancellationToken ct);
