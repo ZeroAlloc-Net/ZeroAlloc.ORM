@@ -214,9 +214,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Nullable reference: Task<string?> (and any other supported nullable primitive).
         if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
         {
-            var readerInfo = GetScalarPrimitiveReaderInfo(inner);
-            if (readerInfo is not null)
-                return (EmitShape.NullableScalar, readerInfo.Value.ReaderMethod);
+            var readerMethod = GetScalarPrimitiveReaderInfo(inner);
+            if (readerMethod is not null)
+                return (EmitShape.NullableScalar, readerMethod);
         }
 
         // Nullable value type: Task<int?> / Task<Nullable<T>>.
@@ -225,9 +225,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
         {
             var underlying = innerNamed.TypeArguments[0];
-            var readerInfo = GetScalarPrimitiveReaderInfo(underlying);
-            if (readerInfo is not null)
-                return (EmitShape.NullableScalar, readerInfo.Value.ReaderMethod);
+            var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
+            if (readerMethod is not null)
+                return (EmitShape.NullableScalar, readerMethod);
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
@@ -239,21 +239,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
     // strongly-typed-reads it. Returns null for unsupported types.
-    private static (string ReaderMethod, string TypeDisplay)? GetScalarPrimitiveReaderInfo(ITypeSymbol type)
+    private static string? GetScalarPrimitiveReaderInfo(ITypeSymbol type)
     {
         return type.SpecialType switch
         {
-            SpecialType.System_Int32 => ("GetInt32", "int"),
-            SpecialType.System_Int64 => ("GetInt64", "long"),
-            SpecialType.System_Int16 => ("GetInt16", "short"),
-            SpecialType.System_Byte => ("GetByte", "byte"),
-            SpecialType.System_Boolean => ("GetBoolean", "bool"),
-            SpecialType.System_Decimal => ("GetDecimal", "decimal"),
-            SpecialType.System_Double => ("GetDouble", "double"),
-            SpecialType.System_Single => ("GetFloat", "float"),
-            SpecialType.System_String => ("GetString", "string"),
-            SpecialType.System_DateTime => ("GetDateTime", "global::System.DateTime"),
-            _ when string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal) => ("GetGuid", "global::System.Guid"),
+            SpecialType.System_Int32 => "GetInt32",
+            SpecialType.System_Int64 => "GetInt64",
+            SpecialType.System_Int16 => "GetInt16",
+            SpecialType.System_Byte => "GetByte",
+            SpecialType.System_Boolean => "GetBoolean",
+            SpecialType.System_Decimal => "GetDecimal",
+            SpecialType.System_Double => "GetDouble",
+            SpecialType.System_Single => "GetFloat",
+            SpecialType.System_String => "GetString",
+            SpecialType.System_DateTime => "GetDateTime",
+            _ when string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal) => "GetGuid",
             _ => null,
         };
     }
