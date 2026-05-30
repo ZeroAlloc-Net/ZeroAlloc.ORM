@@ -226,12 +226,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     private static bool IsMultiResultReturnType(ITypeSymbol returnType)
     {
-        // A multi-result-aware shape is any return whose unwrapped (post-Task/ValueTask) type
-        // is a tuple. Naïve check: look for "ValueTuple" / "Tuple" in the display string.
-        var display = returnType.ToDisplayString();
-        return display.Contains("ValueTuple", StringComparison.Ordinal)
-            || display.Contains("Tuple", StringComparison.Ordinal)
-            || display.Contains("(", StringComparison.Ordinal); // tuple syntax sugar like (int, List<int>)
+        // Peel Task<T> / ValueTask<T> wrappers to inspect the element type.
+        var inner = UnwrapAsyncWrapper(returnType);
+        if (inner is null) return false;
+        if (inner is INamedTypeSymbol named)
+        {
+            // ValueTuple (sugar form `(T1, T2)`) — Roslyn surfaces this via IsTupleType.
+            if (named.IsTupleType) return true;
+            // System.Tuple<T1, T2, ...> — constructed-from check.
+            var constructedFrom = named.ConstructedFrom?.ToDisplayString();
+            if (constructedFrom is not null && constructedFrom.StartsWith("System.Tuple<", System.StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static ITypeSymbol? UnwrapAsyncWrapper(ITypeSymbol type)
+    {
+        if (type is not INamedTypeSymbol named) return type;
+        if (!named.IsGenericType) return type;
+        return (named.Name, named.Arity) switch
+        {
+            ("Task", 1) or ("ValueTask", 1) => named.TypeArguments[0],
+            _ => type,
+        };
     }
 
     private static bool IsIAsyncEnumerable(ITypeSymbol returnType)
