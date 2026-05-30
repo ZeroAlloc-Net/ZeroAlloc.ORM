@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 
 namespace ZeroAlloc.TypeConversions;
@@ -36,6 +37,50 @@ public static class ConventionDiscovery
                 ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
         }
 
+        if (type is INamedTypeSymbol named && TryValueObject(named) is { } voResult)
+        {
+            return voResult;
+        }
+
         return UnknownResult;
+    }
+
+    private const string ValueObjectAttributeFqn = "ZeroAlloc.ValueObjects.ValueObjectAttribute";
+
+    // ZA.ValueObjects marks wrapper types with [ValueObject]. By convention the
+    // generated type exposes `T Value { get; }` (the wrapped primitive) and
+    // `static T From(TPrim)` (the canonical factory). We surface those when present;
+    // when the generator hasn't run yet in a test compilation, we still return the
+    // ValueObject kind so callers can react to the annotation alone.
+    private static ConventionResult? TryValueObject(INamedTypeSymbol type)
+    {
+        if (!HasValueObjectAttribute(type))
+        {
+            return null;
+        }
+
+        var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
+        var factory = type.GetMembers("From")
+            .OfType<IMethodSymbol>()
+            .FirstOrDefault(m => m.IsStatic && m.Parameters.Length == 1);
+
+        return new ConventionResult(
+            ConventionKind.ValueObject,
+            Factory: factory,
+            Value: valueProp,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
+    }
+
+    private static bool HasValueObjectAttribute(INamedTypeSymbol type)
+    {
+        foreach (var attr in type.GetAttributes())
+        {
+            var name = attr.AttributeClass?.ToDisplayString();
+            if (string.Equals(name, ValueObjectAttributeFqn, System.StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }
