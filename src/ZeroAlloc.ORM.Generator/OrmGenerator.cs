@@ -31,9 +31,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 transform: static (ctx, _) => TransformMethod(ctx))
             .Where(static m => m is not null)!;
 
+        // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
+        // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
+        // location, etc.) — we take them from g.First() instead of duplicating them
+        // on each QueryMethodModel. R8 hoist: this removes the prior fallback that
+        // grabbed type-properties off `repo.Methods.Values[0]` downstream.
         var grouped = queryMethods.Collect()
             .SelectMany(static (methods, _) =>
-                methods.GroupBy(m => m!.ContainingTypeFullName, StringComparer.Ordinal)
+                methods.GroupBy(m => m!.Method.ContainingTypeFullName, StringComparer.Ordinal)
                        .Select(g =>
                        {
                            var first = g.First()!;
@@ -41,7 +46,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                ContainingTypeFullName: g.Key,
                                ContainingTypeName: first.ContainingTypeName,
                                Namespace: first.Namespace,
-                               Methods: new EquatableArray<QueryMethodModel>(g.Cast<QueryMethodModel>().ToImmutableArray()));
+                               ConnectionAccess: first.ConnectionAccess,
+                               ConnectionResolved: first.ConnectionResolved,
+                               ContainingTypePartial: first.ContainingTypePartial,
+                               ContainingTypeLocation: first.ContainingTypeLocation,
+                               Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()));
                        }));
 
         context.RegisterSourceOutput(grouped, (sourceCtx, repo) =>
@@ -51,7 +60,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         });
     }
 
-    private static QueryMethodModel? TransformMethod(GeneratorAttributeSyntaxContext ctx)
+    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx)
     {
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
@@ -274,18 +283,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
         var returnTypeDisplay = method.ReturnType.ToDisplayString(returnTypeFormat);
 
-        return new QueryMethodModel(
+        var methodModel = new QueryMethodModel(
             MethodName: method.Name,
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            ContainingTypeName: containing.Name,
-            Namespace: containing.ContainingNamespace.IsGlobalNamespace
-                ? null
-                : containing.ContainingNamespace.ToDisplayString(),
             Sql: sql,
-            ConnectionAccess: connectionAccess,
-            ConnectionResolved: connectionResolved,
-            ContainingTypePartial: containingTypePartial,
-            ContainingTypeLocation: containingTypeLocation,
             Shape: shape,
             ReturnTypeDisplay: returnTypeDisplay,
             NullableScalarReaderMethod: nullableReaderMethod,
@@ -293,6 +294,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+
+        return new QueryMethodWithTypeContext(
+            Method: methodModel,
+            ContainingTypeName: containing.Name,
+            Namespace: containing.ContainingNamespace.IsGlobalNamespace
+                ? null
+                : containing.ContainingNamespace.ToDisplayString(),
+            ConnectionAccess: connectionAccess,
+            ConnectionResolved: connectionResolved,
+            ContainingTypePartial: containingTypePartial,
+            ContainingTypeLocation: containingTypeLocation);
     }
 
     // Decide which emit template fits this method. Conservative on purpose:
@@ -669,17 +681,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
 
-        // Type-scoped diagnostics — emit once per repository, keyed at the containing type.
-        // ZAO003 + ZAO004 are TYPE-scoped diagnostics but our model is per-method.
-        // We store the type-properties (ConnectionResolved, ContainingTypePartial,
-        // ContainingTypeLocation) as per-method redundancy and emit once via the
-        // first method, because TransformMethod has no ordering info across siblings.
-        // The grouping in Initialize guarantees one repo per containing type, so
-        // "first method" semantics is well-defined. See TODO(v0.2) in QueryMethodModel
-        // for the planned hoist into QueryRepositoryModel.
-        var firstMethod = repo.Methods.Values.IsDefault || repo.Methods.Values.Length == 0
-            ? null
-            : repo.Methods.Values[0];
+        // Type-scoped diagnostics — emit once per repository, keyed at the containing
+        // type. ZAO003 + ZAO004 read directly off QueryRepositoryModel (R8 hoist
+        // removed the per-method redundancy and the "first-method-as-representative"
+        // fallback).
+        //
         // ZAO003 fires when no IAsyncDbConnection source is found on the containing
         // type. ZAO004 fires when the containing type itself isn't `partial`. When both
         // apply, ZAO004 is the dominant problem: a non-partial type cannot host generated
@@ -687,20 +693,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // only ZAO004 in that combined case so the adopter sees one actionable error,
         // fixes it, and re-evaluates the rest (including a possibly still-missing
         // connection) on the next compile.
-        if (firstMethod is not null && !firstMethod.ConnectionResolved && firstMethod.ContainingTypePartial)
+        if (!repo.ConnectionResolved && repo.ContainingTypePartial)
         {
             hadError = true;
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticDescriptors.ZAO003_NoConnection,
-                firstMethod.ContainingTypeLocation?.ToLocation(),
+                repo.ContainingTypeLocation?.ToLocation(),
                 repo.ContainingTypeFullName));
         }
-        if (firstMethod is not null && !firstMethod.ContainingTypePartial)
+        if (!repo.ContainingTypePartial)
         {
             hadError = true;
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticDescriptors.ZAO004_TypeNotPartial,
-                firstMethod.ContainingTypeLocation?.ToLocation(),
+                repo.ContainingTypeLocation?.ToLocation(),
                 repo.ContainingTypeFullName));
         }
         return hadError;
@@ -729,16 +735,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
             switch (m.Shape)
             {
                 case EmitShape.ScalarInt:
-                    EmitScalarInt(sb, m);
+                    EmitScalarInt(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.NullableScalar:
-                    EmitNullableScalar(sb, m);
+                    EmitNullableScalar(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.FlatRow:
-                    EmitFlatRow(sb, m);
+                    EmitFlatRow(sb, m, repo.ConnectionAccess);
                     break;
                 default:
-                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {m.ConnectionAccess}) -- v0.1 Task 4.x");
+                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
             }
         }
@@ -753,7 +759,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // a single statement. Globally-qualified type names so emit composes regardless
     // of the consumer's `using` directives; `__`-prefixed locals avoid collision
     // with user parameter names; ConfigureAwait(false) consistently — library code.
-    private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m)
+    private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
@@ -761,7 +767,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
         sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");
@@ -787,7 +793,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // ExecuteScalarAsync because the latter conflates empty-set and NULL.
     // The method signature is rendered from m.ReturnTypeDisplay so the partial
     // matches the user declaration's nullable annotation verbatim.
-    private static void EmitNullableScalar(StringBuilder sb, QueryMethodModel m)
+    private static void EmitNullableScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
@@ -796,7 +802,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
         sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");
@@ -829,7 +835,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // No-row case returns null because this shape only triggers for Task<T?>.
     // Parameter binding (e.g. @id <- the `int id` arg) lands in Phase 6; for now
     // the SQL is sent as-is, which means unbound placeholders read as NULL.
-    private static void EmitFlatRow(StringBuilder sb, QueryMethodModel m)
+    private static void EmitFlatRow(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
         if (mat is null)
@@ -845,7 +851,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
         sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
         sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("        try");

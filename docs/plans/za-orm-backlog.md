@@ -40,7 +40,22 @@ Branch: `main` (local-only). Tasks shipped (commits in chronological order):
 - Task 6.7 — Keyword-named CancellationToken `@`-prefix in emit (`619f55a`)
 - Task 7.1 — AOT smoke test consumer + CI gate activation (`1fdeedc`)
 
-**v0.1 milestone complete pending NuGet publish.** Ready for release-please bump to `0.1.0`.
+### Post-bootstrap remediations (R1–R11, per [`2026-05-31-forward-plan.md`](2026-05-31-forward-plan.md))
+
+- R1 — Trim public API surface to v0.1 + add ZAO020/ZAO021 info diagnostics (`2dc6025`, `9ac54a6` / `44b42db`)
+- R2 — Drop ORM.Analyzers from v0.1; hoist PrimitiveCatalog into TypeConversions (`7bfd7f2`)
+- R3 — NuGet publish wiring + NU5046/NU5128 pack fixes + icon (`3dcf8c3`)
+- R4 — Connection-lifecycle integration test (`62fa1e5`)
+- R5 — Diagnostic catalog docs (`62fa1e5`)
+- R6 — Codegen polish bundle: IsTrimmable, [GeneratedCode], EquatableArray, ZAO022, docs (`2bc4d8a`)
+- Drop -preview chore: first release tags v0.1.0 (`60161c3`)
+- R7 — Diagnostic UX polish: ZAO007 message split, ZAO008 literal-aware, ZAO003/004 dedupe (`de0b656`)
+- R8 — Type-scoped diagnostic hoist from QueryMethodModel to QueryRepositoryModel (`d89e284`)
+- R9 — README Quick Start + Abstractions row drift fix (`517c45b`)
+- R10 — Test infra hardening: curated reference list + FlatRow nullable round-trip + naming sweep (`dd25bbd`)
+- R11 — Exception ctor symmetry + Roslyn pin rationale + backlog reconciliation (this commit)
+
+**v0.1 milestone complete. Ready for release-please bump to `0.1.0` (R12).**
 
 ---
 
