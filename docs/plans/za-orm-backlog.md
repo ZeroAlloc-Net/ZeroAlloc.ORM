@@ -6,6 +6,25 @@ Things to work on for the `ZeroAlloc-Net/ZeroAlloc.ORM` project. Refined as we g
 
 ---
 
+## v0.1 implementation status (live)
+
+Branch: `main` (local-only). Tasks shipped (commits in chronological order):
+
+- Task 0.1 — global.json SDK pin (`5b73eb8`)
+- Task 0.2 — Abstractions test project (`fb3c089`)
+- Task 0.3 — Generator snapshot test rig (`9eded7b`)
+- Task 0.4 — Integration test fixture (`ad5e79c`)
+- Tasks 1.1-1.6 — Six attributes (commits `ba4c6f9`..`6235481`)
+- Task 1.7 — Exception types (`c3cff0c`)
+- Task 2.1 — OrmGenerator skeleton (`7e2db26`)
+- Polyfill remediation — IsExternalInit on Abstractions (`4cb5551`)
+- Task 2.2 — Attribute scan + stub emit (`6e66c0a`)
+- EquatableArray remediation (`01d1ee7`)
+- Reviewer-flagged remediation pass — ModuleInitializer/Materialize/Debug.Assert/repository hoisting/plan-doc corrections (`2e9a676`..`6a3aef8`)
+- Next: Task 2.3 — IAsyncDbConnection resolution
+
+---
+
 ## P0 — Bootstrap
 
 ### ORM-B1 — Create the `ZeroAlloc-Net/ZeroAlloc.ORM` repo
