@@ -13,6 +13,7 @@ internal sealed record QueryMethodModel(
     string Sql,
     string ConnectionAccess,
     bool ConnectionResolved,
+    bool ContainingTypePartial,
     LocationInfo? ContainingTypeLocation,
     EquatableArray<DiagnosticInfo> Diagnostics);
 

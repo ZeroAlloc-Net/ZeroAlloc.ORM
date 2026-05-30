@@ -61,13 +61,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var (connectionAccess, connectionResolved) = ResolveConnectionAccess(containing);
 
         // Containing type's first-declaration location, for type-scoped diagnostics (ZAO003/ZAO004).
+        // Also detect whether ANY declaration carries the `partial` modifier.
         LocationInfo? containingTypeLocation = null;
+        var containingTypePartial = false;
         foreach (var syntaxRef in containing.DeclaringSyntaxReferences)
         {
             if (syntaxRef.GetSyntax() is TypeDeclarationSyntax td)
             {
-                containingTypeLocation = LocationInfo.From(td.Identifier.GetLocation());
-                break;
+                containingTypeLocation ??= LocationInfo.From(td.Identifier.GetLocation());
+                if (td.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
+                    containingTypePartial = true;
             }
         }
 
@@ -103,6 +106,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Sql: sql,
             ConnectionAccess: connectionAccess,
             ConnectionResolved: connectionResolved,
+            ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
@@ -235,6 +239,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
             hadError = true;
             context.ReportDiagnostic(Diagnostic.Create(
                 DiagnosticDescriptors.ZAO003_NoConnection,
+                firstMethod.ContainingTypeLocation?.ToLocation(),
+                repo.ContainingTypeFullName));
+        }
+        if (firstMethod is not null && !firstMethod.ContainingTypePartial)
+        {
+            hadError = true;
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.ZAO004_TypeNotPartial,
                 firstMethod.ContainingTypeLocation?.ToLocation(),
                 repo.ContainingTypeFullName));
         }
