@@ -18,6 +18,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
+    private const string GeneratorVersion = "0.1.0-preview.1";
+    private const string GeneratedCodeAttribute =
+        "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -665,6 +668,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
@@ -699,6 +703,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
@@ -747,6 +752,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
