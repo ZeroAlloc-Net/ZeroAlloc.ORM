@@ -21,7 +21,26 @@ Branch: `main` (local-only). Tasks shipped (commits in chronological order):
 - Task 2.2 — Attribute scan + stub emit (`6e66c0a`)
 - EquatableArray remediation (`01d1ee7`)
 - Reviewer-flagged remediation pass — ModuleInitializer/Materialize/Debug.Assert/repository hoisting/plan-doc corrections (`2e9a676`..`6a3aef8`)
-- Next: Task 2.3 — IAsyncDbConnection resolution
+- Task 2.3 — IAsyncDbConnection resolution (primary ctor / field / property) (`fd36890`..`bf78073`)
+- Phase 3 — Diagnostic catalog ZAO001-ZAO009 (`a6b5340`..`ff4072a`)
+- Phase 3 polish — diagnostic plumbing (`023600e`, `9aee32c`)
+- Task 4.1 — Scalar `Task<int>` emit + integration smoke + this.-prefix fix (`d5aaad1`, `996d6e8`, `7007cc0`, `7541566`)
+- Task 4.2 — Compile-smoke harness (`406f4be`)
+- Task 4.3 — Nullable scalar `Task<T?>` emit + snapshot (`df6a024`, `30db555`)
+- Task 5.1 — FlatRow positional-record materialization (`1074cc4`, `d824781`)
+- Task 5.1 fix — preserve parameter order + CT name forwarding (`8f34d53`)
+- Task 5.2 — FlatRow integration smoke (`73c5b77`)
+- Task 6.1 — Primitive parameter binding (int/string/decimal/Guid/DateTime/...) (`04a59dc`)
+- Task 6.1.5 — `[Param(Name)]` SQL-side override (`c276914`)
+- Task 6.2 — Nullable primitive parameter binding with DBNull guard (`ca457a8`)
+- Task 6.3 — Primitive parameter integration round-trip suite (`c0ac5b9`)
+- Task 6.4 — Keyword-named parameter `@`-prefix in emit (`e2aa3d4`)
+- Task 6.5 — Compile-smoke coverage for `[Param(Name)]` + nullable param (`6acebbf`)
+- Task 6.6 — Extended PrimitiveCatalog: DateTimeOffset, TimeSpan, byte[] (`855e4da`)
+- Task 6.7 — Keyword-named CancellationToken `@`-prefix in emit (`619f55a`)
+- Task 7.1 — AOT smoke test consumer + CI gate activation (`1fdeedc`)
+
+**v0.1 milestone complete pending NuGet publish.** Ready for release-please bump to `0.1.0-preview.1`.
 
 ---
 
@@ -58,20 +77,20 @@ Verify all five pack to NuGet correctly via the `dotnet pack` step.
 
 Foundational generator + smoke test path. Everything in this milestone unblocks the next.
 
-### v0.1-T1 — Roslyn incremental generator skeleton
+### ~~v0.1-T1 — Roslyn incremental generator skeleton~~ — ✅ shipped (Phase 2)
 
 - `IIncrementalGenerator` implementation reading source syntax.
 - Forward-pipeline structure: collect `[Query]`-annotated methods → group by containing type → emit per-type partial file.
 - Output discipline per Section 4: deterministic emit, `[GeneratedCodeAttribute]`, `#nullable enable`.
 - File naming: `<ContainingType>.g.cs` in obj output.
 
-### v0.1-T2 — `[Query]`, `[Param]` attribute definitions in Abstractions
+### ~~v0.1-T2 — `[Query]`, `[Param]` attribute definitions in Abstractions~~ — ✅ shipped (Phase 1)
 
 - Exact shape from Section 2 of design doc.
 - `MaterializeStrategy`, `BatchMode`, `CommandKind` enums included (some unused in v0.1 but lock the surface for later milestones).
 - XML doc comments per public member referencing diagnostics.
 
-### v0.1-T3 — Method signature validation (ZAO001-ZAO009)
+### ~~v0.1-T3 — Method signature validation (ZAO001-ZAO009)~~ — ✅ shipped (Phase 3)
 
 Compile-time diagnostics for the method signature contract:
 
@@ -87,35 +106,35 @@ Compile-time diagnostics for the method signature contract:
 
 Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file until docs site exists).
 
-### v0.1-T4 — Single-result `Task<T>` / `Task<T?>` emit
+### ~~v0.1-T4 — Single-result `Task<T>` / `Task<T?>` emit~~ — ✅ shipped (Phase 4)
 
 - Generator emits: `OpenAsync` (if not open), `CreateCommand`, parameter binding loop, `ExecuteReaderAsync`, single `ReadAsync`, materialization, `CloseAsync` (if we opened).
 - Connection-lifecycle matches the EF-style ref-counted pattern (do NOT hold the slot longer than the command — Lesson learned from PR #145 investigation: za-clean's `OpenAsync` at method entry was the dominant cost driver).
 
-### v0.1-T5 — FlatRow materialization on positional records
+### ~~v0.1-T5 — FlatRow materialization on positional records~~ — ✅ shipped (Phase 5)
 
 - Detect `record T(p1, p2, ...)` with all-positional ctor.
 - Emit `new T(reader.GetXxx(0), reader.GetXxx(1), ...)` matching ctor parameter order to column order.
 - Handle null: `reader.IsDBNull(N) ? null : reader.GetXxx(N)` for nullable parameters.
 
-### v0.1-T6 — Primitive parameter binding (no value-objects yet)
+### ~~v0.1-T6 — Primitive parameter binding (no value-objects yet)~~ — ✅ shipped (Phase 6)
 
 - Supported in v0.1: `int`, `long`, `short`, `byte`, `bool`, `decimal`, `double`, `float`, `string`, `Guid`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `byte[]` (+ nullable variants).
 - Value-object discovery deferred to v0.2.
 
-### v0.1-T7 — Snapshot test rig (Verify.NET)
+### ~~v0.1-T7 — Snapshot test rig (Verify.NET)~~ — ✅ shipped (Phase 0/4/5)
 
 - `tests/ZeroAlloc.ORM.Generator.Tests/` with Verify.NET setup.
 - Initial snapshots: one per emit-shape variant (single-result `Task<T>`, single-result `Task<T?>`, scalar return, primitive parameter, no parameters).
 - Verify.NET diff-on-PR pattern.
 
-### v0.1-T8 — AOT smoke test (mandatory CI gate)
+### ~~v0.1-T8 — AOT smoke test (mandatory CI gate)~~ — ✅ shipped (Phase 7)
 
 - Mirror AdoNet.Async's pattern. `tests/ZeroAlloc.ORM.AotSmoke/` consumer using `[Query]` end-to-end against Sqlite in-memory.
 - `.github/workflows/aot-smoke.yml` publishes linux-x64 with `PublishAot=true`, runs the resulting binary.
 - Fail on any IL2026/IL2046/IL3050.
 
-### v0.1-T9 — Integration test rig
+### ~~v0.1-T9 — Integration test rig~~ — ✅ shipped (Phase 0/4/5/6)
 
 - `tests/ZeroAlloc.ORM.Integration.Tests/` with Sqlite in-memory default backend.
 - Three smoke scenarios: read one row, read zero rows (null return), parameter type round-trips.
