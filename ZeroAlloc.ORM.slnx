@@ -11,6 +11,7 @@
     <Project Path="tests/ZeroAlloc.ORM.Generator.Tests/ZeroAlloc.ORM.Generator.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Integration.Tests/ZeroAlloc.ORM.Integration.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.AotSmoke/ZeroAlloc.ORM.AotSmoke.csproj" />
+    <Project Path="tests/ZeroAlloc.TypeConversions.Tests/ZeroAlloc.TypeConversions.Tests.csproj" />
   </Folder>
   <Folder Name="/docs/" />
 </Solution>
