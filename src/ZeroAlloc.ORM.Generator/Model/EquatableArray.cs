@@ -36,13 +36,41 @@ internal readonly record struct EquatableArray<T>(ImmutableArray<T> Values) : IE
         return hash;
     }
 
-    public IEnumerator<T> GetEnumerator()
+    // Struct enumerator: foreach (var x in equatableArray) binds to this overload by
+    // duck-typing and avoids the boxing + heap-allocation that an IEnumerator<T> path
+    // would incur. The interface-typed GetEnumerator overloads remain for LINQ and any
+    // consumer holding an IEnumerable<T> reference.
+    public Enumerator GetEnumerator() => new Enumerator(Values);
+
+    IEnumerator<T> IEnumerable<T>.GetEnumerator()
     {
         var values = Values.IsDefault ? ImmutableArray<T>.Empty : Values;
-        foreach (var v in values) yield return v;
+        return ((IEnumerable<T>)values).GetEnumerator();
     }
 
-    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<T>)this).GetEnumerator();
 
     public static EquatableArray<T> Empty => new(ImmutableArray<T>.Empty);
+
+    public struct Enumerator
+    {
+        private readonly ImmutableArray<T> _values;
+        private int _index;
+
+        internal Enumerator(ImmutableArray<T> values)
+        {
+            _values = values.IsDefault ? ImmutableArray<T>.Empty : values;
+            _index = -1;
+        }
+
+        public T Current => _values[_index];
+
+        public bool MoveNext()
+        {
+            var next = _index + 1;
+            if (next >= _values.Length) return false;
+            _index = next;
+            return true;
+        }
+    }
 }
