@@ -6,5 +6,21 @@ namespace TestApp;
 
 partial class OrderRepository
 {
-    // TODO: emit body for GetOneAsync (uses this.connection) -- v0.1 Task 4.x
+    public partial async global::System.Threading.Tasks.Task<int> GetOneAsync(global::System.Threading.CancellationToken ct)
+    {
+        var __conn = this.connection;
+        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
+        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var __cmd = __conn.CreateCommand();
+            __cmd.CommandText = "SELECT 1";
+            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
+        }
+    }
 }

@@ -161,6 +161,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     method.ReturnType.ToDisplayString()))));
         }
 
+        var shape = ClassifyEmitShape(method);
+
         return new QueryMethodModel(
             MethodName: method.Name,
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -173,7 +175,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ConnectionResolved: connectionResolved,
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation,
+            Shape: shape,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+    }
+
+    // Decide which emit template fits this method. Conservative on purpose:
+    // returns ScalarInt only for the exact v0.1 Task 4.1 shape — `Task<int>` with
+    // a single CancellationToken parameter (no user-bound parameters). Everything
+    // else stays Unknown and falls through to the stub-comment path until a later
+    // Phase 4 task adds its template.
+    private static EmitShape ClassifyEmitShape(IMethodSymbol method)
+    {
+        if (method.ReturnType is not INamedTypeSymbol named) return EmitShape.Unknown;
+        // Restrict to Task<T> for now; ValueTask<int> lands later.
+        if (!(named.Name == "Task" && named.Arity == 1)) return EmitShape.Unknown;
+        if (named.TypeArguments[0].SpecialType != SpecialType.System_Int32) return EmitShape.Unknown;
+
+        // Only zero user parameters (CT-only). User-parameter binding is Phase 6.
+        var userParamCount = method.Parameters.Count(p =>
+            !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
+        if (userParamCount != 0) return EmitShape.Unknown;
+
+        return EmitShape.ScalarInt;
     }
 
     private static (string Access, bool Resolved) ResolveConnectionAccess(INamedTypeSymbol containing)
@@ -380,13 +403,51 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         sb.AppendLine($"partial class {repo.ContainingTypeName}");
         sb.AppendLine("{");
+        var first = true;
         foreach (var m in repo.Methods)
         {
-            sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses this.{m.ConnectionAccess}) -- v0.1 Task 4.x");
+            if (!first) sb.AppendLine();
+            first = false;
+            switch (m.Shape)
+            {
+                case EmitShape.ScalarInt:
+                    EmitScalarInt(sb, m);
+                    break;
+                default:
+                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses this.{m.ConnectionAccess}) -- v0.1 Task 4.x");
+                    break;
+            }
         }
         sb.AppendLine("}");
 
         var hint = $"{repo.ContainingTypeName}.g.cs";
         context.AddSource(hint, SourceText.From(sb.ToString(), Encoding.UTF8));
+    }
+
+    // EF-style open-on-execute lifecycle: open if needed, single-command execute,
+    // close-on-finally. Slot held only for ExecuteScalarAsync — minimum possible for
+    // a single statement. Globally-qualified type names so emit composes regardless
+    // of the consumer's `using` directives; `__`-prefixed locals avoid collision
+    // with user parameter names; ConfigureAwait(false) consistently — library code.
+    private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m)
+    {
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}(global::System.Threading.CancellationToken ct)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = this.{m.ConnectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        sb.AppendLine("            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
     }
 }

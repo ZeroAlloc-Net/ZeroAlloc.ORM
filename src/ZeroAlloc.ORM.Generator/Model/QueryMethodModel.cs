@@ -1,5 +1,15 @@
 namespace ZeroAlloc.ORM.Generator.Model;
 
+// Classification of the emit template a [Query] method should use.
+// Phase 4.1 introduces ScalarInt; future shapes (ScalarNullable, FlatRow, etc.)
+// land in later Phase 4/5 tasks. Methods that don't match any known shape stay
+// Unknown and emit the v0.1 stub comment.
+internal enum EmitShape
+{
+    Unknown,
+    ScalarInt,
+}
+
 // TODO(v0.2): hoist all type-scoped fields to QueryRepositoryModel:
 //   - ContainingTypeName, Namespace (Phase 2.2)
 //   - ConnectionAccess, ConnectionResolved, ContainingTypePartial, ContainingTypeLocation (Phase 3.3-3.10)
@@ -15,6 +25,7 @@ internal sealed record QueryMethodModel(
     bool ConnectionResolved,
     bool ContainingTypePartial,
     LocationInfo? ContainingTypeLocation,
+    EmitShape Shape,
     EquatableArray<DiagnosticInfo> Diagnostics);
 
 internal sealed record QueryRepositoryModel(
