@@ -58,7 +58,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
 
-        var connectionAccess = ResolveConnectionAccess(containing);
+        var (connectionAccess, connectionResolved) = ResolveConnectionAccess(containing);
+
+        // Containing type's first-declaration location, for type-scoped diagnostics (ZAO003/ZAO004).
+        LocationInfo? containingTypeLocation = null;
+        foreach (var syntaxRef in containing.DeclaringSyntaxReferences)
+        {
+            if (syntaxRef.GetSyntax() is TypeDeclarationSyntax td)
+            {
+                containingTypeLocation = LocationInfo.From(td.Identifier.GetLocation());
+                break;
+            }
+        }
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
@@ -91,10 +102,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 : containing.ContainingNamespace.ToDisplayString(),
             Sql: sql,
             ConnectionAccess: connectionAccess,
+            ConnectionResolved: connectionResolved,
+            ContainingTypeLocation: containingTypeLocation,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
 
-    private static string ResolveConnectionAccess(INamedTypeSymbol containing)
+    private static (string Access, bool Resolved) ResolveConnectionAccess(INamedTypeSymbol containing)
     {
         // (a) Primary ctor param. Only primary-ctor parameters are captured as state
         // accessible from methods; ordinary ctor parameters go out of scope. Detect
@@ -108,7 +121,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 if (!IsIAsyncDbConnection(p.Type))
                     continue;
                 if (IsPrimaryConstructorParameter(p))
-                    return p.Name;
+                    return (p.Name, true);
             }
         }
 
@@ -121,13 +134,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             if (member.IsImplicitlyDeclared) continue;
             if (member is IFieldSymbol f && IsIAsyncDbConnection(f.Type))
-                return f.Name;
+                return (f.Name, true);
             if (member is IPropertySymbol pr && IsIAsyncDbConnection(pr.Type))
-                return pr.Name;
+                return (pr.Name, true);
         }
 
-        // Fallback; Phase 3 ZAO003 diagnostic will surface a real error when nothing matches.
-        return "connection";
+        // Fallback; ZAO003 surfaces an error so the user sees the missing source.
+        return ("connection", false);
     }
 
     private static bool IsSupportedReturnType(ITypeSymbol returnType)
@@ -211,6 +224,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     diag.Location?.ToLocation(),
                     args));
             }
+        }
+
+        // Type-scoped diagnostics — emit once per repository, keyed at the containing type.
+        var firstMethod = repo.Methods.Values.IsDefault || repo.Methods.Values.Length == 0
+            ? null
+            : repo.Methods.Values[0];
+        if (firstMethod is not null && !firstMethod.ConnectionResolved)
+        {
+            hadError = true;
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.ZAO003_NoConnection,
+                firstMethod.ContainingTypeLocation?.ToLocation(),
+                repo.ContainingTypeFullName));
         }
         return hadError;
     }
