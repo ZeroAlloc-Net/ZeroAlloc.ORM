@@ -90,4 +90,9 @@ internal static class DiagnosticDescriptors
         "ZAO042", "[StoreAsString] requires an enum type",
         "Type '{0}' carries [StoreAsString] but is not an enum. Apply [StoreAsString] to enum types only.",
         DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO043_MaterializeFactoryMissing = Make(
+        "ZAO043", "[Materialize(Factory)] references missing method",
+        "Method '{0}' references factory '{1}' via [Materialize(Factory=...)] but the method is not found on type '{2}' or is not static/public. [Materialize] support lands in v0.5.",
+        DiagnosticSeverity.Error);
 }

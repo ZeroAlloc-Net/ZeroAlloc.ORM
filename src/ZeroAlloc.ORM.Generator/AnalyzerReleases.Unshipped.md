@@ -20,3 +20,4 @@ ZAO022  | ZeroAlloc.ORM | Info     | Return type shape not yet supported in v0.1
 ZAO040  | ZeroAlloc.ORM | Error    | No construction strategy resolved for type
 ZAO041  | ZeroAlloc.ORM | Error    | No binding strategy resolved for parameter
 ZAO042  | ZeroAlloc.ORM | Error    | [StoreAsString] requires an enum type
+ZAO043  | ZeroAlloc.ORM | Error    | [Materialize(Factory)] references missing method
