@@ -4,7 +4,7 @@
     <RootNamespace>ZeroAlloc.ORM.Generator</RootNamespace>
     <PackageId>ZeroAlloc.ORM.Generator</PackageId>
     <Title>ZeroAlloc.ORM.Generator</Title>
-    <Description>Roslyn incremental source generator that materialises [Query] / [Command] / [StoredProcedure]-annotated partial methods into typed ADO.NET pipelines against AdoNet.Async. Build-time only; never loaded at the consumer's runtime.</Description>
+    <Description>Roslyn incremental source generator that materialises [Query]-annotated partial methods into typed ADO.NET pipelines against AdoNet.Async. Build-time only; never loaded at the consumer's runtime.</Description>
     <PackageTags>zeroalloc;orm;source-generator;roslyn;incremental-generator;ado.net</PackageTags>
 
     <IncludeBuildOutput>false</IncludeBuildOutput>

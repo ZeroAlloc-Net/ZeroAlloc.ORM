@@ -18,7 +18,7 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO001_NotPartial = Make(
         "ZAO001", "Annotated method must be partial",
-        "Method '{0}' is annotated with [Query]/[Command]/[StoredProcedure] but is not declared partial. Add the 'partial' modifier.",
+        "Method '{0}' is annotated with [Query] but is not declared partial. Add the 'partial' modifier.",
         DiagnosticSeverity.Error);
 
     public static readonly DiagnosticDescriptor ZAO002_BadReturnType = Make(
@@ -28,7 +28,7 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO003_NoConnection = Make(
         "ZAO003", "No IAsyncDbConnection found on containing type",
-        "Type '{0}' contains [Query]/[Command]/[StoredProcedure] methods but has no IAsyncDbConnection field, primary-ctor parameter, or property. Inject IAsyncDbConnection so the generator can wire the command.",
+        "Type '{0}' contains [Query] methods but has no IAsyncDbConnection field, primary-ctor parameter, or property. Inject IAsyncDbConnection so the generator can wire the command.",
         DiagnosticSeverity.Error);
 
     public static readonly DiagnosticDescriptor ZAO004_TypeNotPartial = Make(
@@ -38,7 +38,7 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO005_MultipleAttributes = Make(
         "ZAO005", "Multiple ORM attributes on one method",
-        "Method '{0}' has more than one of [Query]/[Command]/[StoredProcedure]. Apply exactly one.",
+        "Method '{0}' has more than one [Query] attribute. Apply exactly one.",
         DiagnosticSeverity.Error);
 
     public static readonly DiagnosticDescriptor ZAO006_MultipleCancellationTokens = Make(

@@ -4,7 +4,7 @@
     <RootNamespace>ZeroAlloc.ORM.Analyzers</RootNamespace>
     <PackageId>ZeroAlloc.ORM.Analyzers</PackageId>
     <Title>ZeroAlloc.ORM.Analyzers</Title>
-    <Description>Compile-time diagnostics (ZAO001-ZAO070) for ZeroAlloc.ORM. Catches misuse of [Query] / [Command] / [StoredProcedure] / [Param] / [Materialize] / [StoreAsString] attributes before codegen runs. Build-time only.</Description>
+    <Description>Compile-time diagnostics (ZAO001-ZAO070) for ZeroAlloc.ORM. Catches misuse of [Query] / [Param] attributes before codegen runs. Build-time only.</Description>
     <PackageTags>zeroalloc;orm;analyzer;roslyn;diagnostics</PackageTags>
 
     <IncludeBuildOutput>false</IncludeBuildOutput>

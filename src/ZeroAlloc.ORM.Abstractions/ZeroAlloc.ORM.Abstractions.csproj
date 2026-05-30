@@ -4,7 +4,7 @@
     <RootNamespace>ZeroAlloc.ORM</RootNamespace>
     <PackageId>ZeroAlloc.ORM.Abstractions</PackageId>
     <Title>ZeroAlloc.ORM.Abstractions</Title>
-    <Description>Public attribute surface ([Query], [Command], [StoredProcedure], [Param], [Materialize], [StoreAsString]) and exception types for ZeroAlloc.ORM. Reference this package in any project that authors annotated partial methods or mocks the ORM surface in unit tests.</Description>
+    <Description>Public attribute surface ([Query], [Param]) and exception types for ZeroAlloc.ORM v0.1. Reference this package in any project that authors annotated partial methods or mocks the ORM surface in unit tests.</Description>
     <PackageTags>zeroalloc;orm;ado.net;source-generator;nativeaot;trimming</PackageTags>
     <!-- Pure attribute + interface surface, zero runtime reflection. -->
     <IsAotCompatible>true</IsAotCompatible>

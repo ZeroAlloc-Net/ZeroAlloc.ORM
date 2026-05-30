@@ -86,16 +86,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
-        // ZAO005 — multiple ORM attributes on one method.
-        // NOTE: This pipeline only triggers via [Query]. A method declared with ONLY
-        // [Command] + [StoredProcedure] (no [Query]) would be invisible to us and ZAO005
-        // would not fire. Once Phase 4 wires ForAttributeWithMetadataName for Command +
-        // StoredProcedure, this limitation goes away.
+        // ZAO005 — multiple [Query] attributes on one method.
+        // v0.1 only ships [Query]; [Command] and [StoredProcedure] return in v0.4 at
+        // which point this check expands to cover all three ORM attributes.
         var ormAttrCount = method.GetAttributes()
-            .Count(a => a.AttributeClass?.ToDisplayString() is
-                "ZeroAlloc.ORM.QueryAttribute" or
-                "ZeroAlloc.ORM.CommandAttribute" or
-                "ZeroAlloc.ORM.StoredProcedureAttribute");
+            .Count(a => string.Equals(
+                a.AttributeClass?.ToDisplayString(),
+                "ZeroAlloc.ORM.QueryAttribute",
+                StringComparison.Ordinal));
         if (ormAttrCount > 1)
         {
             diagnostics.Add(new DiagnosticInfo(
