@@ -99,6 +99,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO009 — partial declaration must not carry the `async` keyword (warning).
+        if (methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.AsyncKeyword)))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO009",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
         // ZAO008 — multi-statement SQL with a single-result return type.
         if (CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
         {
