@@ -182,11 +182,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
                 var paramNameOverride = ReadParamNameOverride(p);
+                // Nullability detection mirrors the FlatRow column-binding logic:
+                // either an annotated nullable reference type (`string?`) or the
+                // `Nullable<T>` value-type wrapper (`int?` / `Nullable<int>`).
+                var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
+                    || (p.Type is INamedTypeSymbol pn
+                        && pn.IsGenericType
+                        && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
                 return new ParameterInfo(
                     p.Name,
                     p.Type.ToDisplayString(parameterDisplayFormat),
                     isCt,
-                    paramNameOverride);
+                    paramNameOverride,
+                    isNullable);
             })
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
@@ -756,7 +764,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
-            sb.AppendLine($"            {local}.Value = {p.Name};");
+            // Nullable parameters need a DBNull sentinel — assigning a CLR null to
+            // DbParameter.Value is provider-dependent (some treat it as "missing
+            // parameter" rather than "SQL NULL"), so we route through DBNull.Value
+            // explicitly. Non-nullable parameters skip the cast for cleaner emit.
+            if (p.IsNullable)
+            {
+                sb.AppendLine($"            {local}.Value = (object?){p.Name} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"            {local}.Value = {p.Name};");
+            }
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
     }

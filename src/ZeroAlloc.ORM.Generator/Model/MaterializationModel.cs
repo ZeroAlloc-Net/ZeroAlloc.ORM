@@ -50,8 +50,12 @@ internal sealed record MaterializationModel(
 //   IsCancellationToken -- skip binding; CT is a runtime control signal.
 //   ParamNameOverride -- when set via [Param(Name = "...")], emit uses this string
 //                        verbatim as `ParameterName`. Null falls back to "@" + Name.
+//   IsNullable        -- the C# parameter type is a nullable reference (`string?`)
+//                        or `Nullable<T>` (`int?`); emit wraps `.Value` with a
+//                        `(object?)x ?? DBNull.Value` guard.
 internal sealed record ParameterInfo(
     string Name,
     string TypeDisplay,
     bool IsCancellationToken,
-    string? ParamNameOverride = null);
+    string? ParamNameOverride = null,
+    bool IsNullable = false);
