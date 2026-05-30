@@ -8,7 +8,17 @@ namespace ZeroAlloc.TypeConversions;
 /// Convention-discovery entry point: classifies an arbitrary <see cref="ITypeSymbol"/>
 /// into a <see cref="ConventionResult"/> the generator (and future ZA.Mapping) can consume.
 ///
-/// Rules are checked in priority order (see design doc Section 3); first match wins.
+/// Rules are checked in priority order (see design doc Section 3); first match wins:
+/// <list type="number">
+///   <item>Explicit <c>[Materialize]</c> annotation (reserved for v0.3+).</item>
+///   <item>Primitive (<see cref="PrimitiveCatalog"/>).</item>
+///   <item>ZA.ValueObjects <c>[ValueObject]</c> attribute.</item>
+///   <item>Static <c>From</c> / <c>FromValue</c> factory.</item>
+///   <item>Single-arg record primary constructor.</item>
+///   <item>Enum (and <c>[StoreAsString]</c> variant).</item>
+///   <item>Multi-arg constructor (reserved for v0.5).</item>
+///   <item><see cref="ConventionKind.Unknown"/>.</item>
+/// </list>
 /// </summary>
 public static class ConventionDiscovery
 {
@@ -26,66 +36,68 @@ public static class ConventionDiscovery
     /// <param name="context">Compilation-scoped lookups for attributes and well-known types.</param>
     public static ConventionResult Resolve(ITypeSymbol type, ConventionContext context)
     {
-        _ = context;
-
-        if (PrimitiveCatalog.IsPrimitive(type))
-        {
-            return new ConventionResult(
-                ConventionKind.Primitive,
-                Factory: null,
-                Value: null,
-                ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
-        }
+        if (TryExplicitMaterialize(type) is { } m1) return m1;
+        if (TryPrimitive(type) is { } m2) return m2;
 
         if (type is INamedTypeSymbol named)
         {
-            if (TryValueObject(named) is { } voResult) return voResult;
-            if (TryStaticFactory(named) is { } facResult) return facResult;
-            if (TrySingleArgCtor(named, context) is { } ctorResult) return ctorResult;
-            if (TryEnum(named) is { } enumResult) return enumResult;
+            if (TryValueObject(named) is { } m3) return m3;
+            if (TryStaticFactory(named) is { } m4) return m4;
+            if (TrySingleArgCtor(named, context) is { } m5) return m5;
+            if (TryEnum(named) is { } m6) return m6;
+            if (TryMultiArgCtor(named, context) is { } m7) return m7;
         }
 
         return UnknownResult;
     }
 
+    private const string ValueObjectAttributeFqn = "ZeroAlloc.ValueObjects.ValueObjectAttribute";
     private const string StoreAsStringAttributeFqn = "ZeroAlloc.ORM.StoreAsStringAttribute";
 
-    // Enums round-trip as their underlying integral type by default. The
-    // [StoreAsString] opt-in marker (defined in ZA.ORM.Abstractions) flips that to
-    // string round-trip so wire-format diffs survive enum reordering. The attribute
-    // match is FQN-based so the discovery layer doesn't depend on Abstractions.
-    private static ConventionResult? TryEnum(INamedTypeSymbol type)
+    // Placeholder for v0.3's [Materialize] attribute. Returning null today keeps the
+    // priority ladder cleanly ordered — when the attribute lands, only this method
+    // changes; the Resolve dispatcher stays put.
+    private static ConventionResult? TryExplicitMaterialize(ITypeSymbol type)
     {
-        if (type.TypeKind != TypeKind.Enum) return null;
+        _ = type;
+        return null;
+    }
 
-        var kind = HasStoreAsStringAttribute(type)
-            ? ConventionKind.EnumAsString
-            : ConventionKind.Enum;
-
+    private static ConventionResult? TryPrimitive(ITypeSymbol type)
+    {
+        if (!PrimitiveCatalog.IsPrimitive(type)) return null;
         return new ConventionResult(
-            kind,
+            ConventionKind.Primitive,
             Factory: null,
             Value: null,
             ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
-    private static bool HasStoreAsStringAttribute(INamedTypeSymbol type)
+    // ZA.ValueObjects marks wrapper types with [ValueObject]. By convention the
+    // generated type exposes `T Value { get; }` and `static T From(TPrim)`. We
+    // surface those when present; when the generator hasn't run yet in a test
+    // compilation we still return the ValueObject kind so callers can react to the
+    // annotation alone. FQN match keeps this independent of an assembly reference.
+    private static ConventionResult? TryValueObject(INamedTypeSymbol type)
     {
-        foreach (var attr in type.GetAttributes())
-        {
-            var name = attr.AttributeClass?.ToDisplayString();
-            if (string.Equals(name, StoreAsStringAttributeFqn, System.StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-        return false;
+        if (!HasAttribute(type, ValueObjectAttributeFqn)) return null;
+
+        var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
+        var factory = type.GetMembers("From")
+            .OfType<IMethodSymbol>()
+            .FirstOrDefault(m => m.IsStatic && m.Parameters.Length == 1);
+
+        return new ConventionResult(
+            ConventionKind.ValueObject,
+            Factory: factory,
+            Value: valueProp,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
     // Hand-rolled wrapper types frequently expose `static T From(TPrim)` or
-    // `static T FromValue(TPrim)` as the canonical factory (often because the ctor
-    // is private to enforce invariants). v0.2 hard-codes the two names; once
-    // [Materialize(Factory)] lands the catalog will be configurable.
+    // `static T FromValue(TPrim)` as the canonical factory. The factory often
+    // encodes invariants the primary ctor doesn't, so when both are present we
+    // prefer the factory — that's why this rule sits above SingleArgCtor.
     private static ConventionResult? TryStaticFactory(INamedTypeSymbol type)
     {
         var factory = type.GetMembers()
@@ -101,9 +113,6 @@ public static class ConventionDiscovery
 
         if (factory is null) return null;
 
-        // Conventional unwrap property is `Value`; absent is allowed (some wrappers
-        // expose a method or a differently-named property — the generator can fall
-        // back to reflection-free strategies once this surfaces in Phase C).
         var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
 
         return new ConventionResult(
@@ -114,11 +123,11 @@ public static class ConventionDiscovery
     }
 
     // Records with a single primary-ctor parameter that resolves to a primitive are
-    // the idiomatic "lightweight value-object without ZA.ValueObjects" shape. We
-    // match `record class Foo(int X)` and `record struct Foo(int X)` alike — both
-    // produce a public instance ctor with exactly one parameter.
+    // the idiomatic "lightweight value-object without ZA.ValueObjects" shape. Match
+    // both `record class Foo(int X)` and `record struct Foo(int X)`.
     private static ConventionResult? TrySingleArgCtor(INamedTypeSymbol type, ConventionContext context)
     {
+        _ = context;
         if (!type.IsRecord) return null;
 
         var ctor = type.InstanceConstructors.FirstOrDefault(c =>
@@ -126,13 +135,8 @@ public static class ConventionDiscovery
             c.Parameters.Length == 1);
 
         if (ctor is null) return null;
+        if (!PrimitiveCatalog.IsPrimitive(ctor.Parameters[0].Type)) return null;
 
-        // Only declare SingleArgCtor when the inner type itself is primitive; nested
-        // wrappers (record A(B b) where B is another VO) are out of scope for v0.2.
-        var paramType = ctor.Parameters[0].Type;
-        if (!PrimitiveCatalog.IsPrimitive(paramType)) return null;
-
-        // Records synthesize a property named after the ctor parameter verbatim.
         var paramName = ctor.Parameters[0].Name;
         var valueProp = type.GetMembers(paramName).OfType<IPropertySymbol>().FirstOrDefault();
 
@@ -143,38 +147,39 @@ public static class ConventionDiscovery
             ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
-    private const string ValueObjectAttributeFqn = "ZeroAlloc.ValueObjects.ValueObjectAttribute";
-
-    // ZA.ValueObjects marks wrapper types with [ValueObject]. By convention the
-    // generated type exposes `T Value { get; }` (the wrapped primitive) and
-    // `static T From(TPrim)` (the canonical factory). We surface those when present;
-    // when the generator hasn't run yet in a test compilation, we still return the
-    // ValueObject kind so callers can react to the annotation alone.
-    private static ConventionResult? TryValueObject(INamedTypeSymbol type)
+    // Enums round-trip as their underlying integral type by default. The
+    // [StoreAsString] opt-in marker (defined in ZA.ORM.Abstractions) flips that to
+    // string round-trip so wire-format diffs survive enum reordering.
+    private static ConventionResult? TryEnum(INamedTypeSymbol type)
     {
-        if (!HasValueObjectAttribute(type))
-        {
-            return null;
-        }
+        if (type.TypeKind != TypeKind.Enum) return null;
 
-        var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
-        var factory = type.GetMembers("From")
-            .OfType<IMethodSymbol>()
-            .FirstOrDefault(m => m.IsStatic && m.Parameters.Length == 1);
+        var kind = HasAttribute(type, StoreAsStringAttributeFqn)
+            ? ConventionKind.EnumAsString
+            : ConventionKind.Enum;
 
         return new ConventionResult(
-            ConventionKind.ValueObject,
-            Factory: factory,
-            Value: valueProp,
+            kind,
+            Factory: null,
+            Value: null,
             ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
-    private static bool HasValueObjectAttribute(INamedTypeSymbol type)
+    // Multi-arg composite shapes (DateRange(DateTime From, DateTime To), etc.) are
+    // reserved for v0.5. The placeholder keeps the priority ladder symmetric.
+    private static ConventionResult? TryMultiArgCtor(INamedTypeSymbol type, ConventionContext context)
+    {
+        _ = type;
+        _ = context;
+        return null;
+    }
+
+    private static bool HasAttribute(INamedTypeSymbol type, string fqn)
     {
         foreach (var attr in type.GetAttributes())
         {
             var name = attr.AttributeClass?.ToDisplayString();
-            if (string.Equals(name, ValueObjectAttributeFqn, System.StringComparison.Ordinal))
+            if (string.Equals(name, fqn, System.StringComparison.Ordinal))
             {
                 return true;
             }
