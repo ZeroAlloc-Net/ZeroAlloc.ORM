@@ -12,6 +12,31 @@ internal enum MaterializationKind
     Custom,
 }
 
+// Cache-safe projection of ZeroAlloc.TypeConversions.ConventionResult. The discovery
+// API returns `ISymbol` for the factory and `IPropertySymbol` for the value accessor,
+// which would break incremental-generator equality if stored on QueryMethodModel /
+// MaterializationModel. This record carries only the string fragments the emitter
+// needs, so two equivalent compilations produce equal models.
+//
+//   Kind                -- which discovery rule matched.
+//   FactoryFullName     -- globally-qualified call target for non-primitive ctors,
+//                          e.g. "global::TestApp.OrderId.From" for a ValueObject /
+//                          StaticFactory, or "global::TestApp.OrderId" for a record
+//                          ctor (caller prepends `new `).
+//   FactoryIsCtor       -- true when FactoryFullName names a type to be invoked with
+//                          `new T(...)`; false when it names a static factory method
+//                          to be invoked directly.
+//   ValuePropertyName   -- name of the unwrap property (typically "Value"), used by
+//                          parameter binding to emit `@id.Value`.
+//   UnderlyingReader    -- IDataReader.GetXxx method for the wrapped primitive,
+//                          e.g. "GetInt32" for `OrderId(int Value)`.
+internal sealed record ConventionInfo(
+    int Kind,
+    string? FactoryFullName,
+    bool FactoryIsCtor,
+    string? ValuePropertyName,
+    string? UnderlyingReader);
+
 // One ctor parameter <-> one reader column. Stored as primitives + strings so the
 // surrounding model stays cache-safe for incremental-generator equality.
 //
@@ -20,10 +45,15 @@ internal enum MaterializationKind
 //                   emit wraps the GetXxx call in an IsDBNull(N) guard.
 //   TypeName     -- fully-qualified parameter type display, used when the emit
 //                   needs to cast the null sentinel (e.g. `(int?)null`).
+//   Convention   -- non-null only when the column resolves to a non-primitive
+//                   convention (ValueObject, SingleArgCtor, StaticFactory). When
+//                   null the emitter falls back to the primitive `reader.GetXxx(N)`
+//                   shape — identical to v0.1 behavior.
 internal sealed record ColumnBinding(
     string GetterMethod,
     bool IsNullable,
-    string TypeName);
+    string TypeName,
+    ConventionInfo? Convention = null);
 
 // Materialization plan for a single [Query] method's return row.
 //
@@ -58,4 +88,5 @@ internal sealed record ParameterInfo(
     string TypeDisplay,
     bool IsCancellationToken,
     string? ParamNameOverride = null,
-    bool IsNullable = false);
+    bool IsNullable = false,
+    ConventionInfo? Convention = null);
