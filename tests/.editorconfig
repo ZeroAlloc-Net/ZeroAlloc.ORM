@@ -4,3 +4,8 @@ root = false
 # CA1707 (no underscores in identifiers) is suppressed for test projects.
 [*.cs]
 dotnet_diagnostic.CA1707.severity = none
+
+# xUnit1030 forbids ConfigureAwait(false) in test methods to preserve xUnit's
+# parallelization limits. We intentionally use ConfigureAwait(false) here to
+# satisfy MA0004 and to mirror production-side discipline in library tests.
+dotnet_diagnostic.xUnit1030.severity = none

@@ -8,12 +8,15 @@ public class ScalarReadTests
     [Fact]
     public async Task SELECT_42_returns_42()
     {
-        await using var fx = new SqliteFixture();
-        await fx.InitializeAsync();
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
 
-        var repo = new ScalarRepo(fx.Connection);
-        var result = await repo.AnswerAsync(CancellationToken.None);
+            var repo = new ScalarRepo(fx.Connection);
+            var result = await repo.AnswerAsync(CancellationToken.None).ConfigureAwait(false);
 
-        result.Should().Be(42);
+            result.Should().Be(42);
+        }
     }
 }
