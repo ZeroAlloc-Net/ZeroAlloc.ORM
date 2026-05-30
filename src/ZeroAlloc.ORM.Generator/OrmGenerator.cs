@@ -1023,17 +1023,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
+
+            // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
+            // through their discovered `Value` property before binding to the
+            // DbParameter so the provider sees the underlying primitive. Falls back
+            // to the raw value when no convention applies — the v0.1 emit path.
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv && conv.ValuePropertyName is { } propName)
+            {
+                valueExpr = $"@{p.Name}.{propName}";
+            }
+
             // Nullable parameters need a DBNull sentinel — assigning a CLR null to
             // DbParameter.Value is provider-dependent (some treat it as "missing
             // parameter" rather than "SQL NULL"), so we route through DBNull.Value
             // explicitly. Non-nullable parameters skip the cast for cleaner emit.
             if (p.IsNullable)
             {
-                sb.AppendLine($"            {local}.Value = (object?)@{p.Name} ?? global::System.DBNull.Value;");
+                sb.AppendLine($"            {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
             }
             else
             {
-                sb.AppendLine($"            {local}.Value = @{p.Name};");
+                sb.AppendLine($"            {local}.Value = {valueExpr};");
             }
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }

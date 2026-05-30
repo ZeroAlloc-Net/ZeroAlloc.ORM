@@ -261,6 +261,40 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void ValueObject_parameter_binding_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+            using ZeroAlloc.ValueObjects;
+
+            namespace TestApp;
+
+            [ValueObject]
+            public readonly partial struct OrderId
+            {
+                public int Value { get; }
+                public OrderId(int v) { Value = v; }
+                public static OrderId From(int value) => new(value);
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1 WHERE @id = 42")]
+                public partial Task<int> SearchAsync(OrderId id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void ValueObject_materialization_emit_compiles_cleanly()
     {
         var source = """
