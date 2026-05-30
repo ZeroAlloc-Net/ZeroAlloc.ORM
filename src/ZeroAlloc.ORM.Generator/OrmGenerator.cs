@@ -108,7 +108,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO009",
-                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                Location: LocationInfo.From(methodSyntax.Modifiers.First(m => m.IsKind(SyntaxKind.AsyncKeyword)).GetLocation()),
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
@@ -269,22 +269,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     private static bool IsIAsyncDbConnection(ITypeSymbol type)
     {
-        // The v0.1 abstraction package doesn't define IAsyncDbConnection yet (it lands in
-        // a later phase), so the test compilations see it as an unresolved error type
-        // whose ToDisplayString() yields the simple name. In real consumer code the
-        // namespace will be resolvable.
+        // Two-tier match:
+        //   1. Fully-qualified `System.Data.Async.IAsyncDbConnection` — production path
+        //      once the abstraction is resolvable in the consumer's compilation.
+        //   2. Simple-name fallback for error-types — until Phase 3's ZAO003 lands a
+        //      proper symbol-based check, test compilations see the type as unresolved
+        //      and its display string collapses to the simple name. We only accept
+        //      this when the namespace is empty (genuine error type) OR matches the
+        //      expected `System.Data.Async`, never on arbitrary user-defined types.
         var display = type.ToDisplayString();
         if (string.Equals(display, IAsyncDbConnectionFullName, StringComparison.Ordinal))
             return true;
         if (string.Equals(display, IAsyncDbConnectionSimpleName, StringComparison.Ordinal))
         {
-            // Error-type case (Abstractions doesn't ship IAsyncDbConnection yet — comes from AdoNet.Async).
-            // Accept only when namespace is empty (genuine error type) OR matches the expected namespace.
             var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
             return ns is "" or "<global namespace>" or "System.Data.Async";
         }
-        // type.Name fallback removed — too permissive (would match user-defined IAsyncDbConnection
-        // in any namespace).
         return false;
     }
 

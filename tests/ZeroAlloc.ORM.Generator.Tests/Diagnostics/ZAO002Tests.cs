@@ -17,7 +17,8 @@ public class ZAO002Tests
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
                 [Query("SELECT 1")]
-                public partial int GetOne(CancellationToken ct);
+                // Returns `int` directly (not Task<int>) to trigger ZAO002.
+                public partial int GetOneBad(CancellationToken ct);
             }
             """;
         var result = GeneratorHarness.RunGenerator(source);
