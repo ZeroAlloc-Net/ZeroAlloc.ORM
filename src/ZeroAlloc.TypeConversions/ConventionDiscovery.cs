@@ -40,10 +40,42 @@ public static class ConventionDiscovery
         if (type is INamedTypeSymbol named)
         {
             if (TryValueObject(named) is { } voResult) return voResult;
+            if (TryStaticFactory(named) is { } facResult) return facResult;
             if (TrySingleArgCtor(named, context) is { } ctorResult) return ctorResult;
         }
 
         return UnknownResult;
+    }
+
+    // Hand-rolled wrapper types frequently expose `static T From(TPrim)` or
+    // `static T FromValue(TPrim)` as the canonical factory (often because the ctor
+    // is private to enforce invariants). v0.2 hard-codes the two names; once
+    // [Materialize(Factory)] lands the catalog will be configurable.
+    private static ConventionResult? TryStaticFactory(INamedTypeSymbol type)
+    {
+        var factory = type.GetMembers()
+            .OfType<IMethodSymbol>()
+            .FirstOrDefault(m =>
+                m.IsStatic &&
+                m.DeclaredAccessibility == Accessibility.Public &&
+                m.Parameters.Length == 1 &&
+                (string.Equals(m.Name, "From", System.StringComparison.Ordinal) ||
+                 string.Equals(m.Name, "FromValue", System.StringComparison.Ordinal)) &&
+                SymbolEqualityComparer.Default.Equals(m.ReturnType, type) &&
+                PrimitiveCatalog.IsPrimitive(m.Parameters[0].Type));
+
+        if (factory is null) return null;
+
+        // Conventional unwrap property is `Value`; absent is allowed (some wrappers
+        // expose a method or a differently-named property — the generator can fall
+        // back to reflection-free strategies once this surfaces in Phase C).
+        var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
+
+        return new ConventionResult(
+            ConventionKind.StaticFactory,
+            Factory: factory,
+            Value: valueProp,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
     // Records with a single primary-ctor parameter that resolves to a primitive are
