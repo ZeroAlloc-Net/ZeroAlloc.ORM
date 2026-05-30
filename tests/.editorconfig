@@ -1,0 +1,6 @@
+root = false
+
+# Test method names commonly use snake_case for readability (Given_When_Then style).
+# CA1707 (no underscores in identifiers) is suppressed for test projects.
+[*.cs]
+dotnet_diagnostic.CA1707.severity = none
