@@ -3,9 +3,21 @@ name: Pack and Push
 # Fires when release-please publishes a GitHub release for a tag (e.g. v0.1.0).
 # Mirrors the proven AdoNet.Async + ZA.Mediator release workflow: build once, then pack
 # each v0.1 package explicitly so the published set stays auditable.
+#
+# GitHub-limitation note: releases created by `googleapis/release-please-action`
+# using the default GITHUB_TOKEN do NOT fire `release` events on other workflows
+# (recursive-run protection). Use the `workflow_dispatch` manual trigger to publish
+# such releases. Future option: swap release-please's token for a PAT to unblock
+# the automatic path.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to pack + push (e.g. 0.1.0 — NO leading v)'
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -22,11 +34,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Extract version from tag
+      - name: Extract version from tag or workflow input
         id: version
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+            VERSION="${TAG#v}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Release version: $VERSION"
 
