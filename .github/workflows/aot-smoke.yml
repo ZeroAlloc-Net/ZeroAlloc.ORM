@@ -42,12 +42,16 @@ jobs:
 
       - name: Publish AOT smoke test (linux-x64)
         if: steps.check.outputs.exists == 'true'
+        # PublishAot=true is set inside ZeroAlloc.ORM.AotSmoke.csproj itself. We
+        # deliberately do NOT pass `-p:PublishAot=true` here: that would promote
+        # it to a global MSBuild property and propagate across the ProjectReference
+        # graph, triggering NETSDK1207 on the build-time-only netstandard2.0
+        # projects (ZeroAlloc.ORM.Generator, ZeroAlloc.TypeConversions).
         run: |
           dotnet publish tests/ZeroAlloc.ORM.AotSmoke/ZeroAlloc.ORM.AotSmoke.csproj \
             -c Release \
             -r linux-x64 \
             --self-contained true \
-            -p:PublishAot=true \
             -o ./aot-smoke-out
 
       - name: Run AOT-published smoke test
