@@ -7,7 +7,7 @@ namespace ZeroAlloc.ORM.Generator.Tests;
 
 internal static class ModuleInitializer
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
+    [ModuleInitializer]
     public static void Init()
     {
         VerifySourceGenerators.Initialize();
