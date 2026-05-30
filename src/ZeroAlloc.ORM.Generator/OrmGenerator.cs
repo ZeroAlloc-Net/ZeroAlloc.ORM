@@ -1035,6 +1035,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
+        "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
         _ => null,
     };
 

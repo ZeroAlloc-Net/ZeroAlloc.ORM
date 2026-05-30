@@ -95,4 +95,9 @@ internal static class DiagnosticDescriptors
         "ZAO043", "[Materialize(Factory)] references missing method",
         "Method '{0}' references factory '{1}' via [Materialize(Factory=...)] but the method is not found on type '{2}' or is not static/public. [Materialize] support lands in v0.5.",
         DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO044_AmbiguousDiscovery = Make(
+        "ZAO044", "Ambiguous convention discovery",
+        "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
+        DiagnosticSeverity.Error);
 }
