@@ -10,6 +10,24 @@ internal static class GeneratorHarness
 {
     public static GeneratorDriverRunResult RunGenerator(string source)
     {
+        var (driver, _) = RunDriver(source);
+        return driver.GetRunResult();
+    }
+
+    public static (GeneratorDriverRunResult RunResult, ImmutableArray<Diagnostic> CompileDiagnostics) RunGeneratorAndCompile(string source)
+    {
+        var (driver, updatedCompilation) = RunDriver(source);
+
+        var compileDiagnostics = updatedCompilation.GetDiagnostics()
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToImmutableArray();
+
+        return (driver.GetRunResult(), compileDiagnostics);
+    }
+
+    private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(string source)
+    {
         // Force-load assemblies the snapshot sources commonly reference. AppDomain.GetAssemblies()
         // only sees assemblies the JIT has already pulled in, and a using-only reference in the
         // raw source string doesn't trigger a load on the host side.
@@ -31,7 +49,7 @@ internal static class GeneratorHarness
 
         var generator = new ZeroAlloc.ORM.Generator.OrmGenerator();
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
-        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out _);
-        return driver.GetRunResult();
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out _);
+        return (driver, updatedCompilation);
     }
 }
