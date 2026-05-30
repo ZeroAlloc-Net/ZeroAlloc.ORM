@@ -285,6 +285,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     {
                         ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
                             => ResolveUnderlyingReaderForFactory(resolution),
+                        // Enum: the binding emit casts to the underlying integral type
+                        // (typically int). We capture the matching reader for symmetry
+                        // with the materialization path so the column emit can pull a
+                        // single source of truth.
+                        ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
                         _ => null,
                     };
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
@@ -445,6 +450,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
                 ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
                     => ResolveUnderlyingReaderForFactory(resolution),
+                // Enum (default int round-trip) reads via the enum's underlying integral
+                // primitive — typically GetInt32; byte/short/long-backed enums route
+                // through their matching reader (GetByte / GetInt16 / GetInt64). The
+                // emitter then wraps the read in a `(EnumType)` cast.
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
                 _ => null,
             };
             if (reader is null) return null;
@@ -483,6 +493,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return underlying is null ? null : PrimitiveCatalog.GetScalarReaderMethod(underlying);
     }
 
+    // Map an IDataReader.GetXxx reader-method name back to the C# integral type used
+    // for the binding-cast (`(int)@status` etc.). The cast must target the enum's
+    // underlying primitive, not the enum type, so the DbParameter sees an integer.
+    private static string EnumUnderlyingCastTypeFromReader(string? readerMethod) => readerMethod switch
+    {
+        "GetInt32" => "int",
+        "GetInt64" => "long",
+        "GetInt16" => "short",
+        "GetByte" => "byte",
+        _ => "int", // safe default; non-integral readers never apply to enums
+    };
+
+    // Enum's underlying integral type drives both the column-read (GetInt32 by
+    // default; GetByte / GetInt16 / GetInt64 for byte / short / long backed enums)
+    // AND the parameter-bind cast (`(int)@status`). Centralized here so the column
+    // emit and parameter emit pull from one place. Returns null only if the type
+    // isn't actually an enum or has an unrecognized underlying primitive.
+    private static string? ResolveUnderlyingReaderForEnum(ITypeSymbol enumType)
+    {
+        if (enumType is not INamedTypeSymbol named || named.TypeKind != TypeKind.Enum)
+            return null;
+        var underlying = named.EnumUnderlyingType;
+        if (underlying is null) return null;
+        return PrimitiveCatalog.GetScalarReaderMethod(underlying);
+    }
+
     // Project a ConventionResult onto a cache-safe ConventionInfo. The string-only
     // shape lets QueryMethodModel/MaterializationModel stay equatable across
     // incremental-generator runs — the symbols on ConventionResult are NOT cache-safe.
@@ -516,6 +552,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         FactoryFullName: typeFqn,
                         FactoryIsCtor: true,
                         ValuePropertyName: resolution.Value?.Name,
+                        UnderlyingReader: underlyingReader);
+                }
+            case ConventionKind.Enum:
+                {
+                    // Enums have no factory method or unwrap property — the emitter
+                    // renders a cast directly. FactoryFullName carries the enum's
+                    // globally-qualified type name so the emitter doesn't have to
+                    // re-format it (`(global::TestApp.OrderStatus)__reader.GetInt32(N)`).
+                    // ValueProperty is intentionally null; parameter binding emits
+                    // `(int)@x` instead of property access.
+                    var typeFqn = resolvedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                    return new ConventionInfo(
+                        Kind: (int)resolution.Kind,
+                        FactoryFullName: typeFqn,
+                        FactoryIsCtor: false,
+                        ValuePropertyName: null,
                         UnderlyingReader: underlyingReader);
                 }
             default:
@@ -980,9 +1032,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var readExpr = $"__reader.{col.GetterMethod}({i})";
             if (col.Convention is { } conv && conv.FactoryFullName is not null)
             {
-                readExpr = conv.FactoryIsCtor
-                    ? $"new {conv.FactoryFullName}({readExpr})"
-                    : $"{conv.FactoryFullName}({readExpr})";
+                // Enum default-int: cast the underlying primitive to the enum type
+                // (`(global::TestApp.OrderStatus)__reader.GetInt32(N)`).
+                // EnumAsString: parse the string via `global::System.Enum.Parse<T>(...)`.
+                // Both branches keep the inner read expression unchanged; only the
+                // wrapper differs from the factory cases above.
+                readExpr = conv.Kind switch
+                {
+                    (int)ConventionKind.Enum
+                        => $"({conv.FactoryFullName}){readExpr}",
+                    _ => conv.FactoryIsCtor
+                        ? $"new {conv.FactoryFullName}({readExpr})"
+                        : $"{conv.FactoryFullName}({readExpr})",
+                };
             }
             string expr;
             if (col.IsNullable)
@@ -1026,12 +1088,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
             // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
             // through their discovered `Value` property before binding to the
-            // DbParameter so the provider sees the underlying primitive. Falls back
-            // to the raw value when no convention applies — the v0.1 emit path.
+            // DbParameter so the provider sees the underlying primitive. Phase D
+            // extends this to enums: default-int round-trip casts via `(int)@x`,
+            // [StoreAsString] uses `@x.ToString()`. Falls back to the raw value when
+            // no convention applies — the v0.1 emit path stays byte-identical.
             var valueExpr = "@" + p.Name;
-            if (p.Convention is { } conv && conv.ValuePropertyName is { } propName)
+            if (p.Convention is { } conv)
             {
-                valueExpr = $"@{p.Name}.{propName}";
+                if (conv.Kind == (int)ConventionKind.Enum)
+                {
+                    // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
+                    // for an int-backed enum; for byte/short/long-backed enums the cast
+                    // target derives from the GetXxx reader name. The provider then sees
+                    // the integral value; SQL stores it as INTEGER.
+                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    valueExpr = $"({castType})@{p.Name}";
+                }
+                else if (conv.ValuePropertyName is { } propName)
+                {
+                    valueExpr = $"@{p.Name}.{propName}";
+                }
             }
 
             // Nullable parameters need a DBNull sentinel — assigning a CLR null to
