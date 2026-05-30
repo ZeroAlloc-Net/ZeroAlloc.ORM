@@ -1,7 +1,7 @@
 using System;
 using Microsoft.CodeAnalysis;
 
-namespace ZeroAlloc.ORM.Generator.Catalog;
+namespace ZeroAlloc.TypeConversions;
 
 // Lookup table for C# primitive scalar types -> IDataReader.GetXxx getter.
 // Used by both result materialization (scalar return, FlatRow column read) and
@@ -9,7 +9,7 @@ namespace ZeroAlloc.ORM.Generator.Catalog;
 // doc): int, long, short, byte, bool, decimal, double, float, string, DateTime,
 // DateTimeOffset, TimeSpan, Guid, byte[]. Unsigned / sbyte / char are deferred
 // to v0.2.
-internal static class PrimitiveCatalog
+public static class PrimitiveCatalog
 {
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
     // strongly-typed-reads it. Returns null for unsupported types.

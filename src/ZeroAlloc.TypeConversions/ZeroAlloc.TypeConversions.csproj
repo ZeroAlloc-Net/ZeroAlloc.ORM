@@ -4,7 +4,7 @@
     <RootNamespace>ZeroAlloc.TypeConversions</RootNamespace>
     <PackageId>ZeroAlloc.TypeConversions</PackageId>
     <Title>ZeroAlloc.TypeConversions</Title>
-    <Description>Shared Roslyn convention-discovery catalog: locates value-object factories, enum round-trip semantics, multi-column composite shapes. Consumed by ZeroAlloc.ORM.Generator and (post-adoption) ZeroAlloc.Mapping.Generator so both libraries agree on what is a value-object and how Money round-trips. Build-time only.</Description>
+    <Description>Shared Roslyn type-conversion catalog for ZeroAlloc.ORM. Hosts the primitive scalar reader-method table (IDataReader.GetXxx mapping) and is the future home for value-object factory discovery, enum round-trip semantics, and multi-column composite shapes. Consumed by ZeroAlloc.ORM.Generator and (post-adoption) ZeroAlloc.Mapping.Generator. Build-time only.</Description>
     <PackageTags>zeroalloc;source-generator;roslyn;value-objects;type-conversion</PackageTags>
 
     <!-- Standalone build-time library — packable for downstream Mapping adoption. -->
