@@ -161,7 +161,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     method.ReturnType.ToDisplayString()))));
         }
 
-        var shape = ClassifyEmitShape(method);
+        var (shape, nullableReaderMethod) = ClassifyEmitShape(method);
+
+        // Fully-qualified, includes `?` for nullable reference types so the emitted
+        // partial signature matches the user's partial declaration verbatim.
+        var returnTypeFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        var returnTypeDisplay = method.ReturnType.ToDisplayString(returnTypeFormat);
 
         return new QueryMethodModel(
             MethodName: method.Name,
@@ -176,27 +184,78 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation,
             Shape: shape,
+            ReturnTypeDisplay: returnTypeDisplay,
+            NullableScalarReaderMethod: nullableReaderMethod,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
 
     // Decide which emit template fits this method. Conservative on purpose:
-    // returns ScalarInt only for the exact v0.1 Task 4.1 shape — `Task<int>` with
-    // a single CancellationToken parameter (no user-bound parameters). Everything
+    // returns concrete shapes only for the exact v0.1 Phase-4 templates with a
+    // single CancellationToken parameter (no user-bound parameters). Everything
     // else stays Unknown and falls through to the stub-comment path until a later
     // Phase 4 task adds its template.
-    private static EmitShape ClassifyEmitShape(IMethodSymbol method)
+    //
+    // For NullableScalar we also return the IDataReader.GetXxx method name to use
+    // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
+    // that no longer carries the symbol.
+    private static (EmitShape Shape, string? NullableReaderMethod) ClassifyEmitShape(IMethodSymbol method)
     {
-        if (method.ReturnType is not INamedTypeSymbol named) return EmitShape.Unknown;
-        // Restrict to Task<T> for now; ValueTask<int> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return EmitShape.Unknown;
-        if (named.TypeArguments[0].SpecialType != SpecialType.System_Int32) return EmitShape.Unknown;
+        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null);
+        // Restrict to Task<T> for now; ValueTask<T> lands later.
+        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null);
 
         // Only zero user parameters (CT-only). User-parameter binding is Phase 6.
         var userParamCount = method.Parameters.Count(p =>
             !string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal));
-        if (userParamCount != 0) return EmitShape.Unknown;
+        if (userParamCount != 0) return (EmitShape.Unknown, null);
 
-        return EmitShape.ScalarInt;
+        var inner = named.TypeArguments[0];
+
+        // Nullable reference: Task<string?> (and any other supported nullable primitive).
+        if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
+        {
+            var readerInfo = GetScalarPrimitiveReaderInfo(inner);
+            if (readerInfo is not null)
+                return (EmitShape.NullableScalar, readerInfo.Value.ReaderMethod);
+        }
+
+        // Nullable value type: Task<int?> / Task<Nullable<T>>.
+        if (inner is INamedTypeSymbol innerNamed
+            && innerNamed.IsGenericType
+            && innerNamed.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var underlying = innerNamed.TypeArguments[0];
+            var readerInfo = GetScalarPrimitiveReaderInfo(underlying);
+            if (readerInfo is not null)
+                return (EmitShape.NullableScalar, readerInfo.Value.ReaderMethod);
+        }
+
+        // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
+        // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
+        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null);
+
+        return (EmitShape.Unknown, null);
+    }
+
+    // Map a supported primitive scalar type to the IDataReader.GetXxx method that
+    // strongly-typed-reads it. Returns null for unsupported types.
+    private static (string ReaderMethod, string TypeDisplay)? GetScalarPrimitiveReaderInfo(ITypeSymbol type)
+    {
+        return type.SpecialType switch
+        {
+            SpecialType.System_Int32 => ("GetInt32", "int"),
+            SpecialType.System_Int64 => ("GetInt64", "long"),
+            SpecialType.System_Int16 => ("GetInt16", "short"),
+            SpecialType.System_Byte => ("GetByte", "byte"),
+            SpecialType.System_Boolean => ("GetBoolean", "bool"),
+            SpecialType.System_Decimal => ("GetDecimal", "decimal"),
+            SpecialType.System_Double => ("GetDouble", "double"),
+            SpecialType.System_Single => ("GetFloat", "float"),
+            SpecialType.System_String => ("GetString", "string"),
+            SpecialType.System_DateTime => ("GetDateTime", "global::System.DateTime"),
+            _ when string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal) => ("GetGuid", "global::System.Guid"),
+            _ => null,
+        };
     }
 
     private static (string Access, bool Resolved) ResolveConnectionAccess(INamedTypeSymbol containing)
@@ -413,6 +472,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 case EmitShape.ScalarInt:
                     EmitScalarInt(sb, m);
                     break;
+                case EmitShape.NullableScalar:
+                    EmitNullableScalar(sb, m);
+                    break;
                 default:
                     sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {m.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
@@ -443,6 +505,39 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         sb.AppendLine("            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // Single-row scalar with null tolerance — distinguishes three cases:
+    //   * empty result set         -> null
+    //   * first row, NULL column   -> null
+    //   * first row, value         -> the typed value
+    // Uses ExecuteReaderAsync + ReadAsync/IsDBNull/GetXxx rather than
+    // ExecuteScalarAsync because the latter conflates empty-set and NULL.
+    // The method signature is rendered from m.ReturnTypeDisplay so the partial
+    // matches the user declaration's nullable annotation verbatim.
+    private static void EmitNullableScalar(StringBuilder sb, QueryMethodModel m)
+    {
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}(global::System.Threading.CancellationToken ct)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{m.ConnectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine("        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        sb.AppendLine("            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);");
+        sb.AppendLine("            if (!await __reader.ReadAsync(ct).ConfigureAwait(false))");
+        sb.AppendLine("                return null;");
+        sb.AppendLine($"            return __reader.IsDBNull(0) ? null : __reader.{readerMethod}(0);");
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
