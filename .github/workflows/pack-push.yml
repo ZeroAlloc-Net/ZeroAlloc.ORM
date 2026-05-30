@@ -1,6 +1,6 @@
 name: Pack and Push
 
-# Fires when release-please publishes a GitHub release for a tag (e.g. v0.1.0-preview.1).
+# Fires when release-please publishes a GitHub release for a tag (e.g. v0.1.0).
 # Mirrors the proven AdoNet.Async + ZA.Mediator release workflow: build once, then pack
 # each v0.1 package explicitly so the published set stays auditable.
 on:

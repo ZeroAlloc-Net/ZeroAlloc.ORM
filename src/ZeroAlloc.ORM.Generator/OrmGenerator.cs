@@ -18,7 +18,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
-    private const string GeneratorVersion = "0.1.0-preview.1";
+    private const string GeneratorVersion = "0.1.0";
     private const string GeneratedCodeAttribute =
         "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
 

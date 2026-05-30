@@ -1,6 +1,6 @@
 # ZeroAlloc.ORM — Forward Plan (post-v0.1-review)
 
-> **Status:** Approved 2026-05-31. Drives the next ~2 weeks of work to ship `0.1.0-preview.1` cleanly, then continues with the v0.2-v0.7 roadmap.
+> **Status:** Approved 2026-05-31. Drives the next ~2 weeks of work to ship `0.1.0` cleanly, then continues with the v0.2-v0.7 roadmap.
 >
 > **Triggered by:** the 25-finding pre-release code review (5 P0 / 10 P1 / 10 P2) of the v0.1 milestone work (65 commits, 75 tests passing). Findings can't be addressed in a single batch — this plan slices them into 11 small PRs (R1-R11) plus the release tag itself (R12), each independently reviewable.
 
@@ -8,7 +8,7 @@
 
 ## Context
 
-v0.1 implementation work is complete per [`docs/plans/2026-05-30-v0.1-implementation.md`](2026-05-30-v0.1-implementation.md) — all 8 phases shipped (Phase 0 test infra through Phase 7 AOT smoke + Phase 8 release prep). The code is in `main`. The release-please PR proposing `0.1.0-preview.1` is open.
+v0.1 implementation work is complete per [`docs/plans/2026-05-30-v0.1-implementation.md`](2026-05-30-v0.1-implementation.md) — all 8 phases shipped (Phase 0 test infra through Phase 7 AOT smoke + Phase 8 release prep). The code is in `main`. The release-please PR proposing `0.1.0` is open.
 
 The pre-release code review (logged in conversation transcript 2026-05-30) surfaced findings that fall into three structural categories:
 
@@ -16,20 +16,20 @@ The pre-release code review (logged in conversation transcript 2026-05-30) surfa
 2. **Packaging discipline** — two NuGet packages would ship empty; the release-please workflow doesn't actually push to NuGet.
 3. **Quality gaps** — the #1 design invariant (EF-style ref-counted connection lifecycle) has no test coverage; `helpLinkUri` on every diagnostic 404s on day 1.
 
-The forward plan addresses **all 25 findings** before `0.1.0-preview.1` tags, per the project policy of "fix all findings, minor included." The 11 PRs are sized to land in 1-3 commits each.
+The forward plan addresses **all 25 findings** before `0.1.0` tags, per the project policy of "fix all findings, minor included." The 11 PRs are sized to land in 1-3 commits each.
 
 ---
 
 ## Decisions taken (so the plan is unambiguous)
 
-- **R1 path (Trim public API):** **Strip** `[Command]`, `[StoredProcedure]`, `[Materialize]`, `[StoreAsString]` from `0.1.0-preview.1`. Each re-lands additively in the milestone that implements it. Keep `[Query]` + `[Param]` only. For `[Query(FromResource)]` + `[Query(Batch)]` properties (which are needed in the v0.1 attribute shape but not yet implemented): keep them, emit `ZAO0Ni`-level info diagnostics saying "deferred to v0.x".
+- **R1 path (Trim public API):** **Strip** `[Command]`, `[StoredProcedure]`, `[Materialize]`, `[StoreAsString]` from `0.1.0`. Each re-lands additively in the milestone that implements it. Keep `[Query]` + `[Param]` only. For `[Query(FromResource)]` + `[Query(Batch)]` properties (which are needed in the v0.1 attribute shape but not yet implemented): keep them, emit `ZAO0Ni`-level info diagnostics saying "deferred to v0.x".
    - **Rationale:** matches the memory entry *"Prefer additive `[Obsolete]` over breaking renames — minimize major bumps; reach for additive deprecation first."* Adding the attributes back in v0.2/v0.3/v0.4 is non-breaking. Locking them at v0.1 with no working implementation behind them creates forever-friction for adopters.
 
 - **R2 path (Slim packages):** **Drop** `ZeroAlloc.ORM.Analyzers` from `release-please-config.json` for v0.1 (re-introduce when ZAO010+ rules land — likely v0.6). **Move** `PrimitiveCatalog.cs` from `src/ZeroAlloc.ORM.Generator/Catalog/` into `src/ZeroAlloc.TypeConversions/` (makes that package non-empty + aligns with the design's "shared catalog" intent).
 
 ---
 
-## Phase R — Release readiness for `0.1.0-preview.1`
+## Phase R — Release readiness for `0.1.0`
 
 Each row below is one PR. Each PR is 1-3 commits, scoped to one concern, independently reviewable. After all 11 land + are merged, R12 tags the release.
 
@@ -213,8 +213,8 @@ Skip multi-result, IAsyncEnumerable, `[Command]`, etc. — they're not in v0.1.
 After R1-R11 all merge:
 
 1. Verify `dotnet test` — should be ≥75 passing (likely 78-82 after the new tests).
-2. release-please's open PR auto-rebases to `main` with the new commits → re-runs → produces the `0.1.0-preview.1` release PR with the complete changelog.
-3. Merge it → tag `v0.1.0-preview.1` fires → R3's `pack-push.yml` workflow runs → 3 NuGet packages publish (`Abstractions`, `ORM`, `Generator`).
+2. release-please's open PR auto-rebases to `main` with the new commits → re-runs → produces the `0.1.0` release PR with the complete changelog.
+3. Merge it → tag `v0.1.0` fires → R3's `pack-push.yml` workflow runs → 3 NuGet packages publish (`Abstractions`, `ORM`, `Generator`).
 4. Verify on https://www.nuget.org/profiles/MarcelRoozekrans.
 5. Strike v0.1-T10 in the backlog.
 
@@ -240,7 +240,7 @@ After R1-R11 all merge:
 
 1. **+15-20% time buffer** for Meziantou/Roslynator/ErrorProne friction (MA0048 file-per-type, MA0004 ConfigureAwait on await using, MA0006 `string.Equals` not `==`). Every PR encountered at least one of these.
 2. **Compile-smoke test pattern is now mandatory** — every new `EmitShape` ships with both a `Verify`-based snapshot test AND a `RunGeneratorAndCompile`-based test. Caught 3 real bugs in v0.1 that snapshots missed.
-3. **Plan-doc-sync commit at milestone end** — each preview release closes with a "fold lessons back into the design + plan doc" commit. Plan defects compound; this is cheap insurance.
+3. **Plan-doc-sync commit at milestone end** — each milestone release closes with a "fold lessons back into the design + plan doc" commit. Plan defects compound; this is cheap insurance.
 
 ### v0.3 — multi-result + streaming (~2 weeks)
 
@@ -297,7 +297,7 @@ These get added to the design doc as Section 4 amendments:
 - **R1-R11:** 1-2 weeks single-developer pace. Most PRs are ~1-2 commits; the largest (R7 diagnostic UX) is 3.
 - **R12 release:** 1 day (waiting for CI + NuGet propagation).
 
-After `v0.1.0-preview.1` tags:
+After `v0.1.0` tags:
 
 - v0.2 (~2 weeks)
 - v0.3 (~2 weeks)
@@ -307,7 +307,7 @@ After `v0.1.0-preview.1` tags:
 - v0.7 (~1 week)
 - v1.0 release (~1 week)
 
-**Total to v1.0:** ~13 weeks single-developer pace from `0.1.0-preview.1`. Approximately matches the original estimate from the design doc Section 5.
+**Total to v1.0:** ~13 weeks single-developer pace from `0.1.0`. Approximately matches the original estimate from the design doc Section 5.
 
 ---
 
