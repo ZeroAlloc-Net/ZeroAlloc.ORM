@@ -206,6 +206,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method);
 
+        // ZAO022 — informational: the return type passed the surface check (ZAO002)
+        // but isn't yet materializable by the v0.1 emit. Fire only when ZAO002 did
+        // NOT already fire so the adopter gets one message, not two; ZAO007 covers
+        // the IAsyncEnumerable<T>-without-EnumeratorCancellation case separately so
+        // we also suppress ZAO022 for IAsyncEnumerable to avoid noise.
+        if (shape == EmitShape.Unknown
+            && IsSupportedReturnType(method.ReturnType)
+            && !IsIAsyncEnumerable(method.ReturnType))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO022",
+                Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    method.ReturnType.ToDisplayString()))));
+        }
+
         // Capture ALL parameters (including CancellationToken) in declaration order so
         // the emit can render the partial method signature verbatim. If we filtered CT
         // out and appended it at emit time, declarations like `(CancellationToken ct,
@@ -563,6 +580,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO009" => DiagnosticDescriptors.ZAO009_RedundantAsync,
         "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
         "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
+        "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         _ => null,
     };
 

@@ -16,3 +16,4 @@ ZAO008  | ZeroAlloc.ORM | Error    | Multi-statement SQL with single-result retu
 ZAO009  | ZeroAlloc.ORM | Warning  | Redundant async keyword on generated partial
 ZAO020  | ZeroAlloc.ORM | Info     | [Query(FromResource)] not yet implemented in v0.1
 ZAO021  | ZeroAlloc.ORM | Info     | [Query(Batch = ...)] non-Auto value not yet implemented in v0.1
+ZAO022  | ZeroAlloc.ORM | Info     | Return type shape not yet supported in v0.1
