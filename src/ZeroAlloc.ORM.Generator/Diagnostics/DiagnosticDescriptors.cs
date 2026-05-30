@@ -80,4 +80,9 @@ internal static class DiagnosticDescriptors
         "ZAO040", "No construction strategy resolved for type",
         "Cannot materialize type '{0}': no [Materialize], [ValueObject], static From factory, single-arg ctor, enum, or primitive convention matched. Add [Materialize(Factory=\"...\")] or define a convention method.",
         DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO041_NoUnwrapStrategy = Make(
+        "ZAO041", "No binding strategy resolved for parameter",
+        "Cannot bind parameter '{0}' of type '{1}': no Value property, primitive, or enum match. Add [Param(Bind=...)] or define a Value property.",
+        DiagnosticSeverity.Error);
 }

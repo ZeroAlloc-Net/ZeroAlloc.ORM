@@ -316,6 +316,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
                     var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+                    // ZAO041 — no binding strategy resolved for parameter. Fires when the
+                    // parameter type doesn't match any convention (no Value, no primitive,
+                    // no enum, no static From factory, no single-arg ctor). Keyed at the
+                    // parameter symbol's first declaration so the user's squiggle lands on
+                    // their parameter, not on the type definition.
+                    if (resolution.Kind == ConventionKind.Unknown)
+                    {
+                        var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO041",
+                            Location: LocationInfo.From(paramLocation),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                p.Name,
+                                underlying.ToDisplayString()))));
+                    }
+
                     var underlyingReader = resolution.Kind switch
                     {
                         ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
@@ -977,6 +994,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
+        "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
         _ => null,
     };
 
