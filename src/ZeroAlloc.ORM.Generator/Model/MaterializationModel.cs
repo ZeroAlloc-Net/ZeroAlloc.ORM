@@ -18,18 +18,26 @@ internal enum MaterializationKind
 // MaterializationModel. This record carries only the string fragments the emitter
 // needs, so two equivalent compilations produce equal models.
 //
-//   Kind                -- which discovery rule matched.
+//   Kind                -- which discovery rule matched (mirror of ConventionKind enum
+//                          values, stored as int so the model stays free of a hard
+//                          reference to the netstandard2.0 ZeroAlloc.TypeConversions
+//                          assembly).
 //   FactoryFullName     -- globally-qualified call target for non-primitive ctors,
 //                          e.g. "global::TestApp.OrderId.From" for a ValueObject /
 //                          StaticFactory, or "global::TestApp.OrderId" for a record
-//                          ctor (caller prepends `new `).
+//                          ctor (caller prepends `new `). For Enum / EnumAsString
+//                          this carries the enum's fully-qualified type name, which
+//                          the emitter uses as a cast target ("(global::TestApp.OrderStatus)")
+//                          or as the type argument to Enum.Parse<T>.
 //   FactoryIsCtor       -- true when FactoryFullName names a type to be invoked with
 //                          `new T(...)`; false when it names a static factory method
 //                          to be invoked directly.
 //   ValuePropertyName   -- name of the unwrap property (typically "Value"), used by
-//                          parameter binding to emit `@id.Value`.
+//                          parameter binding to emit `@id.Value`. Null for Enum
+//                          conventions (the binding emits a cast or ToString instead).
 //   UnderlyingReader    -- IDataReader.GetXxx method for the wrapped primitive,
-//                          e.g. "GetInt32" for `OrderId(int Value)`.
+//                          e.g. "GetInt32" for `OrderId(int Value)` or for a default
+//                          int-backed enum; "GetString" for [StoreAsString] enums.
 internal sealed record ConventionInfo(
     int Kind,
     string? FactoryFullName,
