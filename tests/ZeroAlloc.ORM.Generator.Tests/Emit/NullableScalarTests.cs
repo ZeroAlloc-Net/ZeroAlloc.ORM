@@ -26,4 +26,24 @@ public class NullableScalarTests
             """;
         return Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public Task Nullable_int_returns_first_row_or_null()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Age FROM Users LIMIT 1")]
+                public partial Task<int?> GetAgeAsync(CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
 }
