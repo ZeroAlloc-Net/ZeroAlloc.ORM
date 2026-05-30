@@ -54,8 +54,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
         if (ctx.TargetNode is not MethodDeclarationSyntax methodSyntax) return null;
 
-        var sql = ctx.Attributes
-            .FirstOrDefault()?
+        var queryAttribute = ctx.Attributes.FirstOrDefault();
+        var sql = queryAttribute?
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
 
@@ -86,16 +86,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
-        // ZAO005 — multiple ORM attributes on one method.
-        // NOTE: This pipeline only triggers via [Query]. A method declared with ONLY
-        // [Command] + [StoredProcedure] (no [Query]) would be invisible to us and ZAO005
-        // would not fire. Once Phase 4 wires ForAttributeWithMetadataName for Command +
-        // StoredProcedure, this limitation goes away.
+        // ZAO005 — multiple [Query] attributes on one method.
+        // v0.1 only ships [Query]; [Command] and [StoredProcedure] return in v0.4 at
+        // which point this check expands to cover all three ORM attributes.
         var ormAttrCount = method.GetAttributes()
-            .Count(a => a.AttributeClass?.ToDisplayString() is
-                "ZeroAlloc.ORM.QueryAttribute" or
-                "ZeroAlloc.ORM.CommandAttribute" or
-                "ZeroAlloc.ORM.StoredProcedureAttribute");
+            .Count(a => string.Equals(
+                a.AttributeClass?.ToDisplayString(),
+                "ZeroAlloc.ORM.QueryAttribute",
+                StringComparison.Ordinal));
         if (ormAttrCount > 1)
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -160,6 +158,47 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                     method.Name,
                     method.ReturnType.ToDisplayString()))));
+        }
+
+        // ZAO020 / ZAO021 — informational notes for [Query] options that the
+        // generator accepts at the type level but does not yet honor at emit time.
+        // The values still flow through but are silently ignored by codegen; the
+        // info diagnostics keep adopters from believing they're getting behavior
+        // that isn't there. Both fire only when the attribute author explicitly
+        // set the non-default value.
+        if (queryAttribute is not null)
+        {
+            foreach (var named in queryAttribute.NamedArguments)
+            {
+                if (string.Equals(named.Key, "FromResource", StringComparison.Ordinal)
+                    && named.Value.Value is bool fromResource
+                    && fromResource)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        DescriptorId: "ZAO020",
+                        Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+                }
+                else if (string.Equals(named.Key, "Batch", StringComparison.Ordinal)
+                    && named.Value.Value is int batchValue
+                    && batchValue != 0) // BatchMode.Auto == 0
+                {
+                    // Map the enum integer back to its name for the diagnostic message.
+                    // BatchMode lives in ZeroAlloc.ORM; we mirror the enum order here
+                    // to avoid a hard reference from the generator (netstandard2.0) to
+                    // the abstractions assembly (net10.0).
+                    var batchName = batchValue switch
+                    {
+                        1 => "BatchMode.Always",
+                        2 => "BatchMode.Never",
+                        _ => "BatchMode." + batchValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    };
+                    diagnostics.Add(new DiagnosticInfo(
+                        DescriptorId: "ZAO021",
+                        Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, batchName))));
+                }
+            }
         }
 
         var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method);
@@ -519,6 +558,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO007" => DiagnosticDescriptors.ZAO007_MissingEnumeratorCancellation,
         "ZAO008" => DiagnosticDescriptors.ZAO008_SingleResultWithSemicolons,
         "ZAO009" => DiagnosticDescriptors.ZAO009_RedundantAsync,
+        "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
+        "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
         _ => null,
     };
 

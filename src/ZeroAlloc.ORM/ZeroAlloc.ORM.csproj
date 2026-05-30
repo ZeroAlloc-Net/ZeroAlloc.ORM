@@ -4,7 +4,7 @@
     <RootNamespace>ZeroAlloc.ORM</RootNamespace>
     <PackageId>ZeroAlloc.ORM</PackageId>
     <Title>ZeroAlloc.ORM</Title>
-    <Description>Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate partial methods with [Query] / [Command] / [StoredProcedure]; the generator emits typed parameter binding + materialization against AdoNet.Async's IAsyncDbConnection. Zero runtime reflection.</Description>
+    <Description>Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate partial methods with [Query]; the generator emits typed parameter binding + materialization against AdoNet.Async's IAsyncDbConnection. Zero runtime reflection.</Description>
     <PackageTags>zeroalloc;orm;ado.net;source-generator;nativeaot;trimming;dapper-aot-alternative;adonet-async</PackageTags>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
