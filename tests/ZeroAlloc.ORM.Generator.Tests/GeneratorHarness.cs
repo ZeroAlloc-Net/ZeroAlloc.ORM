@@ -10,6 +10,11 @@ internal static class GeneratorHarness
 {
     public static GeneratorDriverRunResult RunGenerator(string source)
     {
+        // Force-load assemblies the snapshot sources commonly reference. AppDomain.GetAssemblies()
+        // only sees assemblies the JIT has already pulled in, and a using-only reference in the
+        // raw source string doesn't trigger a load on the host side.
+        _ = typeof(ZeroAlloc.ORM.QueryAttribute).Assembly;
+
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
         var references = AppDomain.CurrentDomain.GetAssemblies()
