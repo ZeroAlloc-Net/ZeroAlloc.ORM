@@ -13,6 +13,8 @@ namespace ZeroAlloc.ORM.Generator;
 public sealed class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
+    private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
+    private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -49,6 +51,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
 
+        var connectionAccess = ResolveConnectionAccess(containing);
+
         return new QueryMethodModel(
             MethodName: method.Name,
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -56,7 +60,67 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Namespace: containing.ContainingNamespace.IsGlobalNamespace
                 ? null
                 : containing.ContainingNamespace.ToDisplayString(),
-            Sql: sql);
+            Sql: sql,
+            ConnectionAccess: connectionAccess);
+    }
+
+    private static string ResolveConnectionAccess(INamedTypeSymbol containing)
+    {
+        // (a) Primary ctor param. Only primary-ctor parameters are captured as state
+        // accessible from methods; ordinary ctor parameters go out of scope. Detect
+        // primary-ctor params by inspecting the declaring syntax: a primary ctor's
+        // parameter list is attached directly to a TypeDeclarationSyntax (class/struct/record),
+        // not to a ConstructorDeclarationSyntax.
+        foreach (var ctor in containing.InstanceConstructors)
+        {
+            foreach (var p in ctor.Parameters)
+            {
+                if (!IsIAsyncDbConnection(p.Type))
+                    continue;
+                if (IsPrimaryConstructorParameter(p))
+                    return p.Name;
+            }
+        }
+
+        // (b) Field or (c) get-only property of the right type. Skip compiler-synthesized
+        // members (e.g. auto-property backing fields, primary-ctor capture fields) so we
+        // return the user-facing identifier instead of `<Foo>k__BackingField`.
+        foreach (var member in containing.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+            if (member is IFieldSymbol f && IsIAsyncDbConnection(f.Type))
+                return f.Name;
+            if (member is IPropertySymbol pr && IsIAsyncDbConnection(pr.Type))
+                return pr.Name;
+        }
+
+        // Fallback; Phase 3 ZAO003 diagnostic will surface a real error when nothing matches.
+        return "connection";
+    }
+
+    private static bool IsIAsyncDbConnection(ITypeSymbol type)
+    {
+        // The v0.1 abstraction package doesn't define IAsyncDbConnection yet (it lands in
+        // a later phase), so the test compilations see it as an unresolved error type
+        // whose ToDisplayString() yields the simple name. In real consumer code the
+        // namespace will be resolvable. Accept both forms.
+        var display = type.ToDisplayString();
+        return string.Equals(display, IAsyncDbConnectionFullName, StringComparison.Ordinal)
+            || string.Equals(display, IAsyncDbConnectionSimpleName, StringComparison.Ordinal)
+            || string.Equals(type.Name, IAsyncDbConnectionSimpleName, StringComparison.Ordinal);
+    }
+
+    private static bool IsPrimaryConstructorParameter(IParameterSymbol p)
+    {
+        foreach (var syntaxRef in p.DeclaringSyntaxReferences)
+        {
+            var syntax = syntaxRef.GetSyntax();
+            // ParameterSyntax -> ParameterListSyntax -> TypeDeclarationSyntax means primary ctor.
+            // For a regular ctor, the grandparent is ConstructorDeclarationSyntax.
+            if (syntax.Parent?.Parent is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax)
+                return true;
+        }
+        return false;
     }
 
     private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo)
@@ -75,7 +139,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("{");
         foreach (var m in repo.Methods)
         {
-            sb.AppendLine($"    // TODO: emit body for {m.MethodName} -- v0.1 Task 4.x");
+            sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses this.{m.ConnectionAccess}) -- v0.1 Task 4.x");
         }
         sb.AppendLine("}");
 

@@ -6,5 +6,5 @@ namespace TestApp;
 
 partial class OrderRepository
 {
-    // TODO: emit body for GetOneAsync -- v0.1 Task 4.x
+    // TODO: emit body for GetOneAsync (uses this.connection) -- v0.1 Task 4.x
 }

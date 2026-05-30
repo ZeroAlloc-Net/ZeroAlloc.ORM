@@ -1,15 +1,17 @@
 namespace ZeroAlloc.ORM.Generator.Model;
 
-// TODO(v0.2): ContainingTypeName and Namespace are now redundant with the hoisted
-// fields on QueryRepositoryModel. Keeping them here for now to avoid a cascade of
-// test updates and to keep the grouping pipeline intact; revisit once Task 2.3 / 3.x
-// add code that genuinely needs per-method namespace data.
+// TODO(v0.2): ContainingTypeName, Namespace, and ConnectionAccess are now redundant
+// across methods of the same containing type. ContainingTypeName/Namespace are already
+// hoisted to QueryRepositoryModel; ConnectionAccess will follow in v0.2 once the real
+// body-emit code (Phase 4) lands and we can refactor the grouping pipeline without a
+// cascade of snapshot churn.
 internal sealed record QueryMethodModel(
     string MethodName,
     string ContainingTypeFullName,
     string ContainingTypeName,
     string? Namespace,
-    string Sql);
+    string Sql,
+    string ConnectionAccess);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
