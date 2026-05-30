@@ -680,7 +680,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var firstMethod = repo.Methods.Values.IsDefault || repo.Methods.Values.Length == 0
             ? null
             : repo.Methods.Values[0];
-        if (firstMethod is not null && !firstMethod.ConnectionResolved)
+        // ZAO003 fires when no IAsyncDbConnection source is found on the containing
+        // type. ZAO004 fires when the containing type itself isn't `partial`. When both
+        // apply, ZAO004 is the dominant problem: a non-partial type cannot host generated
+        // code at all, so the missing-connection guidance is premature noise. Surface
+        // only ZAO004 in that combined case so the adopter sees one actionable error,
+        // fixes it, and re-evaluates the rest (including a possibly still-missing
+        // connection) on the next compile.
+        if (firstMethod is not null && !firstMethod.ConnectionResolved && firstMethod.ContainingTypePartial)
         {
             hadError = true;
             context.ReportDiagnostic(Diagnostic.Create(
