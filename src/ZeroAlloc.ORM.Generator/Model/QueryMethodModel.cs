@@ -11,7 +11,8 @@ internal sealed record QueryMethodModel(
     string ContainingTypeName,
     string? Namespace,
     string Sql,
-    string ConnectionAccess);
+    string ConnectionAccess,
+    EquatableArray<DiagnosticInfo> Diagnostics);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
