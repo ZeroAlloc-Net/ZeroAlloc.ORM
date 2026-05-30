@@ -261,6 +261,35 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Single_arg_record_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly partial record struct OrderId(int Value);
+
+            public sealed record OrderRow(OrderId Id, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Total FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(OrderId id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void ValueObject_parameter_binding_emit_compiles_cleanly()
     {
         var source = """
