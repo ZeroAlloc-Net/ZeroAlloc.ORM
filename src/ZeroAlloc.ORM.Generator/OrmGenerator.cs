@@ -63,17 +63,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
         // ZAO001 — method must be partial.
-        // TODO(Phase 3.3-3.10): emit additional method-scoped diagnostics here:
-        //   ZAO002 (return type), ZAO005 (multiple attrs), ZAO006 (multiple CTs),
-        //   ZAO007 (missing [EnumeratorCancellation]), ZAO008 (multi-statement SQL,
-        //   single-result), ZAO009 (async keyword). ZAO003/ZAO004 are type-scoped —
-        //   emit during grouping in Initialize.
         if (!methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO001",
                 Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
+        // ZAO002 — return type must be Task[<T>], ValueTask[<T>], or IAsyncEnumerable<T>.
+        if (!IsSupportedReturnType(method.ReturnType))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO002",
+                Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    method.ReturnType.ToDisplayString()))));
         }
 
         return new QueryMethodModel(
@@ -122,6 +128,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         // Fallback; Phase 3 ZAO003 diagnostic will surface a real error when nothing matches.
         return "connection";
+    }
+
+    private static bool IsSupportedReturnType(ITypeSymbol returnType)
+    {
+        var name = returnType.Name;
+        var arity = (returnType as INamedTypeSymbol)?.Arity ?? 0;
+        return (name, arity) is ("Task", 0) or ("Task", 1)
+            or ("ValueTask", 0) or ("ValueTask", 1)
+            or ("IAsyncEnumerable", 1);
+    }
+
+    private static bool IsIAsyncEnumerable(ITypeSymbol returnType)
+    {
+        var arity = (returnType as INamedTypeSymbol)?.Arity ?? 0;
+        return string.Equals(returnType.Name, "IAsyncEnumerable", StringComparison.Ordinal) && arity == 1;
     }
 
     private static bool IsIAsyncDbConnection(ITypeSymbol type)
