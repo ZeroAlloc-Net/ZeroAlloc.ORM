@@ -494,16 +494,74 @@ public sealed class OrmGenerator : IIncrementalGenerator
             or ("IAsyncEnumerable", 1);
     }
 
-    // Naive `;`-count statement detector. Does NOT understand SQL string literals,
-    // line comments (`--`), block comments (`/* */`), or PostgreSQL dollar-quoted
-    // strings (`$tag$...$tag$`). For v0.1 this is acceptable — the most common case
-    // (head + lines SELECT) works correctly. A proper tokeniser lands in v0.2.
-    // TODO(v0.2): replace with a real SQL statement tokeniser.
+    // Statement detector that recognizes single- and double-quoted SQL string
+    // literals (with `''` / `""` escapes) before counting `;`. A bare `;` ends
+    // a statement; a `;` inside a quoted literal does not.
+    // Handles SQL string literals; comments + dollar-quoted strings still TODO(v0.2).
     private static int CountStatements(string sql)
     {
         if (string.IsNullOrEmpty(sql)) return 0;
-        var trimmed = sql.TrimEnd().TrimEnd(';');
-        return trimmed.Count(c => c == ';') + 1;
+        var count = 1;
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        for (var i = 0; i < sql.Length; i++)
+        {
+            var c = sql[i];
+            if (inSingleQuote)
+            {
+                // SQL string escape: '' inside '...' is a literal '.
+                if (c == '\'')
+                {
+                    if (i + 1 < sql.Length && sql[i + 1] == '\'')
+                    {
+                        i++; // skip the escaped quote
+                        continue;
+                    }
+                    inSingleQuote = false;
+                }
+                continue;
+            }
+            if (inDoubleQuote)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < sql.Length && sql[i + 1] == '"')
+                    {
+                        i++;
+                        continue;
+                    }
+                    inDoubleQuote = false;
+                }
+                continue;
+            }
+            switch (c)
+            {
+                case '\'':
+                    inSingleQuote = true;
+                    break;
+                case '"':
+                    inDoubleQuote = true;
+                    break;
+                case ';':
+                    // A trailing `;` (with only whitespace after) doesn't open a new
+                    // statement. Walk the remainder inline to avoid the substring
+                    // allocation of `sql[(i + 1)..].TrimStart()`.
+                    if (IsOnlyWhitespaceAfter(sql, i + 1))
+                        return count;
+                    count++;
+                    break;
+            }
+        }
+        return count;
+    }
+
+    private static bool IsOnlyWhitespaceAfter(string sql, int startIndex)
+    {
+        for (var j = startIndex; j < sql.Length; j++)
+        {
+            if (!char.IsWhiteSpace(sql[j])) return false;
+        }
+        return true;
     }
 
     private static bool IsMultiResultReturnType(ITypeSymbol returnType)

@@ -28,6 +28,52 @@ public class ZAO008Tests
     }
 
     [Fact]
+    public void Semicolon_inside_single_quoted_literal_does_not_fire_ZAO008()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT name FROM users WHERE bio LIKE '%foo;bar%'")]
+                public partial Task<string?> GetAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO008", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Escaped_quote_inside_literal_handled()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT name FROM users WHERE bio = 'O''Brien;Smith'")]
+                public partial Task<string?> GetAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO008", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Multi_statement_sql_with_tuple_return_does_not_emit_ZAO008()
     {
         var source = """
