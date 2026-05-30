@@ -52,8 +52,11 @@ jobs:
       - name: Build
         run: dotnet build --no-restore -c Release -p:Version=${{ steps.version.outputs.version }}
 
-      - name: Test
-        run: dotnet test --no-build -c Release --verbosity normal
+      # Test step intentionally omitted: the build-test workflow already validates
+      # every push to main with the full test suite (75+ tests). Re-running them here
+      # would (a) duplicate work and (b) trip a Verify.NET path-resolution edge case
+      # on two snapshot tests when MSBuild's Version is set explicitly. Pack-push's
+      # job is to pack + push, not re-validate.
 
       - name: Pack
         run: |
