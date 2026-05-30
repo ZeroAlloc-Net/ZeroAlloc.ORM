@@ -18,7 +18,7 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 | Package | Description | NativeAOT |
 |---------|-------------|---|
 | **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Param]`) + exception types. Other attributes (`[Command]`, `[StoredProcedure]`, `[Materialize]`, `[StoreAsString]`) land in their implementing milestones (v0.2–v0.5). | ✅ |
+| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Param]`, `[StoreAsString]`) + exception types. Remaining attributes (`[Command]`, `[StoredProcedure]`, `[Materialize]`) land in their implementing milestones (v0.4–v0.5). | ✅ |
 | **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
 | **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
 
@@ -63,7 +63,35 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 - Compile-time diagnostics (ZAO001–ZAO009 + informational ZAO020–ZAO022) for signature contract violations.
 - NativeAOT-clean publish (verified by `aot-smoke` CI gate).
 
-Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), `IAsyncEnumerable<T>` streaming (v0.3), multi-result-set tuples (v0.3), value-objects + enums (v0.2), composite types (v0.5).
+### Added in v0.2
+
+- **Value-object columns** — types annotated with `[ValueObject]` from [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects) (with a static `From` factory and a `Value` property) bind through their underlying primitive. Parameters unwrap to `Value`; reads wrap via `T.From(primitive)`.
+
+  ```csharp
+  [ValueObject]
+  public readonly partial struct CustomerId
+  {
+      public int Value { get; }
+      public CustomerId(int value) { Value = value; }
+      public static CustomerId From(int value) => new(value);
+  }
+
+  public sealed record CustomerRow(CustomerId Id, string Name);
+
+  public sealed partial class CustomerRepo(IAsyncDbConnection connection)
+  {
+      [Query("SELECT Id, Name FROM Customers WHERE Id = @id")]
+      public partial Task<CustomerRow?> GetAsync(CustomerId id, CancellationToken ct);
+  }
+  ```
+
+- **Enums (default int round-trip)** — any `enum` parameter or column binds as its underlying integer (`reader.GetInt32` + cast on read; cast to underlying primitive on bind).
+- **Enums (string round-trip)** — annotate the `enum` type with `[StoreAsString]` to round-trip as the member name (`reader.GetString` + `Enum.Parse<T>` on read; member-name bind).
+- **Domain-entity classes** — plain `class` types with a single multi-arg public ctor materialize via column-name-keyed reads (`__reader.GetOrdinal("ColumnName")`). SELECT column order is irrelevant; each ctor parameter resolves to its matching column by name. Records keep the positional `FlatRow` path.
+- **Single-arg record discovery + static `From` factory discovery** — wrappers without `[ValueObject]` still resolve when ConventionDiscovery can find an obvious construction strategy.
+- **New diagnostics ZAO040–ZAO044** — materialization-side failures (no construction strategy, conflicting strategies, unresolved ctor parameters, etc.) surface at build time with focused messages.
+
+Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), `IAsyncEnumerable<T>` streaming (v0.3), multi-result-set tuples (v0.3), multi-column composite types (v0.5).
 
 ## Design + roadmap
 

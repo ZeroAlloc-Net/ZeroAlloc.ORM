@@ -5,29 +5,25 @@
       "release-type": "simple",
       "package-name": "ZeroAlloc.ORM",
       "component": "orm",
-      "include-component-in-tag": false,
-      "release-as": "0.1.0"
+      "include-component-in-tag": false
     },
     "src/ZeroAlloc.ORM.Abstractions": {
       "release-type": "simple",
       "package-name": "ZeroAlloc.ORM.Abstractions",
       "component": "abstractions",
-      "include-component-in-tag": true,
-      "release-as": "0.1.0"
+      "include-component-in-tag": true
     },
     "src/ZeroAlloc.ORM.Generator": {
       "release-type": "simple",
       "package-name": "ZeroAlloc.ORM.Generator",
       "component": "generator",
-      "include-component-in-tag": true,
-      "release-as": "0.1.0"
+      "include-component-in-tag": true
     },
     "src/ZeroAlloc.TypeConversions": {
       "release-type": "simple",
       "package-name": "ZeroAlloc.TypeConversions",
       "component": "typeconversions",
-      "include-component-in-tag": true,
-      "release-as": "0.1.0"
+      "include-component-in-tag": true
     }
   },
   "changelog-sections": [
