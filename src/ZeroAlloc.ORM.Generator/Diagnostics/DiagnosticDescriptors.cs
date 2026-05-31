@@ -117,9 +117,15 @@ internal static class DiagnosticDescriptors
     // all-or-nothing DBNull contract for nullable composites is enforced at
     // RUNTIME — the generator can't statically prove the underlying schema
     // declares its composite columns NOT NULL together — so ZAO050 surfaces
-    // the runtime concern at build time. If your schema guarantees the
-    // columns are always NULL or always populated together, suppress with
-    // `#pragma warning disable ZAO050`.
+    // the runtime concern at build time.
+    //
+    // Per-position firing is intentional: each occurrence is its own runtime
+    // contract surface and the warning makes the suppression decision
+    // explicit. Established repos that have audited the schema use the
+    // project-level `<NoWarn>ZAO050</NoWarn>` once; per-method opt-in uses
+    // `#pragma warning disable ZAO050` (ZAO050 reports at user-source
+    // locations so the pragma works regardless of TreatWarningsAsErrors).
+    // See docs/diagnostics/ZAO050.md for the full suppression matrix.
     //
     // Warning (not Error) severity: nullable composites are a supported emit
     // shape with well-defined runtime semantics (return null on all-DBNull,

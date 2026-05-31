@@ -24,12 +24,12 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            var __col0_isNull = __reader.IsDBNull(0);
-            var __col1_isNull = __reader.IsDBNull(1);
-            if (__col0_isNull && __col1_isNull) return null;
-            if (__col0_isNull || __col1_isNull)
+            var __Amount_isNull = __reader.IsDBNull(0);
+            var __Currency_isNull = __reader.IsDBNull(1);
+            if (__Amount_isNull && __Currency_isNull) return null;
+            if (__Amount_isNull || __Currency_isNull)
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
-                    "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "col0.isNull=" + __col0_isNull + ", " + "col1.isNull=" + __col1_isNull + ". All-or-nothing required.");
+                    "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "Amount.isNull=" + __Amount_isNull + ", " + "Currency.isNull=" + __Currency_isNull + ". All-or-nothing required.");
             return new global::TestApp.Money(
                 __reader.GetDecimal(0),
                 __reader.GetString(1));

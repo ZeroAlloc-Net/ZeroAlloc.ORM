@@ -82,6 +82,14 @@ internal sealed record ConventionInfo(
 //                   (an InnerColumn entry itself has InnerColumns) are rejected upstream
 //                   in v0.5 — ConventionDiscovery's MultiArgCtor rule refuses to classify
 //                   them. Flat one-level expansion is the v0.5 contract.
+//   CtorArgName  -- v0.5 Phase C (post-review Fix 2): the source-level ctor
+//                   argument name on the composite that this column maps to
+//                   (e.g. "Amount" / "Currency" for a `Money(decimal Amount,
+//                   string Currency)` inner column). Used as a debug-friendly
+//                   fallback for the mixed-null exception message when
+//                   ColumnName is null (FlatRow positional path). Null on
+//                   non-composite outer columns where no meaningful inner
+//                   ctor-arg name applies.
 // EquatableArray<ColumnBinding>.default is IsDefault==true with zero heap allocation;
 // non-composite leaf bindings carry this field for free (no per-binding empty-array
 // instance is materialized when InnerColumns is unused).
@@ -91,7 +99,8 @@ internal sealed record ColumnBinding(
     string TypeName,
     ConventionInfo? Convention = null,
     string? ColumnName = null,
-    EquatableArray<ColumnBinding> InnerColumns = default);
+    EquatableArray<ColumnBinding> InnerColumns = default,
+    string? CtorArgName = null);
 
 // Materialization plan for a single [Query] method's return row.
 //

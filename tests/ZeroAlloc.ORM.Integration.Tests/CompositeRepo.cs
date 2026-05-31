@@ -61,10 +61,13 @@ public sealed partial class CompositeRepo(IAsyncDbConnection connection)
     public partial Task<int> InsertMoneyWithOrderIdAsync(int id, MoneyWithOrderId total, CancellationToken ct);
 
     // v0.5 Phase C.3 — nullable composite round-trip methods. ZAO050 is
-    // suppressed at the file level (above the partial declaration) because
-    // we know the integration test DDL declares Amount / Currency together
-    // as either NULL or populated.
-#pragma warning disable ZAO050
+    // suppressed at the project level via `<NoWarn>ZAO050</NoWarn>` in the
+    // csproj — see the comment there for the rationale. The integration
+    // test DDL declares Amount / Currency together as either NULL or
+    // populated, so the runtime all-or-nothing check is a no-op for these
+    // round-trips. Project-level suppression is the canonical adopter
+    // pattern for "every nullable composite in this assembly is schema-
+    // audited" (post-review Fix 8 — single source of suppression).
 
     // Scalar Task<Money?> — exercises the all-or-nothing emit branch:
     //   * Both columns DBNull -> returns null.
@@ -85,6 +88,4 @@ public sealed partial class CompositeRepo(IAsyncDbConnection connection)
     // SQL writes the unpacked names verbatim.
     [Command("INSERT INTO Orders (Id, Amount, Currency) VALUES (@id, @total_Amount, @total_Currency)")]
     public partial Task<int> InsertNullableTotalAsync(int id, Money? total, CancellationToken ct);
-
-#pragma warning restore ZAO050
 }

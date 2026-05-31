@@ -774,6 +774,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // DBNull; when non-null, the existing positional unpacking
                     // runs. ZAO050 fires for the parameter position so adopters
                     // see the runtime all-or-nothing contract.
+                    //
+                    // Post-review Fix 1 — the nullable-composite bind emit uses
+                    // `@param.Value.@field` to reach inner fields on the non-null
+                    // branch. `.Value` only exists on `Nullable<T>` (value-type
+                    // composite); a reference-type composite declared `OrderRow?`
+                    // doesn't have `.Value` and would produce CS1061 in adopter
+                    // code. Mirror the read-side `compositeIsNullableValueType`
+                    // gate: only `Nullable<T>` struct composites enter the
+                    // nullable-composite bind branch. Nullable REFERENCE
+                    // composites fall through to ZAO041 (the resolution kind
+                    // remains MultiArgCtor but `compositeFields` stays empty
+                    // so the ZAO041 sentinel fires). Reference-type composites
+                    // need a future enhancement (Option B: branch on class-vs-
+                    // struct in the emit, omitting `.Value` for classes).
+                    var isCompositeNullableValueType =
+                        p.Type is INamedTypeSymbol pcn
+                        && pcn.IsGenericType
+                        && pcn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
                     if (resolution.Kind == ConventionKind.MultiArgCtor)
                     {
                         // ZAO063 — `[Param(Name = "...")]` cannot compose with the
@@ -794,25 +812,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                     paramNameOverride))));
                         }
 
-                        compositeFields = BuildCompositeFields(resolution, conventionContext);
-                        if (compositeFields.Length > 0)
+                        // Nullable reference-type composite is NOT classified as
+                        // a supported binding strategy in Phase C — leave
+                        // compositeFields empty so the ZAO041 sentinel fires below.
+                        var nullableRefComposite = isNullable && !isCompositeNullableValueType;
+                        if (!nullableRefComposite)
                         {
-                            compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-
-                            // v0.5 Phase C.2 — nullable composite parameter
-                            // triggers ZAO050. The diagnostic is at the
-                            // parameter location so the squiggle lands on
-                            // the user's `Money? total` declaration.
-                            if (isNullable)
+                            compositeFields = BuildCompositeFields(resolution, conventionContext);
+                            if (compositeFields.Length > 0)
                             {
-                                var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
-                                diagnostics.Add(new DiagnosticInfo(
-                                    DescriptorId: "ZAO050",
-                                    Location: LocationInfo.From(paramLocation),
-                                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
-                                        method.Name,
-                                        compositeTypeFullName,
-                                        "parameter '" + p.Name + "'"))));
+                                compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+                                // v0.5 Phase C.2 — nullable composite parameter
+                                // triggers ZAO050. The diagnostic is at the
+                                // parameter location so the squiggle lands on
+                                // the user's `Money? total` declaration. Only
+                                // value-type `Nullable<T>` reaches this branch
+                                // (reference-type composites with `?` fell
+                                // through above).
+                                if (isCompositeNullableValueType)
+                                {
+                                    var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                                    diagnostics.Add(new DiagnosticInfo(
+                                        DescriptorId: "ZAO050",
+                                        Location: LocationInfo.From(paramLocation),
+                                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                            method.Name,
+                                            compositeTypeFullName,
+                                            "parameter '" + p.Name + "'"))));
+                                }
                             }
                         }
                     }
@@ -1552,7 +1580,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 GetterMethod: reader,
                 IsNullable: isNullable,
                 TypeName: unwrappedDisplay,
-                Convention: convention));
+                Convention: convention,
+                // Post-review Fix 2 — capture the inner ctor-arg name so the
+                // mixed-null exception message + hoisted-local naming have a
+                // human-readable fallback when ColumnName is null (FlatRow
+                // positional path).
+                CtorArgName: p.Name));
         }
         return inner.MoveToImmutable();
     }
@@ -1614,7 +1647,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
             TypeName: compositeTypeDisplay,
             Convention: null,
             ColumnName: null,
-            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings));
+            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings),
+            // Post-review Fix 6 — the outer ctor-arg name (e.g. "Total" on
+            // `record OrderRow(int Id, Money? Total)`) drives the readable
+            // hoisted-local name for nullable composites. Falls back to
+            // `__composite_<i>` when absent (defensive — `param` is never
+            // null here since this helper is only called from the per-ctor-
+            // parameter loops).
+            CtorArgName: param.Name);
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
@@ -3387,9 +3427,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var col = cols[i];
             if (col.InnerColumns.Length > 0 && col.IsNullable)
             {
-                var localName = "__composite_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Post-review Fix 6 — prefer the outer ctor-arg name
+                // (e.g. `__Total` for `record OrderRow(int Id, Money? Total)`)
+                // over the positional `__composite_<i>`. CtorArgName is set on
+                // composite ColumnBindings by TryBuildCompositeColumnBinding.
+                // The `__composite_<i>` fallback only fires for legacy
+                // bindings that pre-date Fix 6.
+                //
+                // Post-review Fix 7 — initialize the hoisted local with
+                // `default!` so a future refactor that takes a non-exhaustive
+                // branch out of EmitNullableCompositeHoistedBlock can't trip
+                // CS0165 "use of unassigned local". The `!` suppresses the
+                // CS8600 null-tolerance warning for nullable-reference
+                // composite types in adopter code that has `<Nullable>enable`.
+                var localSuffix = col.CtorArgName ?? "composite_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var localName = "__" + localSuffix;
                 hoistedNames[i] = localName;
-                sb.AppendLine($"            {col.TypeName}? {localName};");
+                sb.AppendLine($"            {col.TypeName}? {localName} = default!;");
                 sb.AppendLine("            {");
                 EmitNullableCompositeHoistedBlock(sb, col, ordinal, "                ", useNamedOrdinals, localName);
                 sb.AppendLine("            }");
@@ -3469,13 +3523,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // GetOrdinal(<name>) runs exactly once per inner column across the
         // IsDBNull + materialize reads. Positional reads use the integer
         // literal directly — no hoisting saves anything there.
+        //
+        // Post-review Fix 2 — the per-inner-column `baseName` falls back to
+        // CtorArgName before the positional `col<j>`. ColumnName is set on
+        // DomainEntity inner bindings; CtorArgName is set on every composite
+        // inner binding (Fix 2). The `col<j>` sentinel is only reachable for
+        // legacy bindings that pre-date Fix 2.
         var ordinalLocalNames = new string?[inner.Length];
         if (useNamedOrdinals)
         {
             for (var j = 0; j < inner.Length; j++)
             {
                 var b = inner[j];
-                var baseName = b.ColumnName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 var ordLocal = "__" + baseName + "_ord";
                 ordinalLocalNames[j] = ordLocal;
                 var literal = SymbolDisplay.FormatLiteral(b.ColumnName ?? string.Empty, quote: true);
@@ -3485,7 +3545,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         for (var j = 0; j < inner.Length; j++)
         {
             var b = inner[j];
-            var baseName = b.ColumnName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
             nullLocalNames[j] = "__" + baseName + "_isNull";
             string ordinalExpr = useNamedOrdinals
                 ? ordinalLocalNames[j]!
@@ -3506,7 +3566,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         for (var j = 0; j < inner.Length; j++)
         {
             var b = inner[j];
-            var label = b.ColumnName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var label = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var labelLit = SymbolDisplay.FormatLiteral(label + ".isNull=", quote: true);
             sb.Append(" + ").Append(labelLit).Append(" + ").Append(nullLocalNames[j]);
             if (j < inner.Length - 1)
@@ -3715,7 +3775,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             for (var i = 0; i < cols.Length; i++)
             {
                 var col = cols[i];
-                var baseName = col.ColumnName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 var ordLocal = "__" + baseName + "_ord";
                 ordinalLocalNames[i] = ordLocal;
                 var literal = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
@@ -3725,7 +3785,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
-            var baseName = col.ColumnName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            // Post-review Fix 2 — fall back to CtorArgName before `col<i>` so
+            // the IsDBNull local + the mixed-null exception message show the
+            // composite's inner ctor-arg name (e.g. `__Amount_isNull`)
+            // instead of the positional `__col0_isNull`. Inner composite
+            // columns now always carry CtorArgName (Fix 2).
+            var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             nullLocalNames[i] = "__" + baseName + "_isNull";
             string ordinalExpr = useNamedOrdinals
                 ? ordinalLocalNames[i]!
@@ -3755,7 +3820,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
-            var label = col.ColumnName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var label = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var labelLit = SymbolDisplay.FormatLiteral(label + ".isNull=", quote: true);
             sb.Append(" + ").Append(labelLit).Append(" + ").Append(nullLocalNames[i]);
             if (i < cols.Length - 1)
@@ -4769,10 +4834,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         //       // standard positional unpacking using @total.Value.Amount etc.
         //   }
         //
-        // The non-null branch unwraps via `.Value` for Nullable<T> (struct
-        // composite); reference-type composites use `@total!` to suppress
-        // CS8602. Both shapes reach this branch because the discovery layer
-        // accepts both forms.
+        // The non-null branch unwraps via `.Value` — this branch is reached
+        // ONLY for `Nullable<T>` (value-type composite). Reference-type
+        // nullable composites (`OrderRow?` where OrderRow is a class) are
+        // gated out at the classifier in TransformMethod (post-review Fix 1):
+        // they leave `CompositeFields` empty and fall through to ZAO041 so
+        // the emit never reaches this `.Value` path. Reference-type nullable
+        // composites are a future enhancement (Option B in the review notes).
         if (p.IsNullable)
         {
             sb.AppendLine($"{indent}if (@{p.Name} is null)");
@@ -4843,18 +4911,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // v0.5 Phase C.2 — variant of BuildCompositeFieldValueExpression for the
     // non-null branch of a nullable composite parameter. The outer accessor is
     // `@total.Value` (Nullable<T> struct path) — adding `.Value` between the
-    // parameter name and the field name. Reference-type composites would
-    // produce `@total!` here; we use `.Value` as the value-type form since
-    // composite types declared as records / structs are the common case in
-    // adopter code (per Money's declaration as `record struct`).
+    // parameter name and the field name.
+    //
+    // Reference-type nullable composites are gated to ZAO041 fallback at the
+    // classifier in TransformMethod (post-review Fix 1) — they never reach
+    // this emit branch. This helper only handles `Nullable<T>` value-type
+    // composites; the `.Value` accessor is the Nullable<T> unwrap. A future
+    // enhancement (Option B in the review notes) would branch on class-vs-
+    // struct here and omit `.Value` for class composites.
     private static string BuildCompositeFieldValueExpressionForNullable(string paramName, CompositeBindingField field)
     {
         // Defensive `@`-prefix on the inner property accessor (see
         // BuildCompositeFieldValueExpression for rationale). The outer
         // `.Value` between the parameter name and the inner field name is
-        // the Nullable<T> unwrap; for reference-type composites the user
-        // can suppress the null-warning at their call site if needed —
-        // we emit the same shape because both reach this branch.
+        // the Nullable<T> unwrap — only value-type composites reach here.
         var baseExpr = "@" + paramName + ".Value.@" + field.CtorArgName;
         if (field.Convention is { } conv)
         {

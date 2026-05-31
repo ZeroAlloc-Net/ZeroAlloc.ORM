@@ -4,12 +4,16 @@
     <RootNamespace>ZeroAlloc.ORM.Integration.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- v0.5 Phase C.3 — ZAO050 fires for the nullable composite test
-         methods (read + write directions). Source-generator-emitted
-         diagnostics use ExternalFile locations which `#pragma warning
-         disable` cannot scope-suppress; the project-level NoWarn is the
-         canonical adopter-facing suppression mechanism for source
-         generators. The diagnostic message documents this pattern. -->
+    <!-- v0.5 Phase C.3 — ZAO050 fires per nullable-composite position
+         across this test project (read + write directions). The
+         integration test DDL declares Amount / Currency together as
+         either NULL or populated, so the runtime all-or-nothing check
+         is a no-op for our data. Project-level NoWarn is the canonical
+         "established repo" suppression pattern (post-review Fix 8 —
+         single source of suppression across the assembly). The
+         per-method `#pragma warning disable ZAO050` form also works
+         (ZAO050 reports at user-source locations), see
+         docs/diagnostics/ZAO050.md. -->
     <NoWarn>$(NoWarn);ZAO050</NoWarn>
   </PropertyGroup>
 

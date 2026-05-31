@@ -24,23 +24,23 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            global::TestApp.Money? __composite_1;
+            global::TestApp.Money? __Total = default!;
             {
-                var __col0_isNull = __reader.IsDBNull(1);
-                var __col1_isNull = __reader.IsDBNull(2);
-                if (__col0_isNull && __col1_isNull)
-                    __composite_1 = null;
-                else if (__col0_isNull || __col1_isNull)
+                var __Amount_isNull = __reader.IsDBNull(1);
+                var __Currency_isNull = __reader.IsDBNull(2);
+                if (__Amount_isNull && __Currency_isNull)
+                    __Total = null;
+                else if (__Amount_isNull || __Currency_isNull)
                     throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
-                        "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "col0.isNull=" + __col0_isNull + ", " + "col1.isNull=" + __col1_isNull + ". All-or-nothing required.");
+                        "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "Amount.isNull=" + __Amount_isNull + ", " + "Currency.isNull=" + __Currency_isNull + ". All-or-nothing required.");
                 else
-                    __composite_1 = new global::TestApp.Money(
+                    __Total = new global::TestApp.Money(
                         __reader.GetDecimal(1),
                         __reader.GetString(2));
             }
             return new global::TestApp.OrderRow(
                 __reader.GetInt32(0),
-                __composite_1);
+                __Total);
         }
         finally
         {
