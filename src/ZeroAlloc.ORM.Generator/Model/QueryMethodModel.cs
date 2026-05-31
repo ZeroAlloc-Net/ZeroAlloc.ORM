@@ -16,6 +16,10 @@ internal enum EmitShape
     // bind uses GetOrdinal("ColumnName") instead of a positional index — class ctor
     // parameter names map to PascalCased column identifiers.
     DomainEntity,
+    // v0.3 Phase B — tuple return type where each element is independently materialized
+    // from successive reader result sets. Element kinds (Scalar / Row / List) are
+    // carried via MultiResultMaterializationModel.
+    MultiResultSet,
 }
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,
@@ -31,6 +35,7 @@ internal sealed record QueryMethodModel(
     string ReturnTypeDisplay,
     string? NullableScalarReaderMethod,
     MaterializationModel? Materialization,
+    MultiResultMaterializationModel? MultiResultMaterialization,
     EquatableArray<ParameterInfo> MethodParameters,
     string? CancellationTokenParameterName,
     EquatableArray<DiagnosticInfo> Diagnostics);

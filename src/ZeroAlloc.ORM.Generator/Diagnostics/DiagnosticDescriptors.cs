@@ -66,10 +66,10 @@ internal static class DiagnosticDescriptors
         "Method '{0}' uses [Query(FromResource = true)] but the embedded-resource lookup path is deferred to a future milestone. The Sql string is currently treated as literal inline SQL.",
         DiagnosticSeverity.Info);
 
-    public static readonly DiagnosticDescriptor ZAO021_BatchNotImplemented = Make(
-        "ZAO021", "[Query(Batch = ...)] non-Auto value not yet implemented in v0.1",
-        "Method '{0}' uses [Query(Batch = {1})] but BatchMode dispatch is deferred to v0.3. The Batch value is currently ignored; queries always use single-command emit.",
-        DiagnosticSeverity.Info);
+    // ZAO021 retired in v0.3 Phase B.5 — BatchMode.Always / BatchMode.Never values
+    // are now honoured by the MultiResultSet emit (see ClassifyEmitShape +
+    // EmitMultiResultSet*). The v0.1 info diagnostic is no longer accurate; removal
+    // is tracked in AnalyzerReleases.Unshipped.md under "Removed Rules".
 
     public static readonly DiagnosticDescriptor ZAO022_UnknownReturnShape = Make(
         "ZAO022", "Return type shape not yet supported in v0.1",

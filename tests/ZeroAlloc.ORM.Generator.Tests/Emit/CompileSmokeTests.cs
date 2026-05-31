@@ -487,6 +487,100 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void MultiResultSet_batch_emit_compiles_cleanly()
+    {
+        // v0.3 Phase B.2 — IAsyncDbBatch path must produce a body that compiles. The
+        // emitted SQL parameters are bound per-statement; the tuple return ctor is
+        // assembled from per-element locals. CS9113 is included in the bug-class
+        // filter because the primary-ctor capture has historically tripped here.
+        var source =
+            "using System.Collections.Generic;\n" +
+            "using System.Data.Async;\n" +
+            "using System.Threading;\n" +
+            "using System.Threading.Tasks;\n" +
+            "using ZeroAlloc.ORM;\n" +
+            "\n" +
+            "namespace TestApp;\n" +
+            "\n" +
+            "public sealed record OrderRow(int Id, int CustomerId, decimal Total);\n" +
+            "public sealed record OrderLineRow(string Sku, int Quantity);\n" +
+            "\n" +
+            "public sealed partial class Repo(IAsyncDbConnection connection)\n" +
+            "{\n" +
+            "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id;\", Batch = BatchMode.Always)]\n" +
+            "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
+            "}\n";
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void MultiResultSet_joined_emit_compiles_cleanly()
+    {
+        // v0.3 Phase B.3 — ;-joined fallback path must compile. Single command, one
+        // parameter binding, but the body still walks NextResultAsync between
+        // tuple-element materializations.
+        var source =
+            "using System.Collections.Generic;\n" +
+            "using System.Data.Async;\n" +
+            "using System.Threading;\n" +
+            "using System.Threading.Tasks;\n" +
+            "using ZeroAlloc.ORM;\n" +
+            "\n" +
+            "namespace TestApp;\n" +
+            "\n" +
+            "public sealed record OrderRow(int Id, int CustomerId, decimal Total);\n" +
+            "public sealed record OrderLineRow(string Sku, int Quantity);\n" +
+            "\n" +
+            "public sealed partial class Repo(IAsyncDbConnection connection)\n" +
+            "{\n" +
+            "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id;\", Batch = BatchMode.Never)]\n" +
+            "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
+            "}\n";
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void MultiResultSet_autobatch_emit_compiles_cleanly()
+    {
+        // v0.3 Phase B.4 — BatchWithFallback emit branches on __conn.CanCreateBatch.
+        // Both inner branches must compile; the bug-class filter would catch a
+        // mis-rendered IsAsyncDbBatch identifier or a misplaced try/finally close.
+        var source =
+            "using System.Collections.Generic;\n" +
+            "using System.Data.Async;\n" +
+            "using System.Threading;\n" +
+            "using System.Threading.Tasks;\n" +
+            "using ZeroAlloc.ORM;\n" +
+            "\n" +
+            "namespace TestApp;\n" +
+            "\n" +
+            "public sealed record OrderRow(int Id, int CustomerId, decimal Total);\n" +
+            "public sealed record OrderLineRow(string Sku, int Quantity);\n" +
+            "\n" +
+            "public sealed partial class Repo(IAsyncDbConnection connection)\n" +
+            "{\n" +
+            "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id;\")]\n" +
+            "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
+            "}\n";
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a
