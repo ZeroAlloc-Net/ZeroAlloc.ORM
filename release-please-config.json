@@ -2,32 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     ".": {
-      "release-type": "simple",
-      "package-name": "ZeroAlloc.ORM",
-      "component": "orm",
-      "include-component-in-tag": false,
-      "release-as": "0.3.0"
-    },
-    "src/ZeroAlloc.ORM.Abstractions": {
-      "release-type": "simple",
-      "package-name": "ZeroAlloc.ORM.Abstractions",
-      "component": "abstractions",
-      "include-component-in-tag": true,
-      "release-as": "0.3.0"
-    },
-    "src/ZeroAlloc.ORM.Generator": {
-      "release-type": "simple",
-      "package-name": "ZeroAlloc.ORM.Generator",
-      "component": "generator",
-      "include-component-in-tag": true,
-      "release-as": "0.3.0"
-    },
-    "src/ZeroAlloc.TypeConversions": {
-      "release-type": "simple",
-      "package-name": "ZeroAlloc.TypeConversions",
-      "component": "typeconversions",
-      "include-component-in-tag": true,
-      "release-as": "0.3.0"
+      "release-type": "simple"
     }
   },
   "changelog-sections": [
