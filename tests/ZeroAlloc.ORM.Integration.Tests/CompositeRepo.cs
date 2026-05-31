@@ -59,4 +59,32 @@ public sealed partial class CompositeRepo(IAsyncDbConnection connection)
 
     [Command("INSERT INTO Orders (Id, Amount, Currency) VALUES (@id, @total_Amount, @total_Currency)")]
     public partial Task<int> InsertMoneyWithOrderIdAsync(int id, MoneyWithOrderId total, CancellationToken ct);
+
+    // v0.5 Phase C.3 — nullable composite round-trip methods. ZAO050 is
+    // suppressed at the file level (above the partial declaration) because
+    // we know the integration test DDL declares Amount / Currency together
+    // as either NULL or populated.
+#pragma warning disable ZAO050
+
+    // Scalar Task<Money?> — exercises the all-or-nothing emit branch:
+    //   * Both columns DBNull -> returns null.
+    //   * Both columns populated -> returns Money(amount, currency).
+    //   * One column DBNull (mixed) -> throws ZeroAllocOrmMaterializationException.
+    [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+    public partial Task<Money?> GetNullableTotalAsync(int id, CancellationToken ct);
+
+    // FlatRow with a nested nullable composite (NullableMoneyOrderRow(int Id,
+    // Money? Total)) — exercises the hoisted-local emit branch. The empty-
+    // result-set case returns null at the outer FlatRow level; partial-null
+    // composite still throws.
+    [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+    public partial Task<NullableMoneyOrderRow?> GetNullableMoneyRowAsync(int id, CancellationToken ct);
+
+    // Nullable composite parameter (Option A) — `Money? total` unpacks into
+    // two DbParameters whose values are DBNull when `total is null`. The
+    // SQL writes the unpacked names verbatim.
+    [Command("INSERT INTO Orders (Id, Amount, Currency) VALUES (@id, @total_Amount, @total_Currency)")]
+    public partial Task<int> InsertNullableTotalAsync(int id, Money? total, CancellationToken ct);
+
+#pragma warning restore ZAO050
 }

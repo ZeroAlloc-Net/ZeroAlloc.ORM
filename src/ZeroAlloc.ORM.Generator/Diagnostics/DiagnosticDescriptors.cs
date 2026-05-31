@@ -127,7 +127,7 @@ internal static class DiagnosticDescriptors
     // exists to make adopters consciously opt into the runtime contract.
     public static readonly DiagnosticDescriptor ZAO050_NullableCompositeRuntimeCheck = Make(
         "ZAO050", "Nullable composite type requires runtime all-or-nothing check",
-        "Method '{0}' uses nullable composite type '{1}' at {2}. The all-or-nothing DBNull check is enforced at runtime; partial-null columns throw ZeroAllocOrmMaterializationException at materialize time (or send DBNull-for-all on bind time). If your schema guarantees these columns are populated or null together, suppress this warning with #pragma warning disable ZAO050.",
+        "Method '{0}' uses nullable composite type '{1}' at {2}. The all-or-nothing DBNull check is enforced at runtime; partial-null columns throw ZeroAllocOrmMaterializationException at materialize time (or send DBNull-for-all on bind time). If your schema guarantees these columns are populated or null together, suppress this warning via project-level <NoWarn>ZAO050</NoWarn> or #pragma warning disable ZAO050.",
         DiagnosticSeverity.Warning);
 
     // ZAO060 — RESERVED.

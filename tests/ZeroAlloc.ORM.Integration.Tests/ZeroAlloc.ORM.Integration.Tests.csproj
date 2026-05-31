@@ -4,6 +4,13 @@
     <RootNamespace>ZeroAlloc.ORM.Integration.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- v0.5 Phase C.3 — ZAO050 fires for the nullable composite test
+         methods (read + write directions). Source-generator-emitted
+         diagnostics use ExternalFile locations which `#pragma warning
+         disable` cannot scope-suppress; the project-level NoWarn is the
+         canonical adopter-facing suppression mechanism for source
+         generators. The diagnostic message documents this pattern. -->
+    <NoWarn>$(NoWarn);ZAO050</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
