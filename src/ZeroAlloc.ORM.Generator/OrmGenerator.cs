@@ -444,6 +444,27 @@ public sealed class OrmGenerator : IIncrementalGenerator
         ConventionContext conventionContext)
     {
         if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null);
+
+        // v0.3 Phase C — IAsyncEnumerable<T> streaming. Match by metadata name + arity
+        // and require the element type to resolve to a row-shaped materialization
+        // (FlatRow or DomainEntity). ZAO007 separately covers the missing
+        // [EnumeratorCancellation] case; here we only classify the shape.
+        if (string.Equals(named.MetadataName, "IAsyncEnumerable`1", StringComparison.Ordinal)
+            && string.Equals(named.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
+        {
+            var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext);
+            if (streamFlat is not null)
+                return (EmitShape.Streaming, null, streamFlat, null);
+            var streamDomain = TryBuildDomainEntityMaterialization(streamElement, conventionContext);
+            if (streamDomain is not null)
+                return (EmitShape.Streaming, null, streamDomain, null);
+            // Element type not classifiable — fall through to Unknown so the existing
+            // ZAO022 / ZAO040 path surfaces the gap. ZAO007 still fires upstream when
+            // the user forgets [EnumeratorCancellation].
+            return (EmitShape.Unknown, null, null, null);
+        }
+
         // Restrict to Task<T> for now; ValueTask<T> lands later.
         if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null);
 
@@ -1262,6 +1283,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     break;
                 case EmitShape.DomainEntity:
                     EmitDomainEntity(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.Streaming:
+                    // v0.3 Phase C.1 — sentinel emit; the real yield-based iterator
+                    // body lands in C.2. The sentinel keeps C.1 commit shape minimal
+                    // while the detection path and snapshot still get exercised.
+                    sb.AppendLine($"    // EmitShape.Streaming — {m.MethodName}");
                     break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
