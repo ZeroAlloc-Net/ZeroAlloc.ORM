@@ -257,6 +257,37 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 
 ---
 
+## Post-v0.3 cleanup
+
+Items surfaced during the Phase C code review (2026-05-31, PR #42) that are intentionally
+deferred rather than blocking the streaming PR. Pick up under v0.3 polish or roll into v0.4.
+
+### v0.3-CLN1 — Hoist `GetOrdinal` once per column in column-name materialization
+
+- Source: PR #42 code review (2026-05-31).
+- Affects all column-name emit paths (DomainEntity in Streaming, FlatRow, plus the
+  single-row DomainEntity path) — wherever the emit currently produces both
+  `__reader.IsDBNull(__reader.GetOrdinal("Col"))` and
+  `__reader.GetXxx(__reader.GetOrdinal("Col"))`, `GetOrdinal` runs twice per row per
+  column in the hot loop.
+- Fix: emit `var __o_Col = __reader.GetOrdinal("Col");` once before the materialization
+  body and reuse the local in both the `IsDBNull` and `GetXxx` calls.
+- Cross-shape (FlatRow + DomainEntity + Streaming-DomainEntity), so treat as a single
+  pass rather than per-shape patches. Snapshot churn will be wide — bundle with other
+  emit cleanups if possible.
+
+### v0.3-CLN2 — Lift keeper-connection / shared-cache helper into SqliteFixture
+
+- Source: PR #42 code review (2026-05-31), Fix 3 follow-up.
+- `StreamingTests.Early_break_cleans_up_reader_and_closes_connection` uses a keeper
+  + `Mode=Memory;Cache=Shared` pattern to keep the in-memory DB alive across the
+  repo's open/close cycle. The pattern is private to that one test today.
+- Fix: add `SqliteFixture.CreateSharedMemory(string name)` (or similar) once a second
+  streaming-style early-close test lands — premature without the second adopter.
+- A TODO marker is already in place at the top of `StreamingTests`.
+
+---
+
 ## P1 — Milestone v0.4 (2 weeks): commands + sprocs
 
 ### v0.4-T1 — `[Command]` attribute + emit

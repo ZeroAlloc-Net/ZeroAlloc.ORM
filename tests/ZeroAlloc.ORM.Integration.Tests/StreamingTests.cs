@@ -16,6 +16,9 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 //     the iterator's finally hook runs through IAsyncEnumerator.DisposeAsync.
 //   * Cancellation_via_token_stops_streaming — cancelling the token mid-
 //     stream surfaces an OperationCanceledException.
+//
+// TODO(v0.3 backlog): lift the keeper-connection / shared-cache in-memory pattern into SqliteFixture
+// as SqliteFixture.CreateSharedMemory(string name) once a second streaming-style early-close test lands.
 public class StreamingTests
 {
     [Fact]
@@ -58,15 +61,20 @@ public class StreamingTests
         var connectionString = $"Data Source={dbName};Mode=Memory;Cache=Shared";
 
         // Keeper holds the database alive for the duration of the test — the
-        // shared-cache DB is destroyed when the last connection closes.
+        // shared-cache DB is destroyed when the last connection closes. The keeper
+        // stays as a raw SqliteConnection because its lifetime is what holds the
+        // shared-cache DB alive; we only route the seed through .AsAsync() so the
+        // seeding ADO surface matches the rest of the integration suite.
         var keeper = new SqliteConnection(connectionString);
         await using (keeper.ConfigureAwait(false))
         {
             await keeper.OpenAsync().ConfigureAwait(false);
 
-            // Seed via the keeper. Using a second connection for the repo means
-            // close/open round-trips on the repo side don't drop the schema.
-            var seedCmd = keeper.CreateCommand();
+            // Seed via the keeper, going through the async wrapper for consistency
+            // with the rest of the integration suite (SqliteFixture also uses
+            // .AsAsync() for command execution).
+            IAsyncDbConnection keeperAsync = keeper.AsAsync();
+            var seedCmd = keeperAsync.CreateCommand();
             await using (seedCmd.ConfigureAwait(false))
             {
                 seedCmd.CommandText = @"
@@ -118,7 +126,7 @@ public class StreamingTests
             var repo = new StreamingRepo(fx.Connection);
             using var cts = new CancellationTokenSource();
 
-            var act = async () =>
+            Func<Task> act = async () =>
             {
                 await foreach (var row in repo.StreamAllAsync(cts.Token).ConfigureAwait(false))
                 {
@@ -128,7 +136,10 @@ public class StreamingTests
                 }
             };
 
-            await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+            // Tighten the assertion: verify the OCE's CancellationToken matches our
+            // CTS — guards against an ambient/unrelated cancellation passing the test.
+            var thrown = await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+            thrown.Which.CancellationToken.Should().Be(cts.Token);
         }
     }
 }

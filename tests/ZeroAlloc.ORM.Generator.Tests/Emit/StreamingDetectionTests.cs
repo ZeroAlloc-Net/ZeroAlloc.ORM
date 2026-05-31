@@ -5,11 +5,8 @@ using static VerifyXunit.Verifier;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
-// v0.3 Phase C.1 — detection snapshot for the Streaming emit shape.
-// The IAsyncEnumerable<T> return path was previously left at the
-// "// TODO: emit body for ..." stub; C.1 routes it to a dedicated
-// `EmitShape.Streaming` branch that emits a sentinel comment. C.2 will
-// refresh this snapshot once the real yield-based body lands.
+// Streaming detection test. Validates that ClassifyEmitShape routes IAsyncEnumerable<T>
+// returns to EmitShape.Streaming. The snapshot captures the full emit produced by EmitStreaming.
 public class StreamingDetectionTests
 {
     [Fact]

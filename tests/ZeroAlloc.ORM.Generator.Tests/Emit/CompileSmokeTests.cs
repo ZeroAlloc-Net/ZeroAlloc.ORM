@@ -607,7 +607,10 @@ public class CompileSmokeTests
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
         var bugClass = compileDiagnostics
             .AsEnumerable()
-            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            // CS8419 (iterator cannot have ref-like locals) and CS4032 (cannot await in
+            // an iterator's finally) are streaming-specific bug classes — if the emit
+            // regresses we want them to surface as failures, not pass quietly.
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS8419" or "CS4032")
             .ToArray();
         Assert.Empty(bugClass);
     }

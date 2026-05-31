@@ -450,6 +450,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // (FlatRow or DomainEntity). ZAO007 separately covers the missing
         // [EnumeratorCancellation] case; here we only classify the shape.
         if (string.Equals(named.MetadataName, "IAsyncEnumerable`1", StringComparison.Ordinal)
+            && named.Arity == 1
+            && named.TypeArguments.Length == 1
             && string.Equals(named.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
         {
             var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
@@ -1588,7 +1590,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (mat is null)
         {
             // Defensive — classification should never assign Streaming without a model.
-            sb.AppendLine($"    // TODO: Streaming without Materialization model for {m.MethodName}");
+            // Throw loudly so a regression here surfaces on first MoveNextAsync instead
+            // of silently yielding an empty sequence. `throw` is a valid iterator method
+            // body in C#; the compiler builds a state machine whose first MoveNextAsync
+            // raises the exception.
+            sb.AppendLine($"            throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant violation: EmitShape.Streaming reached emit with null Materialization for '{m.MethodName}'.\");");
             return;
         }
 
@@ -1609,7 +1615,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
-        EmitParameterBinding(sb, m);
+        EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("            {");
@@ -1632,7 +1638,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             else
             {
-                ordinalExpr = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Match EmitFlatRow's direct-interpolation style for positional reads.
+                // Integer literals interpolate culture-invariantly in C#, so no explicit
+                // InvariantCulture call is needed.
+                ordinalExpr = $"{i}";
             }
             var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
             if (col.Convention is { } conv && conv.FactoryFullName is not null)
