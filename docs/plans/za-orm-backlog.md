@@ -233,27 +233,33 @@ Each emits with a stable `id` + `helpLinkUri` (stubbed to GitHub Markdown file u
 
 ## P1 — Milestone v0.3 (2 weeks): multi-result + streaming
 
-### v0.3-T1 — `IAsyncDbBatch` emit path
+Commits in chronological order, all merged via PR on `main` after `v0.2.0` shipped.
+Phase plan: [`docs/plans/2026-05-31-v0.3-implementation.md`](2026-05-31-v0.3-implementation.md).
 
-- Generator detects multi-statement SQL with tuple return.
-- Emits `if (connection.CanCreateBatch) { /* batch */ } else { /* ;-joined */ }`.
-- Both paths produce the same `(T1, List<T2>)` result.
+- Phase A — SqlStatementSplitter hoist + BatchEmitStrategy resolver (#40)
+- Phase B — MultiResultSet emit (Auto / Batch / Joined / Detection) (#41)
+- Phase C — `IAsyncEnumerable<T>` streaming emit (#42)
+- Phase D — ZAO032 / ZAO033 multi-result-set arity diagnostics (#43)
+- Phase E + F.1, F.2 — MultiResultSet integration tests, cookbook recipes, README v0.3 section, backlog reconciliation (this PR)
 
-### v0.3-T2 — Tuple-of-result-sets dispatch
+v0.3 milestone scoreboard:
 
-- `Task<(OrderRow Head, List<OrderLineRow> Lines)?>` return type.
-- Each tuple field materializes from a separate result set via `NextResultAsync`.
+- ~~v0.3-T1 — `IAsyncDbBatch` emit path~~ — ✅ shipped 0.3.0 (#41)
+  - Generator detects multi-statement SQL with tuple return.
+  - Emits `if (connection.CanCreateBatch) { /* batch */ } else { /* ;-joined */ }`.
+  - Both paths produce the same `(T1, List<T2>)` result.
+- ~~v0.3-T2 — Tuple-of-result-sets dispatch~~ — ✅ shipped 0.3.0 (#41, integration coverage in this PR)
+  - `Task<(OrderRow Head, List<OrderLineRow> Lines)?>` return type.
+  - Each tuple field materializes from a separate result set via `NextResultAsync`.
+- ~~v0.3-T3 — `IAsyncEnumerable<T>` streaming~~ — ✅ shipped 0.3.0 (#42)
+  - Generator emits an `async IAsyncEnumerable<T>` body with `[EnumeratorCancellation]` flowing through.
+  - Correct reader cleanup on early exit (yield broken by caller).
+  - Diagnostic ZAO007 fires if `[EnumeratorCancellation]` missing.
+- ~~v0.3-T4 — Multi-result-set diagnostics~~ — ✅ shipped 0.3.0 (#43)
+  - ZAO032: tuple has more elements than `;`-statements.
+  - ZAO033: tuple has fewer elements than `;`-statements.
 
-### v0.3-T3 — `IAsyncEnumerable<T>` streaming
-
-- Generator emits an `async IAsyncEnumerable<T>` body with `[EnumeratorCancellation]` flowing through.
-- Correct reader cleanup on early exit (yield broken by caller).
-- Diagnostic ZAO007 fires if `[EnumeratorCancellation]` missing.
-
-### v0.3-T4 — Multi-result-set diagnostics
-
-- ZAO032: tuple has more elements than `;`-statements.
-- ZAO033: tuple has fewer elements than `;`-statements.
+**v0.3 milestone complete. Release-please will propose 0.3.0 from conventional commits.**
 
 ---
 
