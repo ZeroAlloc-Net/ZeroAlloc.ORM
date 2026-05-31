@@ -88,4 +88,16 @@ public sealed partial class CompositeRepo(IAsyncDbConnection connection)
     // SQL writes the unpacked names verbatim.
     [Command("INSERT INTO Orders (Id, Amount, Currency) VALUES (@id, @total_Amount, @total_Currency)")]
     public partial Task<int> InsertNullableTotalAsync(int id, Money? total, CancellationToken ct);
+
+    // v0.5 Phase D.3 — `[Materialize(Factory)]` round-trip surface against Sqlite.
+    // Each method exercises one factory dispatch position. Sqlite stores decimal
+    // as TEXT; the factory parses it under CultureInfo.InvariantCulture to make
+    // the round-trip culture-independent.
+    [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+    public partial Task<MoneyWithFactory> GetTotalViaFactoryAsync(int id, CancellationToken ct);
+
+    // Same factory, FlatRow-nested position. Outer record stays positional;
+    // inner factory dispatch swaps `new MoneyWithFactory(...)` for the static call.
+    [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+    public partial Task<MoneyWithFactoryOrderRow?> GetMoneyOrderRowAsync(int id, CancellationToken ct);
 }
