@@ -78,6 +78,32 @@ public class StoredProcedureOutputParamsEmitTests
     }
 
     [Fact]
+    public Task SprocWithOutputParams_output_only_emits_ExecuteNonQuery()
+    {
+        // Task E.3 — every tuple field matches a C# parameter; the procedure has
+        // no result set. Emit swaps ExecuteReaderAsync for ExecuteNonQueryAsync;
+        // no reader scope, no drain loop, just the parameter readback after the
+        // command completes. ResultElements.Length == 0 drives the branch in
+        // EmitSprocWithOutputParams.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(int NewOrderId, int Status)> InsertAsync(
+                    int customerId, int newOrderId, int status, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
     public Task SprocWithOutputParams_result_row_plus_value_object_output_wraps_factory()
     {
         // Value-object output: the int read back from the parameter is wrapped in

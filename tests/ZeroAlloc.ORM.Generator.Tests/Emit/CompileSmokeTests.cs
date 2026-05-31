@@ -950,6 +950,38 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void StoredProcedure_output_only_emit_compiles_cleanly()
+    {
+        // v0.4 Phase E.3 — every tuple field matches a C# parameter. Emit uses
+        // ExecuteNonQueryAsync instead of ExecuteReaderAsync; no reader local,
+        // no drain loop. Smoke test catches the ExecuteNonQueryAsync-vs-Reader
+        // branch regression (e.g. leaving an `await using var __reader = ...`
+        // line in the output-only emit would surface as a missing __reader
+        // declaration error here).
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(int NewOrderId, int Status)> InsertAsync(
+                    int customerId, int newOrderId, int status, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void StoredProcedure_output_params_value_object_output_emit_compiles_cleanly()
     {
         // Value-object output: the int readback from the parameter is wrapped in
