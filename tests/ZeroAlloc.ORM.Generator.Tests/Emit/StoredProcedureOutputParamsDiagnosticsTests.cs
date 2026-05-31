@@ -22,13 +22,15 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StoredProcedureOutputParamsDiagnosticsTests
 {
     [Fact]
-    public void Sproc_tuple_with_one_matching_and_one_nonmatching_scalar_field_emits_ZAO062()
+    public void Sproc_tuple_with_two_nonmatching_scalars_plus_one_match_emits_ZAO062_on_second()
     {
-        // Author intent ambiguity: `Total` (scalar int) could be a result-set
-        // column or a typo'd output parameter. The classifier picks the
-        // result-column interpretation (no matching C# parameter) and ZAO062
-        // surfaces the ambiguity with the field name in the message so the
-        // adopter can rename if the intent was output.
+        // Author intent ambiguity: with two non-matching scalar fields plus a
+        // matching parameter, ZAO062 fires on the SECOND non-matching field
+        // (`Total`) — the first (`Status`) is treated as the conventional
+        // result-row position per Heuristic 1 (Phase F review Fix 1). The
+        // typo-detection win: a second mistyped output (`Tota1` etc.) still
+        // surfaces here even though the canonical 1-result+output shape is
+        // silent.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -40,7 +42,7 @@ public class StoredProcedureOutputParamsDiagnosticsTests
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
                 [StoredProcedure("usp_InsertOrder")]
-                public partial Task<(int NewOrderId, int Total)> InsertAsync(
+                public partial Task<(int Status, int Total, int NewOrderId)> InsertAsync(
                     int customerId, int newOrderId, CancellationToken ct);
             }
             """;
@@ -51,9 +53,12 @@ public class StoredProcedureOutputParamsDiagnosticsTests
             .Where(d => string.Equals(d.Id, "ZAO062", System.StringComparison.Ordinal))
             .ToArray();
         Assert.Single(zao062);
-        // Message must name the non-matching field so the adopter can locate it
-        // — a feature-gated grep in the assertion would mask renames.
-        Assert.Contains("Total", zao062[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
+        // Message must name the SECOND non-matching field, not the first
+        // (skipped) one. `Total` is the warned field; `Status` is the silent
+        // conventional result-row position.
+        var message = zao062[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains("Total", message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("Status", message, System.StringComparison.Ordinal);
     }
 
     [Fact]

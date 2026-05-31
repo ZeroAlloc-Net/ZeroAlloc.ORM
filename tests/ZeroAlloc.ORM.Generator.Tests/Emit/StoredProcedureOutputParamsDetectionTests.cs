@@ -197,13 +197,12 @@ public class StoredProcedureOutputParamsDetectionTests
     public void Sproc_tuple_output_params_emits_no_unexpected_diagnostics()
     {
         // Sanity check: a clean output-params shape doesn't fire ZAO022/ZAO040/
-        // ZAO005 or any error-severity ZAO. Phase F.3 added ZAO062 (warning)
-        // for non-matching tuple fields when the SprocWithOutputParams shape
-        // is selected — `Result` here is a non-matching field, so ZAO062 fires
-        // once. We assert the only ZAO diagnostic surfaced is ZAO062 (warning),
-        // proving the classifier is clean of unexpected errors and the new
-        // diagnostic is well-targeted. ZAO062-specific positive coverage lives
-        // in StoredProcedureOutputParamsDiagnosticsTests.
+        // ZAO005 or any other ZAO. Phase F review Fix 1 (Heuristic 1) — the
+        // canonical `(OrderRow Result, int NewOrderId)` shape now emits ZERO
+        // ZAO diagnostics because the first non-matching tuple field is
+        // treated as the conventional result-row position and skipped. This is
+        // the headline win: adopters writing the canonical sproc-with-outputs
+        // pattern get NO warnings on day one.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -227,6 +226,51 @@ public class StoredProcedureOutputParamsDetectionTests
             .AsEnumerable()
             .Where(d => d.Id.StartsWith("ZAO", System.StringComparison.Ordinal))
             .ToArray();
-        Assert.All(zao, d => Assert.Equal("ZAO062", d.Id));
+        Assert.Empty(zao);
+    }
+
+    [Fact]
+    public void Sproc_tuple_with_two_nonmatching_fields_fires_ZAO062_only_on_second()
+    {
+        // Phase F review Fix 1 — Heuristic 1 verification. With TWO
+        // non-matching tuple fields plus at least one matching field, ZAO062
+        // must fire on the SECOND non-matching field only (the first is
+        // skipped as the conventional result-row position). The shape here:
+        // `Heads` and `Tail` are both result positions (neither matches a
+        // parameter); `NewOrderId` matches. ZAO062 fires once, on `Tail`.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_GetHeadsAndInsertTail")]
+                public partial Task<(IReadOnlyList<OrderRow> Heads, OrderRow Tail, int NewOrderId)> GetHeadsAndInsertTailAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+        var zao062 = diagnostics
+            .AsEnumerable()
+            .Where(d => string.Equals(d.Id, "ZAO062", System.StringComparison.Ordinal))
+            .ToArray();
+        var only = Assert.Single(zao062);
+        // The diagnostic must name the SECOND non-matching field (`Tail`),
+        // not the skipped FIRST (`Heads`). Asserting against the quoted
+        // field-name slot in the message format ("tuple field 'X'") rather
+        // than the bare substring to avoid colliding with the method-name
+        // GetHeadsAndInsertTailAsync which contains both "Heads" and "Tail"
+        // as substrings.
+        var message = only.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains("tuple field 'Tail'", message, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("tuple field 'Heads'", message, System.StringComparison.Ordinal);
     }
 }
