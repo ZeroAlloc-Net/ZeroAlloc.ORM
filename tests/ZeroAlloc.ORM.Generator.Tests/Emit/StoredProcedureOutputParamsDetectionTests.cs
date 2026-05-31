@@ -197,9 +197,13 @@ public class StoredProcedureOutputParamsDetectionTests
     public void Sproc_tuple_output_params_emits_no_unexpected_diagnostics()
     {
         // Sanity check: a clean output-params shape doesn't fire ZAO022/ZAO040/
-        // ZAO005 or any other ZAO* warnings. Diagnostics for the new shape
-        // (ZAO062 — unmatched tuple field) are Phase F territory; here we only
-        // verify the classification is clean.
+        // ZAO005 or any error-severity ZAO. Phase F.3 added ZAO062 (warning)
+        // for non-matching tuple fields when the SprocWithOutputParams shape
+        // is selected — `Result` here is a non-matching field, so ZAO062 fires
+        // once. We assert the only ZAO diagnostic surfaced is ZAO062 (warning),
+        // proving the classifier is clean of unexpected errors and the new
+        // diagnostic is well-targeted. ZAO062-specific positive coverage lives
+        // in StoredProcedureOutputParamsDiagnosticsTests.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -223,6 +227,6 @@ public class StoredProcedureOutputParamsDetectionTests
             .AsEnumerable()
             .Where(d => d.Id.StartsWith("ZAO", System.StringComparison.Ordinal))
             .ToArray();
-        Assert.Empty(zao);
+        Assert.All(zao, d => Assert.Equal("ZAO062", d.Id));
     }
 }

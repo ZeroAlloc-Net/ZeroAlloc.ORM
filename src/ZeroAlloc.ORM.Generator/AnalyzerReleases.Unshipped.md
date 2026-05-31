@@ -25,3 +25,4 @@ ZAO043  | ZeroAlloc.ORM | Error    | [Materialize(Factory)] references missing m
 ZAO044  | ZeroAlloc.ORM | Error    | Ambiguous convention discovery
 ZAO060  | ZeroAlloc.ORM | Error    | [StoredProcedure] async method has out/ref parameter (reserved — never emitted in v0.4; CS1988 covers the case today)
 ZAO061  | ZeroAlloc.ORM | Error    | [StoredProcedure] name is empty
+ZAO062  | ZeroAlloc.ORM | Warning  | Named-tuple field does not match any parameter

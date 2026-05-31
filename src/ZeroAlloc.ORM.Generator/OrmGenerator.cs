@@ -510,6 +510,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
 
+        // v0.4 Phase F.3 — ZAO062: [StoredProcedure] named-tuple has at least
+        // one field matching a parameter (the SprocWithOutputParams shape was
+        // selected) AND at least one OTHER field that does NOT match a
+        // parameter. The non-matching field is treated as a result column,
+        // which is a legitimate shape (multi-result + output) — so the
+        // diagnostic is a WARNING, not an error. The common author mistake it
+        // catches is a typo: tuple field `Tota1` instead of `Total` silently
+        // demotes an intended output parameter to a result column at runtime.
+        // Surfacing the field name in the message lets the adopter spot it.
+        //
+        // Fire one ZAO062 per non-matching field so multi-typo cases all
+        // surface in a single build. ResultElements carries the field-name
+        // preserved by TryClassifyTupleElement, so we can read it directly.
+        if (shape == EmitShape.SprocWithOutputParams
+            && sprocOutputParamsMaterialization is not null
+            && sprocOutputParamsMaterialization.ResultElements.Values.Length > 0)
+        {
+            foreach (var resultElement in sprocOutputParamsMaterialization.ResultElements.Values)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO062",
+                    Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        resultElement.TupleFieldName))));
+            }
+        }
+
         // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
         // diagnostics:
         //
@@ -1935,6 +1963,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
         "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
+        "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         _ => null,
     };
 

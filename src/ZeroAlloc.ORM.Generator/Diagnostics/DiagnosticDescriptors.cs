@@ -135,4 +135,16 @@ internal static class DiagnosticDescriptors
         "ZAO061", "[StoredProcedure] name is empty",
         "Method '{0}' has [StoredProcedure(\"\")] but the procedure name must be non-empty and non-whitespace.",
         DiagnosticSeverity.Error);
+
+    // v0.4 Phase F.3 — emitted from sproc classification when a named-tuple
+    // return mixes parameter-matched fields (signalling the output-params
+    // pattern is in use) with one or more non-matching fields. The non-matching
+    // field is treated as a result column, which may be intentional (multi-
+    // result + output) or a typo silently demoting an intended output to a
+    // result column. Warning severity gives adopters a hint without forcing a
+    // rename when the shape is genuinely desired.
+    public static readonly DiagnosticDescriptor ZAO062_TupleFieldNotMatchingParameter = Make(
+        "ZAO062", "Named-tuple field does not match any parameter",
+        "Method '{0}' tuple field '{1}' does not match any parameter — treated as a result column. If '{1}' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).",
+        DiagnosticSeverity.Warning);
 }

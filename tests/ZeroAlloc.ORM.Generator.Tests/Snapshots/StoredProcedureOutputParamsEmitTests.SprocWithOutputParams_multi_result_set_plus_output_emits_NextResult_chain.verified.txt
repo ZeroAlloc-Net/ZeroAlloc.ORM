@@ -1,0 +1,34 @@
+﻿{
+  Diagnostics: [
+    {
+      Location: : (13,19)-(13,87),
+      Message: Method 'GetHeadsAndInsertTailAsync' tuple field 'Heads' does not match any parameter — treated as a result column. If 'Heads' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).,
+      Severity: Warning,
+      WarningLevel: 1,
+      Descriptor: {
+        Id: ZAO062,
+        Title: Named-tuple field does not match any parameter,
+        HelpLink: https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO062.md,
+        MessageFormat: Method '{0}' tuple field '{1}' does not match any parameter — treated as a result column. If '{1}' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).,
+        Category: ZeroAlloc.ORM,
+        DefaultSeverity: Warning,
+        IsEnabledByDefault: true
+      }
+    },
+    {
+      Location: : (13,19)-(13,87),
+      Message: Method 'GetHeadsAndInsertTailAsync' tuple field 'Tail' does not match any parameter — treated as a result column. If 'Tail' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).,
+      Severity: Warning,
+      WarningLevel: 1,
+      Descriptor: {
+        Id: ZAO062,
+        Title: Named-tuple field does not match any parameter,
+        HelpLink: https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO062.md,
+        MessageFormat: Method '{0}' tuple field '{1}' does not match any parameter — treated as a result column. If '{1}' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).,
+        Category: ZeroAlloc.ORM,
+        DefaultSeverity: Warning,
+        IsEnabledByDefault: true
+      }
+    }
+  ]
+}
