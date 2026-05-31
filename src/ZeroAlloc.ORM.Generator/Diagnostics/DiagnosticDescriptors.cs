@@ -111,6 +111,20 @@ internal static class DiagnosticDescriptors
         "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
         DiagnosticSeverity.Error);
 
+    // ZAO060 — RESERVED.
+    // Originally scheduled for "[StoredProcedure] async method has out/ref
+    // parameter". The C# compiler already forbids `out`/`ref` parameters on
+    // `async` methods (CS1988), so any user-facing emit here would be dead code
+    // today. The ID is reserved so a future release can swap in a friendlier
+    // diagnostic (for example, pointing adopters at the named-tuple output
+    // pattern when they try `out`/`ref` on a non-async sproc wrapper that the
+    // compiler accepts but we cannot bind). Registered in `LookupDescriptor`
+    // for catalog completeness; never reported by any emit path.
+    public static readonly DiagnosticDescriptor ZAO060_OutOrRefOnAsync = Make(
+        "ZAO060", "[StoredProcedure] async method has out/ref parameter (reserved)",
+        "Method '{0}' has an out/ref parameter on an async method. C# already forbids this (CS1988); ZAO060 reserves this slot for a future friendlier diagnostic that points at named-tuple output parameters.",
+        DiagnosticSeverity.Error);
+
     // v0.4 Phase D fix-up — shipped early (originally scheduled for Phase F.2).
     // Without this guard, `[StoredProcedure("")]` silently emits CommandText = ""
     // and the failure surfaces as a provider-specific runtime error
