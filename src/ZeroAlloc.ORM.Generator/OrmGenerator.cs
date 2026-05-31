@@ -456,6 +456,49 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue, sprocOutputParamsMaterialization) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind, isStoredProcedureAttribute);
 
+        // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
+        // Three triggers:
+        //
+        //   * Scalar return Task<Money?> — Materialization.Kind == Composite AND
+        //     Materialization.IsNullable.
+        //   * Nested nullable composite (`record OrderRow(int Id, Money? Total)`)
+        //     — any ColumnBinding with InnerColumns.Length > 0 AND IsNullable.
+        //
+        // The diagnostic location is the return-type syntax (the user's
+        // declaration of the nullable composite type). Diagnostic message
+        // names the method and the composite type so adopters can suppress
+        // narrowly. Warning severity — composite all-or-nothing is a
+        // supported shape, the warning just flags the runtime contract.
+        if (materialization is not null)
+        {
+            if (materialization.Kind == MaterializationKind.Composite && materialization.IsNullable)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO050",
+                    Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        materialization.TargetTypeFullName,
+                        "return position"))));
+            }
+            else
+            {
+                foreach (var col in materialization.Columns)
+                {
+                    if (col.InnerColumns.Length > 0 && col.IsNullable)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO050",
+                            Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                method.Name,
+                                col.TypeName,
+                                "nested in return type"))));
+                    }
+                }
+            }
+        }
+
         // ZAO002 — [Command(Kind = Scalar | Identity)] requires a value-returning
         // shape. Scalar accepts any primitive / VO / enum (including the nullable
         // Task<T?> variant); Identity is narrower (non-nullable int / long / Guid,
@@ -725,12 +768,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the per-field model into ParameterInfo so the emit helper
                     // can render the unpacking blocks without re-resolving symbols.
                     //
-                    // Nullable composite parameters are deferred to Phase C (the
-                    // bind side mirrors the read side's all-or-nothing approach).
-                    // For now `isNullable + MultiArgCtor` falls through to ZAO041
-                    // — no binding strategy resolved — which is the correct signal
-                    // until Phase C lands.
-                    if (resolution.Kind == ConventionKind.MultiArgCtor && !isNullable)
+                    // v0.5 Phase C — nullable composite parameters (`Money? total`)
+                    // are now in scope (Option A: bind side mirrors the read side).
+                    // When the parameter is null, every inner DbParameter binds
+                    // DBNull; when non-null, the existing positional unpacking
+                    // runs. ZAO050 fires for the parameter position so adopters
+                    // see the runtime all-or-nothing contract.
+                    //
+                    // Post-review Fix 1 — the nullable-composite bind emit uses
+                    // `@param.Value.@field` to reach inner fields on the non-null
+                    // branch. `.Value` only exists on `Nullable<T>` (value-type
+                    // composite); a reference-type composite declared `OrderRow?`
+                    // doesn't have `.Value` and would produce CS1061 in adopter
+                    // code. Mirror the read-side `compositeIsNullableValueType`
+                    // gate: only `Nullable<T>` struct composites enter the
+                    // nullable-composite bind branch. Nullable REFERENCE
+                    // composites fall through to ZAO041 (the resolution kind
+                    // remains MultiArgCtor but `compositeFields` stays empty
+                    // so the ZAO041 sentinel fires). Reference-type composites
+                    // need a future enhancement (Option B: branch on class-vs-
+                    // struct in the emit, omitting `.Value` for classes).
+                    var isCompositeNullableValueType =
+                        p.Type is INamedTypeSymbol pcn
+                        && pcn.IsGenericType
+                        && pcn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
+                    if (resolution.Kind == ConventionKind.MultiArgCtor)
                     {
                         // ZAO063 — `[Param(Name = "...")]` cannot compose with the
                         // positional `@{paramName}_{ctorArgName}` unpacking convention.
@@ -750,10 +812,36 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                     paramNameOverride))));
                         }
 
-                        compositeFields = BuildCompositeFields(resolution, conventionContext);
-                        if (compositeFields.Length > 0)
+                        // Nullable reference-type composite is NOT classified as
+                        // a supported binding strategy in Phase C — leave
+                        // compositeFields empty so the ZAO041 sentinel fires below.
+                        var nullableRefComposite = isNullable && !isCompositeNullableValueType;
+                        if (!nullableRefComposite)
                         {
-                            compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                            compositeFields = BuildCompositeFields(resolution, conventionContext);
+                            if (compositeFields.Length > 0)
+                            {
+                                compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+                                // v0.5 Phase C.2 — nullable composite parameter
+                                // triggers ZAO050. The diagnostic is at the
+                                // parameter location so the squiggle lands on
+                                // the user's `Money? total` declaration. Only
+                                // value-type `Nullable<T>` reaches this branch
+                                // (reference-type composites with `?` fell
+                                // through above).
+                                if (isCompositeNullableValueType)
+                                {
+                                    var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                                    diagnostics.Add(new DiagnosticInfo(
+                                        DescriptorId: "ZAO050",
+                                        Location: LocationInfo.From(paramLocation),
+                                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                            method.Name,
+                                            compositeTypeFullName,
+                                            "parameter '" + p.Name + "'"))));
+                                }
+                            }
                         }
                     }
 
@@ -1064,26 +1152,36 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // with a single-arg ctor were already classified as SingleArgCtor upstream;
         // multi-arg ctor types reach MultiArgCtor only when they have > 1 ctor params).
         //
-        // Task<Money?> (nullable composite at scalar position) is Phase C's
-        // all-or-nothing emit; for Phase A we leave it for the FlatRow/Unknown
-        // fall-through below.
-        if (!inner.IsReferenceType || inner.NullableAnnotation != NullableAnnotation.Annotated)
+        // The classifier intentionally excludes nullable-annotated reference types
+        // (e.g. `Task<OrderRow?>` where OrderRow is a record class) — those route
+        // to FlatRow / DomainEntity for outer-level row construction. Composite
+        // detection is reserved for VALUE-TYPE composites at scalar position;
+        // record / class types reach the FlatRow path first regardless of arity.
+        //
+        // v0.5 Phase C — Task<Money?> (Nullable<Money> at scalar position) is
+        // routed here when Money is a value-type composite. The
+        // MaterializationModel.IsNullable flag toggles EmitComposite into the
+        // all-or-nothing branch (return null on all-DBNull, throw on mixed-null).
+        // Nullable REFERENCE composite (a class with N-arg ctor declared as
+        // `Task<TClass?>`) stays on the FlatRow / DomainEntity path so the
+        // existing empty-row -> null behaviour is preserved; the FlatRow /
+        // DomainEntity emit handles nullable composite ctor-params nested
+        // inside (one level deeper) via the hoisted-local pattern.
+        if (!inner.IsReferenceType)
         {
-            // v0.5 Phase A (post-review Fix 5) — short-circuit on Nullable<T> BEFORE
-            // running UnwrapNullableValueType. The unwrap is wasted work when we'll
-            // bail anyway; Phase C will lift this gate when it adds the nullable
-            // composite branch.
             var compositeIsNullableValueType =
                 inner is INamedTypeSymbol cn
                 && cn.IsGenericType
                 && cn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
-            if (!compositeIsNullableValueType)
+            var compositeCandidate = UnwrapNullableValueType(inner)
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            var composite = TryBuildCompositeMaterialization(compositeCandidate, conventionContext);
+            if (composite is not null)
             {
-                var compositeCandidate = UnwrapNullableValueType(inner)
-                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-                var composite = TryBuildCompositeMaterialization(compositeCandidate, conventionContext);
-                if (composite is not null)
-                    return (EmitShape.Composite, null, composite, null, HasReturnValue: true, SprocOutputParams: null);
+                var withNullable = compositeIsNullableValueType
+                    ? composite with { IsNullable = true }
+                    : composite;
+                return (EmitShape.Composite, null, withNullable, null, HasReturnValue: true, SprocOutputParams: null);
             }
         }
 
@@ -1349,13 +1447,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // embedded in `record OrderRow(int Id, Money Total)`). The inner columns
             // flatten into the outer FlatRow's column list at the emit level; here
             // we capture them as InnerColumns on the binding so the column-index
-            // math threads through correctly. Nullable composite ctor params are
-            // Phase C's all-or-nothing case — for Phase A we reject them so the
-            // surrounding classification falls through to Unknown.
+            // math threads through correctly.
+            //
+            // v0.5 Phase C — nullable composite ctor params (`Money? Total`) are
+            // now accepted; TryBuildCompositeColumnBinding propagates the
+            // IsNullable flag and the FlatRow emit recognises it as "switch to
+            // hoisted-local + all-or-nothing branching".
             if (resolution.Kind == ConventionKind.MultiArgCtor)
             {
                 var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: false);
-                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                if (compBinding is null) return null; // inner-column resolution failure.
                 columns.Add(compBinding);
                 continue;
             }
@@ -1479,17 +1580,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 GetterMethod: reader,
                 IsNullable: isNullable,
                 TypeName: unwrappedDisplay,
-                Convention: convention));
+                Convention: convention,
+                // Post-review Fix 2 — capture the inner ctor-arg name so the
+                // mixed-null exception message + hoisted-local naming have a
+                // human-readable fallback when ColumnName is null (FlatRow
+                // positional path).
+                CtorArgName: p.Name));
         }
         return inner.MoveToImmutable();
     }
 
     // v0.5 Phase A (post-review Fix 6) — shared helper for "composite ctor param
-    // nested inside a FlatRow / DomainEntity row". Handles the nullable-composite
-    // rejection (Phase C territory), the inner-column build, the optional
-    // GetOrdinal-name population for DomainEntity callers, and the outer
-    // ColumnBinding construction. Returns null when the composite is nullable
-    // (caller should bail to Phase C) or when the inner-column resolution fails.
+    // nested inside a FlatRow / DomainEntity row". Builds the inner-column list,
+    // optionally populates ColumnName for DomainEntity callers, and constructs
+    // the outer ColumnBinding. Returns null only when the inner-column
+    // resolution fails.
+    //
+    // v0.5 Phase C — nullable composite ctor params (`Money? Total`) are now in
+    // scope. The outer ColumnBinding carries IsNullable: true when the C# type
+    // is annotated nullable or `Nullable<T>`. The downstream emitter
+    // (EmitFlatRow / EmitDomainEntity) recognises the flag and emits the
+    // hoisted-local + all-or-nothing pattern instead of inlining the
+    // composite construction into the outer `new T(...)` argument list.
+    // ZAO050 fires at the diagnostic layer for every nullable composite
+    // position so adopters see the "all-or-nothing runtime check" warning.
     //
     // `useNamedColumns` toggles the inner reads between positional (FlatRow,
     // ColumnName: null) and column-name-keyed (DomainEntity, ColumnName: PascalCase
@@ -1505,7 +1619,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             || (param.Type is INamedTypeSymbol cp
                 && cp.IsGenericType
                 && cp.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
-        if (isCompositeNullable) return null; // Phase C handles nullable composites.
 
         var innerCols = TryBuildCompositeInnerColumns(resolution, conventionContext);
         if (innerCols is null) return null;
@@ -1530,11 +1643,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ToDisplayString(TypeDisplayFormat);
         return new ColumnBinding(
             GetterMethod: string.Empty, // not used for composite; reads live on InnerColumns.
-            IsNullable: false,
+            IsNullable: isCompositeNullable,
             TypeName: compositeTypeDisplay,
             Convention: null,
             ColumnName: null,
-            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings));
+            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings),
+            // Post-review Fix 6 — the outer ctor-arg name (e.g. "Total" on
+            // `record OrderRow(int Id, Money? Total)`) drives the readable
+            // hoisted-local name for nullable composites. Falls back to
+            // `__composite_<i>` when absent (defensive — `param` is never
+            // null here since this helper is only called from the per-ctor-
+            // parameter loops).
+            CtorArgName: param.Name);
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
@@ -1577,11 +1697,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // inner-column lookup uses GetOrdinal(<inner-column-name>) so each
             // primitive read is keyed by name. Composite types provide column-name
             // candidates via the inner ctor parameter names PascalCased.
-            // Nullable composite ctor params are Phase C; reject for now.
+            //
+            // v0.5 Phase C — nullable composite ctor params on DomainEntity
+            // mirror the FlatRow path; the column-name-keyed reads are reused
+            // by the hoisted-local emit (EmitDomainEntity recognises the
+            // IsNullable flag on the binding).
             if (resolution.Kind == ConventionKind.MultiArgCtor)
             {
                 var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: true);
-                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                if (compBinding is null) return null; // inner-column resolution failure.
                 columns.Add(compBinding);
                 continue;
             }
@@ -2319,6 +2443,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO050" => DiagnosticDescriptors.ZAO050_NullableCompositeRuntimeCheck,
         "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
@@ -3187,12 +3312,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var flattenedColumnCount = ComputeFlattenedColumnCount(mat.Columns);
         var hasNestedComposite = flattenedColumnCount > mat.Columns.Length;
 
+        // v0.5 Phase C — when any nested composite is nullable (`Money? Total`),
+        // the inline `new T(..., new Money(...), ...)` construction can't host
+        // the all-or-nothing branching inside an expression position. The
+        // hoisted-local pattern evaluates each nullable composite's inner-DBNull
+        // check + materialize-or-throw above the outer `new T(...)` call, then
+        // references the locals as ctor arguments. Non-nullable composites stay
+        // on the inline path so existing snapshots remain byte-identical.
+        var hasNullableComposite = HasNullableCompositeColumn(mat.Columns);
+
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         // v0.5 Phase A (post-review Fix 1) — sentinel sits BEFORE the
         // [GeneratedCode] attribute for parity with the v0.4 SprocWithOutputParams
         // sentinel and the v0.5 composite-scalar sentinel.
-        if (hasNestedComposite)
+        if (hasNullableComposite)
+        {
+            sb.AppendLine($"    // EmitShape: FlatRow with nullable nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        }
+        else if (hasNestedComposite)
         {
             sb.AppendLine($"    // EmitShape: FlatRow with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
@@ -3206,29 +3344,284 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
-        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+
+        if (hasNullableComposite)
+        {
+            EmitFlatRowWithHoistedLocals(sb, mat, useNamedOrdinals: false);
+        }
+        else
+        {
+            sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+            var cols = mat.Columns;
+            var ordinal = 0;
+            for (var i = 0; i < cols.Length; i++)
+            {
+                var col = cols[i];
+                var trailing = i == cols.Length - 1 ? ");" : ",";
+                // v0.5 Phase A — composite ctor parameter: expand into a nested
+                // `new T(reader.GetXxx(ord), ...)` call spanning N consecutive
+                // ordinals. The outer FlatRow's ordinal cursor advances by N for
+                // the composite; following columns continue from ord+N.
+                if (col.InnerColumns.Length > 0)
+                {
+                    EmitNestedCompositeConstruction(sb, col, ordinal, "                ", trailing);
+                    ordinal += col.InnerColumns.Length;
+                    continue;
+                }
+                var expr = BuildPositionalReadExpression(col, ordinal);
+                sb.AppendLine($"                {expr}{trailing}");
+                ordinal++;
+            }
+        }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // v0.5 Phase C — does any column in this materialization carry a NULLABLE
+    // composite ctor parameter? Only composite bindings can be nullable in a
+    // way that affects emit (the C# nullable annotation on a non-composite
+    // primitive/VO column is already handled by the per-column IsDBNull guard
+    // baked into BuildPositionalReadExpression). The hoisted-local FlatRow
+    // emit branches on this so existing snapshots for non-nullable-composite
+    // shapes don't drift.
+    private static bool HasNullableCompositeColumn(EquatableArray<ColumnBinding> columns)
+    {
+        foreach (var col in columns)
+        {
+            if (col.InnerColumns.Length > 0 && col.IsNullable) return true;
+        }
+        return false;
+    }
+
+    // v0.5 Phase C — emit the FlatRow / DomainEntity body using hoisted
+    // locals when one or more nested composites are nullable. The shape:
+    //
+    //   var __<param>_ord_0 = ... (only for non-composite columns; nullable
+    //                              composites read each inner-IsDBNull
+    //                              positionally inside the hoisted block)
+    //   var __<compositeName> = (Money?)(__a_isNull && __b_isNull ? null
+    //                              : ...);
+    //   return new OuterT(<__col0>, <__compositeLocal>, <__col2>, ...);
+    //
+    // Each ctor argument position renders to a value-expression that the
+    // outer `new T(...)` consumes verbatim. Non-composite columns inline as
+    // their positional/named read expression; non-nullable composite columns
+    // inline as the existing nested `new TComposite(...)` expression;
+    // nullable composite columns become hoisted-local references to a
+    // pre-computed value.
+    private static void EmitFlatRowWithHoistedLocals(
+        StringBuilder sb,
+        MaterializationModel mat,
+        bool useNamedOrdinals)
+    {
         var cols = mat.Columns;
+        // Pass 1 — emit hoisted locals for nullable composites in the order
+        // they appear. The ordinal cursor mirrors EmitFlatRow's positional
+        // pass; composite columns consume N consecutive positions even when
+        // hoisted, and non-nullable / non-composite columns still occupy one
+        // position each.
+        var hoistedNames = new string?[cols.Length];
         var ordinal = 0;
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
-            var trailing = i == cols.Length - 1 ? ");" : ",";
-            // v0.5 Phase A — composite ctor parameter: expand into a nested
-            // `new T(reader.GetXxx(ord), ...)` call spanning N consecutive
-            // ordinals. The outer FlatRow's ordinal cursor advances by N for
-            // the composite; following columns continue from ord+N.
-            if (col.InnerColumns.Length > 0)
+            if (col.InnerColumns.Length > 0 && col.IsNullable)
             {
-                EmitNestedCompositeConstruction(sb, col, ordinal, "                ", trailing);
+                // Post-review Fix 6 — prefer the outer ctor-arg name
+                // (e.g. `__Total` for `record OrderRow(int Id, Money? Total)`)
+                // over the positional `__composite_<i>`. CtorArgName is set on
+                // composite ColumnBindings by TryBuildCompositeColumnBinding.
+                // The `__composite_<i>` fallback only fires for legacy
+                // bindings that pre-date Fix 6.
+                //
+                // Post-review Fix 7 — initialize the hoisted local with
+                // `default!` so a future refactor that takes a non-exhaustive
+                // branch out of EmitNullableCompositeHoistedBlock can't trip
+                // CS0165 "use of unassigned local". The `!` suppresses the
+                // CS8600 null-tolerance warning for nullable-reference
+                // composite types in adopter code that has `<Nullable>enable`.
+                var localSuffix = col.CtorArgName ?? "composite_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var localName = "__" + localSuffix;
+                hoistedNames[i] = localName;
+                sb.AppendLine($"            {col.TypeName}? {localName} = default!;");
+                sb.AppendLine("            {");
+                EmitNullableCompositeHoistedBlock(sb, col, ordinal, "                ", useNamedOrdinals, localName);
+                sb.AppendLine("            }");
                 ordinal += col.InnerColumns.Length;
-                continue;
             }
-            var expr = BuildPositionalReadExpression(col, ordinal);
-            sb.AppendLine($"                {expr}{trailing}");
-            ordinal++;
+            else if (col.InnerColumns.Length > 0)
+            {
+                ordinal += col.InnerColumns.Length;
+            }
+            else
+            {
+                ordinal += 1;
+            }
         }
-        BuildConnectionEpilogue(sb, "        ");
-        sb.AppendLine("    }");
+
+        // Pass 2 — render the `return new T(...)` with each column position
+        // resolved to either the hoisted local or the inline read expression.
+        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+        ordinal = 0;
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? ");" : ",";
+            if (hoistedNames[i] is { } hoisted)
+            {
+                sb.AppendLine($"                {hoisted}{trailing}");
+                ordinal += col.InnerColumns.Length;
+            }
+            else if (col.InnerColumns.Length > 0)
+            {
+                if (useNamedOrdinals)
+                {
+                    EmitNestedCompositeConstructionByOrdinalName(sb, col, "                ", trailing);
+                }
+                else
+                {
+                    EmitNestedCompositeConstruction(sb, col, ordinal, "                ", trailing);
+                }
+                ordinal += col.InnerColumns.Length;
+            }
+            else
+            {
+                var expr = useNamedOrdinals
+                    ? BuildOrdinalNameReadExpression(col)
+                    : BuildPositionalReadExpression(col, ordinal);
+                sb.AppendLine($"                {expr}{trailing}");
+                ordinal += 1;
+            }
+        }
+    }
+
+    // v0.5 Phase C — emit the all-or-nothing DBNull check + materialize body
+    // for a single nullable composite column inside a hoisted-local block.
+    // Differs from EmitNullableCompositeAllOrNothing (scalar-position) in
+    // two ways:
+    //
+    //   * Inner-column IsDBNull / Get reads are POSITIONAL when the outer
+    //     row uses positional ordinals (FlatRow). The base ordinal is the
+    //     composite's starting column index in the outer SELECT list, not
+    //     0. For DomainEntity (useNamedOrdinals: true) the inner reads use
+    //     GetOrdinal(<innerColumnName>) so the base ordinal is irrelevant
+    //     and inner ColumnName must be populated upstream.
+    //
+    //   * The body assigns to a pre-declared local instead of `return`-ing.
+    //     The mixed-null branch still throws (escaping the assignment).
+    private static void EmitNullableCompositeHoistedBlock(
+        StringBuilder sb,
+        ColumnBinding composite,
+        int baseOrdinal,
+        string indent,
+        bool useNamedOrdinals,
+        string localName)
+    {
+        var inner = composite.InnerColumns;
+        var nullLocalNames = new string[inner.Length];
+        // Hoist per-column ordinal locals first when we're in the named path so
+        // GetOrdinal(<name>) runs exactly once per inner column across the
+        // IsDBNull + materialize reads. Positional reads use the integer
+        // literal directly — no hoisting saves anything there.
+        //
+        // Post-review Fix 2 — the per-inner-column `baseName` falls back to
+        // CtorArgName before the positional `col<j>`. ColumnName is set on
+        // DomainEntity inner bindings; CtorArgName is set on every composite
+        // inner binding (Fix 2). The `col<j>` sentinel is only reachable for
+        // legacy bindings that pre-date Fix 2.
+        var ordinalLocalNames = new string?[inner.Length];
+        if (useNamedOrdinals)
+        {
+            for (var j = 0; j < inner.Length; j++)
+            {
+                var b = inner[j];
+                var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var ordLocal = "__" + baseName + "_ord";
+                ordinalLocalNames[j] = ordLocal;
+                var literal = SymbolDisplay.FormatLiteral(b.ColumnName ?? string.Empty, quote: true);
+                sb.AppendLine($"{indent}var {ordLocal} = __reader.GetOrdinal({literal});");
+            }
+        }
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            nullLocalNames[j] = "__" + baseName + "_isNull";
+            string ordinalExpr = useNamedOrdinals
+                ? ordinalLocalNames[j]!
+                : (baseOrdinal + j).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.AppendLine($"{indent}var {nullLocalNames[j]} = __reader.IsDBNull({ordinalExpr});");
+        }
+
+        var allNullExpr = string.Join(" && ", nullLocalNames);
+        sb.AppendLine($"{indent}if ({allNullExpr})");
+        sb.AppendLine($"{indent}    {localName} = null;");
+        var anyNullExpr = string.Join(" || ", nullLocalNames);
+        sb.AppendLine($"{indent}else if ({anyNullExpr})");
+        var messagePrefix = "Nullable composite '" + composite.TypeName + "' has mixed-null columns: ";
+        var messagePrefixLit = SymbolDisplay.FormatLiteral(messagePrefix, quote: true);
+        var suffixLit = SymbolDisplay.FormatLiteral(". All-or-nothing required.", quote: true);
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(");
+        sb.Append($"{indent}        {messagePrefixLit}");
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            var label = b.ColumnName ?? b.CtorArgName ?? "col" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var labelLit = SymbolDisplay.FormatLiteral(label + ".isNull=", quote: true);
+            sb.Append(" + ").Append(labelLit).Append(" + ").Append(nullLocalNames[j]);
+            if (j < inner.Length - 1)
+            {
+                sb.Append(" + \", \"");
+            }
+        }
+        sb.AppendLine($" + {suffixLit});");
+        sb.AppendLine($"{indent}else");
+        sb.AppendLine($"{indent}    {localName} = new {composite.TypeName}(");
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            var trailing = j == inner.Length - 1 ? ");" : ",";
+            string readExpr;
+            if (useNamedOrdinals)
+            {
+                // Reuse the hoisted ordinal local instead of calling GetOrdinal
+                // again — v0.3-CLN1 perf footgun avoidance per Phase C.1 plan.
+                readExpr = BuildReadExpressionWithOrdinalLocal(b, ordinalLocalNames[j]!);
+            }
+            else
+            {
+                readExpr = BuildPositionalReadExpression(b, baseOrdinal + j);
+            }
+            sb.AppendLine($"{indent}        {readExpr}{trailing}");
+        }
+    }
+
+    // v0.5 Phase C — DomainEntity-style read where the ordinal has already been
+    // hoisted to a local (avoiding GetOrdinal(<name>) duplication across the
+    // IsDBNull + Get reads in the nullable-composite hoisted block). Mirrors
+    // BuildOrdinalNameReadExpression but substitutes an arbitrary ordinal
+    // expression for the inline GetOrdinal(<literal>) call.
+    private static string BuildReadExpressionWithOrdinalLocal(ColumnBinding col, string ordinalExpr)
+    {
+        var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            readExpr = conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){readExpr}",
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({readExpr})"
+                    : $"{conv.FactoryFullName}({readExpr})",
+            };
+        }
+        if (col.IsNullable)
+        {
+            return $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
+        }
+        return readExpr;
     }
 
     // Sum the flattened column count for a materialization's binding list. A
@@ -3283,7 +3676,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // columns at ordinals 0..N-1 and we construct `new Money(GetXxx(0), ...)`
     // directly. Empty result-set throws ZeroAllocOrmMaterializationException —
     // the composite return is non-nullable, so there's no `return null` escape
-    // hatch (Phase C adds the Task<Money?> all-or-nothing branch).
+    // hatch.
+    //
+    // v0.5 Phase C — when MaterializationModel.IsNullable is true (the user
+    // declared `Task<Money?>`), the emit branches into the all-or-nothing
+    // pattern (design Section 3.5, line 330):
+    //
+    //   * Empty result-set        -> return null;
+    //   * All inner columns DBNull -> return null;
+    //   * Any (but not all) DBNull -> throw ZeroAllocOrmMaterializationException
+    //                                  with a message naming the mixed columns;
+    //   * Otherwise                -> materialize normally.
+    //
+    // Each inner column's IsDBNull is hoisted into a __<ctorArg>_isNull local
+    // so the predicate evaluates exactly once per ordinal. The materialize
+    // path reuses BuildPositionalReadExpression so convention wrappers (VO /
+    // SingleArgCtor / Enum) layer on identically to the non-nullable case.
     private static void EmitComposite(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
@@ -3306,18 +3714,133 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
-        sb.AppendLine("                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Composite scalar query returned no row.\");");
-        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+        if (mat.IsNullable)
+        {
+            sb.AppendLine("                return null;");
+            EmitNullableCompositeAllOrNothing(sb, mat, "            ", useNamedOrdinals: false);
+        }
+        else
+        {
+            sb.AppendLine("                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Composite scalar query returned no row.\");");
+            sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+            var cols = mat.Columns;
+            for (var i = 0; i < cols.Length; i++)
+            {
+                var col = cols[i];
+                var trailing = i == cols.Length - 1 ? ");" : ",";
+                var readExpr = BuildPositionalReadExpression(col, i);
+                sb.AppendLine($"                {readExpr}{trailing}");
+            }
+        }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // v0.5 Phase C — emit the all-or-nothing DBNull check + materialize-or-throw
+    // body for a nullable composite at scalar position. The composite's inner
+    // ColumnBindings are at ordinals 0..N-1; each gets one IsDBNull(N) call
+    // hoisted into a `__<ctorArg>_isNull` local. The aggregate predicates use
+    // `&&` (all-null -> return null) and `||` (any-null -> throw).
+    //
+    // useNamedOrdinals: when true, each inner column's IsDBNull / Get call
+    // uses `__reader.GetOrdinal("<ColumnName>")` instead of a positional
+    // index. Used by the DomainEntity / FlatRow nested-composite-hoisted-local
+    // path; scalar-position Task<Money?> uses the positional variant.
+    //
+    // The mixed-null exception message names each inner column + its IsDBNull
+    // state so an adopter debugging a partial-null row can see exactly which
+    // column violated the contract. The composite type's display name is
+    // emitted so multi-composite queries point at the right shape.
+    private static void EmitNullableCompositeAllOrNothing(
+        StringBuilder sb,
+        MaterializationModel mat,
+        string indent,
+        bool useNamedOrdinals)
+    {
         var cols = mat.Columns;
+        // Per-column IsDBNull hoisting. The local name follows the ctor-arg
+        // name when available (ColumnName is set on DomainEntity bindings)
+        // and falls back to a positional `__col{i}` when ColumnName is null
+        // (FlatRow positional bindings). Both shapes coexist in the same
+        // method body because the inner ColumnBinding shape decides.
+        var nullLocalNames = new string[cols.Length];
+        // Per-column ordinal hoisting for the named-ordinal path (DomainEntity-
+        // style). v0.3-CLN1 footgun: calling GetOrdinal(<name>) once per IsDBNull
+        // AND once per Get*-call duplicates work; hoisting into a single local
+        // shares the lookup. Positional reads skip this — the integer literal
+        // is already a no-cost expression.
+        var ordinalLocalNames = new string?[cols.Length];
+        if (useNamedOrdinals)
+        {
+            for (var i = 0; i < cols.Length; i++)
+            {
+                var col = cols[i];
+                var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var ordLocal = "__" + baseName + "_ord";
+                ordinalLocalNames[i] = ordLocal;
+                var literal = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
+                sb.AppendLine($"{indent}var {ordLocal} = __reader.GetOrdinal({literal});");
+            }
+        }
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            // Post-review Fix 2 — fall back to CtorArgName before `col<i>` so
+            // the IsDBNull local + the mixed-null exception message show the
+            // composite's inner ctor-arg name (e.g. `__Amount_isNull`)
+            // instead of the positional `__col0_isNull`. Inner composite
+            // columns now always carry CtorArgName (Fix 2).
+            var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            nullLocalNames[i] = "__" + baseName + "_isNull";
+            string ordinalExpr = useNamedOrdinals
+                ? ordinalLocalNames[i]!
+                : i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.AppendLine($"{indent}var {nullLocalNames[i]} = __reader.IsDBNull({ordinalExpr});");
+        }
+
+        // All-null short-circuit -> return null.
+        var allNullExpr = string.Join(" && ", nullLocalNames);
+        sb.AppendLine($"{indent}if ({allNullExpr}) return null;");
+
+        // Any-null but not all -> throw. The message lists every column + its
+        // IsDBNull state so an adopter debugging a partial-null row sees the
+        // exact mix. Use `string.Concat` style via `+` to keep it allocation-
+        // friendly (one StringBuilder under the hood); each piece is a const
+        // literal save the bool ToString.
+        var anyNullExpr = string.Join(" || ", nullLocalNames);
+        sb.AppendLine($"{indent}if ({anyNullExpr})");
+        // Build the throw expression. Each "Field.isNull=" + bool concatenation
+        // is straightforward; we line-wrap for readability in the generated
+        // source by joining with `, ` literals between fields.
+        var messagePrefix = "Nullable composite '" + mat.TargetTypeFullName + "' has mixed-null columns: ";
+        var messagePrefixLit = SymbolDisplay.FormatLiteral(messagePrefix, quote: true);
+        var suffixLit = SymbolDisplay.FormatLiteral(". All-or-nothing required.", quote: true);
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(");
+        sb.Append($"{indent}        {messagePrefixLit}");
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var label = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var labelLit = SymbolDisplay.FormatLiteral(label + ".isNull=", quote: true);
+            sb.Append(" + ").Append(labelLit).Append(" + ").Append(nullLocalNames[i]);
+            if (i < cols.Length - 1)
+            {
+                sb.Append(" + \", \"");
+            }
+        }
+        sb.AppendLine($" + {suffixLit});");
+
+        // Otherwise -> materialize normally.
+        sb.AppendLine($"{indent}return new {mat.TargetTypeFullName}(");
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
-            var readExpr = BuildPositionalReadExpression(col, i);
-            sb.AppendLine($"                {readExpr}{trailing}");
+            string readExpr = useNamedOrdinals
+                ? BuildReadExpressionWithOrdinalLocal(col, ordinalLocalNames[i]!)
+                : BuildPositionalReadExpression(col, i);
+            sb.AppendLine($"{indent}    {readExpr}{trailing}");
         }
-        BuildConnectionEpilogue(sb, "        ");
-        sb.AppendLine("    }");
     }
 
     // Build the materialization expression for a single ColumnBinding at the given
@@ -3372,11 +3895,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // funnel through GetOrdinal(name) because DomainEntity keys columns by name.
         var flattenedColumnCount = ComputeFlattenedColumnCount(mat.Columns);
         var hasNestedComposite = flattenedColumnCount > mat.Columns.Length;
+        // v0.5 Phase C — nullable nested composites route through the
+        // hoisted-local emit path (see EmitFlatRowWithHoistedLocals comment
+        // for the architectural rationale). DomainEntity reuses the same
+        // helper with useNamedOrdinals: true so inner reads still use
+        // GetOrdinal(<columnName>).
+        var hasNullableComposite = HasNullableCompositeColumn(mat.Columns);
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         // v0.5 Phase A (post-review Fix 1) — sentinel BEFORE attribute (see EmitFlatRow).
-        if (hasNestedComposite)
+        if (hasNullableComposite)
+        {
+            sb.AppendLine($"    // EmitShape: DomainEntity with nullable nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        }
+        else if (hasNestedComposite)
         {
             sb.AppendLine($"    // EmitShape: DomainEntity with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
@@ -3390,27 +3923,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
-        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
-        var cols = mat.Columns;
-        for (var i = 0; i < cols.Length; i++)
+
+        if (hasNullableComposite)
         {
-            var col = cols[i];
-            var trailing = i == cols.Length - 1 ? ");" : ",";
-            // v0.5 Phase A — composite ctor parameter in a DomainEntity. The inner
-            // ColumnBindings carry their own column names (PascalCased inner ctor
-            // param names) so each inner read still uses GetOrdinal; the outer
-            // construction wraps in `new TComposite(...)`.
-            if (col.InnerColumns.Length > 0)
+            EmitFlatRowWithHoistedLocals(sb, mat, useNamedOrdinals: true);
+        }
+        else
+        {
+            sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+            var cols = mat.Columns;
+            for (var i = 0; i < cols.Length; i++)
             {
-                EmitNestedCompositeConstructionByOrdinalName(sb, col, "                ", trailing);
-                continue;
+                var col = cols[i];
+                var trailing = i == cols.Length - 1 ? ");" : ",";
+                // v0.5 Phase A — composite ctor parameter in a DomainEntity. The inner
+                // ColumnBindings carry their own column names (PascalCased inner ctor
+                // param names) so each inner read still uses GetOrdinal; the outer
+                // construction wraps in `new TComposite(...)`.
+                if (col.InnerColumns.Length > 0)
+                {
+                    EmitNestedCompositeConstructionByOrdinalName(sb, col, "                ", trailing);
+                    continue;
+                }
+                // Column name comes from the ctor parameter (PascalCased). The literal
+                // is passed verbatim into GetOrdinal; SQL's case-insensitive default
+                // matching keeps `customerId` and `CustomerId` interchangeable on
+                // SQLite / PostgreSQL / SQL Server.
+                var expr = BuildOrdinalNameReadExpression(col);
+                sb.AppendLine($"                {expr}{trailing}");
             }
-            // Column name comes from the ctor parameter (PascalCased). The literal
-            // is passed verbatim into GetOrdinal; SQL's case-insensitive default
-            // matching keeps `customerId` and `CustomerId` interchangeable on
-            // SQLite / PostgreSQL / SQL Server.
-            var expr = BuildOrdinalNameReadExpression(col);
-            sb.AppendLine($"                {expr}{trailing}");
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
@@ -4278,6 +4819,74 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var localSuffix = cmdIndex is { } idx
             ? "_" + idx.ToString(System.Globalization.CultureInfo.InvariantCulture)
             : "";
+
+        // v0.5 Phase C.2 — Nullable composite parameter (`Money? total`). The
+        // all-or-nothing bind contract mirrors the materialization side: when
+        // the C# value is null, every inner DbParameter binds DBNull. Switch
+        // on `@<name> is null`:
+        //
+        //   if (@total is null)
+        //   {
+        //       // create N DbParameters, all with Value = DBNull.Value
+        //   }
+        //   else
+        //   {
+        //       // standard positional unpacking using @total.Value.Amount etc.
+        //   }
+        //
+        // The non-null branch unwraps via `.Value` — this branch is reached
+        // ONLY for `Nullable<T>` (value-type composite). Reference-type
+        // nullable composites (`OrderRow?` where OrderRow is a class) are
+        // gated out at the classifier in TransformMethod (post-review Fix 1):
+        // they leave `CompositeFields` empty and fall through to ZAO041 so
+        // the emit never reaches this `.Value` path. Reference-type nullable
+        // composites are a future enhancement (Option B in the review notes).
+        if (p.IsNullable)
+        {
+            sb.AppendLine($"{indent}if (@{p.Name} is null)");
+            sb.AppendLine($"{indent}{{");
+            foreach (var field in p.CompositeFields)
+            {
+                var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
+                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
+                sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
+                sb.AppendLine($"{indent}    {local}.Value = global::System.DBNull.Value;");
+                sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
+            }
+            sb.AppendLine($"{indent}}}");
+            sb.AppendLine($"{indent}else");
+            sb.AppendLine($"{indent}{{");
+            foreach (var field in p.CompositeFields)
+            {
+                var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
+                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
+                sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
+
+                // Nullable composite accessor: `@total.Value.Amount` (Nullable<T>
+                // struct path) — the C# Nullable<T> properties go through `.Value`
+                // before reaching the inner ctor-arg property. The standard
+                // BuildCompositeFieldValueExpression produces `@total.Amount`;
+                // we patch that to `@total.Value.Amount` by injecting `.Value`
+                // between the parameter name and the field accessor.
+                var valueExpr = BuildCompositeFieldValueExpressionForNullable(p.Name, field);
+                if (field.IsNullable)
+                {
+                    sb.AppendLine($"{indent}    {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}    {local}.Value = {valueExpr};");
+                }
+                sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
+            }
+            sb.AppendLine($"{indent}}}");
+            return;
+        }
+
         foreach (var field in p.CompositeFields)
         {
             var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
@@ -4297,6 +4906,43 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
+    }
+
+    // v0.5 Phase C.2 — variant of BuildCompositeFieldValueExpression for the
+    // non-null branch of a nullable composite parameter. The outer accessor is
+    // `@total.Value` (Nullable<T> struct path) — adding `.Value` between the
+    // parameter name and the field name.
+    //
+    // Reference-type nullable composites are gated to ZAO041 fallback at the
+    // classifier in TransformMethod (post-review Fix 1) — they never reach
+    // this emit branch. This helper only handles `Nullable<T>` value-type
+    // composites; the `.Value` accessor is the Nullable<T> unwrap. A future
+    // enhancement (Option B in the review notes) would branch on class-vs-
+    // struct here and omit `.Value` for class composites.
+    private static string BuildCompositeFieldValueExpressionForNullable(string paramName, CompositeBindingField field)
+    {
+        // Defensive `@`-prefix on the inner property accessor (see
+        // BuildCompositeFieldValueExpression for rationale). The outer
+        // `.Value` between the parameter name and the inner field name is
+        // the Nullable<T> unwrap — only value-type composites reach here.
+        var baseExpr = "@" + paramName + ".Value.@" + field.CtorArgName;
+        if (field.Convention is { } conv)
+        {
+            if (conv.Kind == (int)ConventionKind.Enum)
+            {
+                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+                return $"({castType}){baseExpr}";
+            }
+            if (conv.Kind == (int)ConventionKind.EnumAsString)
+            {
+                return $"{baseExpr}.ToString()";
+            }
+            if (conv.ValuePropertyName is { } propName)
+            {
+                return $"{baseExpr}.{propName}";
+            }
+        }
+        return baseExpr;
     }
 
     // Build the C# expression that reads one inner field of a composite
