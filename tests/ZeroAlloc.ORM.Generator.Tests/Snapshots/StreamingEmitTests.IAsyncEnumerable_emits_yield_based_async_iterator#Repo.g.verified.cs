@@ -7,7 +7,7 @@ namespace TestApp;
 partial class Repo
 {
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Collections.Generic.IAsyncEnumerable<global::TestApp.OrderRow> StreamAsync(global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Collections.Generic.IAsyncEnumerable<global::TestApp.OrderRow> StreamByCustomerAsync(int @customerId, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -15,7 +15,11 @@ partial class Repo
         try
         {
             await using var __cmd = __conn.CreateCommand();
-            __cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id";
+            __cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE CustomerId = @customerId ORDER BY Id";
+            var __p_customerId = __cmd.CreateParameter();
+            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.Value = @customerId;
+            __cmd.Parameters.Add(__p_customerId);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {

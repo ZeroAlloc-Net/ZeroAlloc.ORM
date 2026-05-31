@@ -1285,10 +1285,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     EmitDomainEntity(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.Streaming:
-                    // v0.3 Phase C.1 — sentinel emit; the real yield-based iterator
-                    // body lands in C.2. The sentinel keeps C.1 commit shape minimal
-                    // while the detection path and snapshot still get exercised.
-                    sb.AppendLine($"    // EmitShape.Streaming — {m.MethodName}");
+                    // v0.3 Phase C.2 — yield-based async iterator. Element materialization
+                    // reuses the FlatRow / DomainEntity model carried by m.Materialization;
+                    // the surrounding emit owns the open/while/yield/close shape.
+                    EmitStreaming(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
@@ -1555,6 +1555,111 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"                {expr}{trailing}");
         }
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // v0.3 Phase C.2 — IAsyncEnumerable<T> streaming. Emits a yield-based async
+    // iterator that opens the connection (if closed), executes the reader, yields
+    // one row per ReadAsync iteration, and closes the connection in finally.
+    //
+    // Differences from EmitFlatRow / EmitDomainEntity:
+    //   * Signature carries `[EnumeratorCancellation]` on the CancellationToken
+    //     parameter — required by the C# iterator state machine to thread the
+    //     consumer's WithCancellation() token into the user's body.
+    //   * Reader loop is `while (ReadAsync) yield return ...` rather than a
+    //     single-row read.
+    //   * try/finally still owns the close-on-finally lifecycle; `yield return`
+    //     suspending the iterator does NOT break the open/close pairing because
+    //     the C# state machine wraps the finally as a `DisposeAsync` hook on the
+    //     IAsyncEnumerator, which fires whether the consumer awaits to completion
+    //     or breaks out early (or cancels via the token).
+    //
+    // Element-binding routes through the same FlatRow positional / DomainEntity
+    // column-name code as the single-row emits — m.Materialization.Kind selects
+    // which read-expression shape applies.
+    private static void EmitStreaming(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign Streaming without a model.
+            sb.AppendLine($"    // TODO: Streaming without Materialization model for {m.MethodName}");
+            return;
+        }
+
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        // Streaming uses the same parameter-list shape as the single-row paths:
+        // the [EnumeratorCancellation] attribute lives on the user's source
+        // declaration (ZAO007-enforced) and partial-method attribute merging
+        // forbids re-emitting it on the generated half (CS0579).
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                yield return new {mat.TargetTypeFullName}(");
+        var cols = mat.Columns;
+        var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? ");" : ",";
+            // Positional (FlatRow record) vs column-name (DomainEntity class) routing
+            // mirrors the single-row emit paths. Convention wrappers (ValueObject /
+            // SingleArgCtor / StaticFactory / Enum / EnumAsString) are layered on top
+            // of the raw GetXxx read identically to EmitFlatRow / EmitDomainEntity.
+            string ordinalExpr;
+            if (useColumnNames)
+            {
+                var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
+                ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+            }
+            else
+            {
+                ordinalExpr = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.Kind switch
+                {
+                    (int)ConventionKind.Enum
+                        => $"({conv.FactoryFullName}){readExpr}",
+                    (int)ConventionKind.EnumAsString
+                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                    _ => conv.FactoryIsCtor
+                        ? $"new {conv.FactoryFullName}({readExpr})"
+                        : $"{conv.FactoryFullName}({readExpr})",
+                };
+            }
+            string expr;
+            if (col.IsNullable)
+            {
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
+            }
+            else
+            {
+                expr = readExpr;
+            }
+            sb.AppendLine($"                    {expr}{trailing}");
+        }
+        sb.AppendLine("            }");
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
