@@ -40,5 +40,13 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
 
     [Command("SELECT COALESCE(SUM(Total), 0) FROM Orders WHERE CustomerId = @cust", Kind = CommandKind.Scalar)]
     public partial Task<TotalAmount> SumTotalsValueObjectAsync(int cust, CancellationToken ct);
-}
 
+    // v0.4 Phase B code-review Fix 1 regression coverage. A non-nullable
+    // `Task<int>` scalar against a SELECT that produces NO ROWS yields a null
+    // `__result` from ExecuteScalarAsync. The generator's null-guard must throw
+    // InvalidOperationException instead of letting Convert.ToInt32(null, ic)
+    // silently return 0 — a data-corruption hazard for callers expecting an
+    // actual scalar.
+    [Command("SELECT Total FROM Orders WHERE Id = -999", Kind = CommandKind.Scalar)]
+    public partial Task<decimal> GetTotalForMissingIdAsync(CancellationToken ct);
+}

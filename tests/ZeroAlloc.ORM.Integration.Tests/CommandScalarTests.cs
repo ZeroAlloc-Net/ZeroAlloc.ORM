@@ -1,4 +1,3 @@
-using FluentAssertions;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests;
@@ -29,7 +28,7 @@ public class CommandScalarTests
             var repo = new CommandRepo(fx.Connection);
             var count = await repo.CountOrdersAsync(CancellationToken.None).ConfigureAwait(false);
 
-            count.Should().Be(3);
+            Assert.Equal(3, count);
         }
     }
 
@@ -92,6 +91,30 @@ public class CommandScalarTests
             // ConventionKind.SingleArgCtor unwrap: the VO's Value property carries
             // the underlying decimal that round-tripped through ExecuteScalarAsync.
             Assert.Equal(30.00m, total.Value);
+        }
+    }
+
+    [Fact]
+    public async Task NonNullable_scalar_on_empty_result_throws_InvalidOperationException()
+    {
+        // v0.4 Phase B code-review Fix 1 regression. A non-nullable Task<decimal>
+        // scalar pointed at a SELECT that produces NO ROWS yields a null
+        // `__result` from ExecuteScalarAsync. Without the generator's explicit
+        // null-guard, Convert.ToDecimal(null, ic) silently returns 0 — a
+        // data-corruption hazard. The guard must throw InvalidOperationException
+        // so callers see the missing scalar instead of a sentinel zero.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await SeedSchemaAsync(fx).ConfigureAwait(false);
+            // Intentionally NO row seeded — the WHERE clause matches zero rows.
+
+            var repo = new CommandRepo(fx.Connection);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => repo.GetTotalForMissingIdAsync(CancellationToken.None))
+                .ConfigureAwait(false);
         }
     }
 

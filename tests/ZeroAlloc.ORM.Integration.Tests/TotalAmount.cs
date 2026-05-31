@@ -4,4 +4,4 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 // value-object round-trip integration test. The generator's ConventionDiscovery
 // resolves this as ConventionKind.SingleArgCtor and emits `new TotalAmount((decimal)__result!)`
 // to wrap the unwrapped primitive returned from ExecuteScalarAsync.
-public readonly partial record struct TotalAmount(decimal Value);
+public readonly record struct TotalAmount(decimal Value);

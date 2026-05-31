@@ -44,6 +44,38 @@ public static class PrimitiveCatalog
     public static bool IsPrimitive(ITypeSymbol type)
         => GetScalarReaderMethod(type) is not null;
 
+    // Inverse of GetScalarReaderMethod: map an IDataReader.GetXxx method name back
+    // to the C# (display) type name used for a scalar cast. Used by the generator
+    // when it has only the reader-method string in scope (e.g. ConventionInfo
+    // carries UnderlyingReader, not the original ITypeSymbol) and needs to render
+    // a `(T)__result` cast against the boxed `object?` returned by
+    // ExecuteScalarAsync.
+    //
+    // Throws InvalidOperationException for unrecognized readers — the table is
+    // populated by GetScalarReaderMethod, so an unrecognized reader implies a
+    // generator bug, not a user-recoverable condition. Fail fast over silently
+    // emitting `(object)__result`.
+    public static string GetScalarCastTypeFromReader(string? readerMethod)
+        => readerMethod switch
+        {
+            "GetInt32" => "int",
+            "GetInt64" => "long",
+            "GetInt16" => "short",
+            "GetByte" => "byte",
+            "GetBoolean" => "bool",
+            "GetDecimal" => "decimal",
+            "GetDouble" => "double",
+            "GetFloat" => "float",
+            "GetString" => "string",
+            "GetDateTime" => "global::System.DateTime",
+            "GetGuid" => "global::System.Guid",
+            "GetFieldValue<global::System.DateTimeOffset>" => "global::System.DateTimeOffset",
+            "GetFieldValue<global::System.TimeSpan>" => "global::System.TimeSpan",
+            "GetFieldValue<byte[]>" => "byte[]",
+            _ => throw new InvalidOperationException(
+                $"PrimitiveCatalog.GetScalarCastTypeFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
+        };
+
     // byte[] is the canonical BLOB carrier in ADO.NET. It is recognized as an
     // array of SpecialType.System_Byte; the array itself has no SpecialType.
     private static bool IsByteArray(ITypeSymbol type)
