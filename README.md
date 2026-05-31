@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.1 milestone in progress. Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** Pre-release. v0.3 shipped (multi-result tuples + IAsyncEnumerable streaming). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -91,7 +91,41 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 - **Single-arg record discovery + static `From` factory discovery** — wrappers without `[ValueObject]` still resolve when ConventionDiscovery can find an obvious construction strategy.
 - **New diagnostics ZAO040–ZAO044** — materialization-side failures (no construction strategy, conflicting strategies, unresolved ctor parameters, etc.) surface at build time with focused messages.
 
-Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), `IAsyncEnumerable<T>` streaming (v0.3), multi-result-set tuples (v0.3), multi-column composite types (v0.5).
+### Added in v0.3
+
+- **Multi-result-set tuples (head + lines pattern)** — tuple return types map each tuple element to one `;`-separated SQL statement. Collapses the 1+N round-trip into a single command. Tuple element kinds: scalar (`int`, value-object, enum), row (`record` / single-ctor class), or list (`List<T>` / `IReadOnlyList<T>` / `IEnumerable<T>` / ...). See [`docs/cookbook/multi-result-set.md`](docs/cookbook/multi-result-set.md).
+
+  ```csharp
+  public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+  public sealed record OrderLineRow(int Id, int OrderId, string Sku, int Qty);
+
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [Query("""
+          SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
+          SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
+          """)]
+      public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetWithLinesAsync(
+          int id, CancellationToken ct);
+  }
+  ```
+
+- **Batch dispatch (`BatchMode.Auto` / `Always` / `Never`)** — `[Query(Batch = ...)]` picks how multi-statement SQL reaches the provider. `Auto` (default) branches at runtime on `connection.CanCreateBatch`: providers exposing `IAsyncDbBatch` get the pipelined path; everyone else falls back to a single command with `;`-joined SQL and `NextResultAsync`. Both paths produce the same materialized tuple.
+
+- **`IAsyncEnumerable<T>` streaming** — partial methods returning `IAsyncEnumerable<T>` with a `[EnumeratorCancellation] CancellationToken` parameter emit an async iterator that materializes rows lazily. Connection opens on first `MoveNextAsync`, closes deterministically on `DisposeAsync` (including early `break` exits). See [`docs/cookbook/streaming.md`](docs/cookbook/streaming.md).
+
+  ```csharp
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
+      public partial IAsyncEnumerable<OrderRow> StreamAllAsync(
+          [EnumeratorCancellation] CancellationToken ct);
+  }
+  ```
+
+- **New diagnostics ZAO032 / ZAO033** — arity mismatch between a tuple return and the number of `;`-separated SQL statements. ZAO032 fires when the tuple has more elements than statements; ZAO033 fires when it has fewer. Both at build time, so the wrong shape never ships.
+
+Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), multi-column composite types (v0.5).
 
 ## Design + roadmap
 
