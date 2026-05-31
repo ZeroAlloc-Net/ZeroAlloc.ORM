@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Linq;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Diagnostics;
@@ -32,19 +35,19 @@ public class ZAO033Tests
         var result = GeneratorHarness.RunGenerator(source);
         var diagnostics = result.Results[0].Diagnostics;
 
-        Microsoft.CodeAnalysis.Diagnostic? match = null;
-        foreach (var d in diagnostics)
-        {
-            if (string.Equals(d.Id, "ZAO033", System.StringComparison.Ordinal))
-            {
-                match = d;
-                break;
-            }
-        }
-        Assert.NotNull(match);
-        var message = match!.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Contains("3", message, System.StringComparison.Ordinal);
-        Assert.Contains("2", message, System.StringComparison.Ordinal);
+        var match = diagnostics.AsEnumerable().First(d => string.Equals(d.Id, "ZAO033", System.StringComparison.Ordinal));
+        var message = match.GetMessage(CultureInfo.InvariantCulture);
+        // Anchor on the descriptor's actual phrasing — "{N} SQL statements" and
+        // "{N} elements" — so partial digit matches elsewhere in the message
+        // can't accidentally pass.
+        Assert.Contains("3 SQL statements", message, System.StringComparison.Ordinal);
+        Assert.Contains("2 elements", message, System.StringComparison.Ordinal);
+
+        // Diagnostic must carry a real source location pointing at the method
+        // identifier — adopters rely on this to navigate from the squiggle.
+        Assert.NotEqual(Location.None, match.Location);
+        var span = match.Location.GetLineSpan();
+        Assert.True(span.IsValid);
     }
 
     [Fact]

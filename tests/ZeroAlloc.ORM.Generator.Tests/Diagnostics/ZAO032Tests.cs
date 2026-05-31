@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Linq;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Diagnostics;
@@ -29,19 +32,19 @@ public class ZAO032Tests
         var result = GeneratorHarness.RunGenerator(source);
         var diagnostics = result.Results[0].Diagnostics;
 
-        Microsoft.CodeAnalysis.Diagnostic? match = null;
-        foreach (var d in diagnostics)
-        {
-            if (string.Equals(d.Id, "ZAO032", System.StringComparison.Ordinal))
-            {
-                match = d;
-                break;
-            }
-        }
-        Assert.NotNull(match);
-        var message = match!.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Contains("3", message, System.StringComparison.Ordinal);
-        Assert.Contains("1", message, System.StringComparison.Ordinal);
+        var match = diagnostics.AsEnumerable().First(d => string.Equals(d.Id, "ZAO032", System.StringComparison.Ordinal));
+        var message = match.GetMessage(CultureInfo.InvariantCulture);
+        // Anchor on the descriptor's actual phrasing — "{N}-element tuple" and
+        // "{N} statement(s)" — so partial digit matches elsewhere in the message
+        // can't accidentally pass.
+        Assert.Contains("3-element tuple", message, System.StringComparison.Ordinal);
+        Assert.Contains("1 statement", message, System.StringComparison.Ordinal);
+
+        // Diagnostic must carry a real source location pointing at the method
+        // identifier — adopters rely on this to navigate from the squiggle.
+        Assert.NotEqual(Location.None, match.Location);
+        var span = match.Location.GetLineSpan();
+        Assert.True(span.IsValid);
     }
 
     [Fact]
@@ -115,6 +118,32 @@ public class ZAO032Tests
             {
                 [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
                 public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO032", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Statement_count_greater_than_tuple_arity_does_not_emit_ZAO032()
+    {
+        // Symmetric to ZAO033's reverse-direction guard test. When the SQL has
+        // MORE statements than the tuple has elements, ZAO033 fires — but ZAO032
+        // must stay silent so the adopter sees exactly one actionable diagnostic.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1; SELECT 2; SELECT 3;")]
+                public partial Task<(int A, int B)> GetTwoAsync(CancellationToken ct);
             }
             """;
         var result = GeneratorHarness.RunGenerator(source);

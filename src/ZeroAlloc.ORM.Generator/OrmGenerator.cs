@@ -281,11 +281,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         tupleArity.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         statementCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
             }
+            // ZAO033 — inverse of ZAO032. Extra SELECTs would be silently dropped on
+            // the floor by the materializer; surface the mismatch so the adopter
+            // either widens the tuple or trims the SQL.
             else if (statementCount > tupleArity)
             {
-                // ZAO033 — inverse of ZAO032. Extra SELECTs would be silently dropped on
-                // the floor by the materializer; surface the mismatch so the adopter
-                // either widens the tuple or trims the SQL.
                 diagnostics.Add(new DiagnosticInfo(
                     DescriptorId: "ZAO033",
                     Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
