@@ -167,7 +167,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO008 — multi-statement SQL with a single-result return type.
-        if (CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
+        if (SqlStatementSplitter.CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO008",
@@ -228,6 +228,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // info diagnostics keep adopters from believing they're getting behavior
         // that isn't there. Both fire only when the attribute author explicitly
         // set the non-default value.
+        //
+        // The Batch named-argument is also read once here and fed into
+        // ResolveBatchStrategy below — keeping the read in one place avoids a
+        // second scan over the attribute's NamedArguments.
+        var batchMode = 0; // BatchMode.Auto default
         if (queryAttribute is not null)
         {
             foreach (var named in queryAttribute.NamedArguments)
@@ -242,26 +247,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
                 }
                 else if (string.Equals(named.Key, "Batch", StringComparison.Ordinal)
-                    && named.Value.Value is int batchValue
-                    && batchValue != 0) // BatchMode.Auto == 0
+                    && named.Value.Value is int batchValue)
                 {
-                    // Map the enum integer back to its name for the diagnostic message.
-                    // BatchMode lives in ZeroAlloc.ORM; we mirror the enum order here
-                    // to avoid a hard reference from the generator (netstandard2.0) to
-                    // the abstractions assembly (net10.0).
-                    var batchName = batchValue switch
+                    batchMode = batchValue;
+                    if (batchValue != 0) // BatchMode.Auto == 0
                     {
-                        1 => "BatchMode.Always",
-                        2 => "BatchMode.Never",
-                        _ => "BatchMode." + batchValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    };
-                    diagnostics.Add(new DiagnosticInfo(
-                        DescriptorId: "ZAO021",
-                        Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
-                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, batchName))));
+                        // Map the enum integer back to its name for the diagnostic message.
+                        // BatchMode lives in ZeroAlloc.ORM; we mirror the enum order here
+                        // to avoid a hard reference from the generator (netstandard2.0) to
+                        // the abstractions assembly (net10.0).
+                        var batchName = batchValue switch
+                        {
+                            1 => "BatchMode.Always",
+                            2 => "BatchMode.Never",
+                            _ => "BatchMode." + batchValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        };
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO021",
+                            Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, batchName))));
+                    }
                 }
             }
         }
+
+        var strategy = ResolveBatchStrategy(sql, batchMode);
 
         var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method, conventionContext);
 
@@ -413,6 +423,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Sql: sql,
             Shape: shape,
+            Strategy: strategy,
             ReturnTypeDisplay: returnTypeDisplay,
             NullableScalarReaderMethod: nullableReaderMethod,
             Materialization: materialization,
@@ -859,74 +870,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
             or ("IAsyncEnumerable", 1);
     }
 
-    // Statement detector that recognizes single- and double-quoted SQL string
-    // literals (with `''` / `""` escapes) before counting `;`. A bare `;` ends
-    // a statement; a `;` inside a quoted literal does not.
-    // Handles SQL string literals; comments + dollar-quoted strings still TODO(v0.2).
-    private static int CountStatements(string sql)
+    // Resolve the emit-template selector for a [Query] method body. Single-
+    // statement SQL is always SingleCommand; multi-statement SQL routes by
+    // the BatchMode int value mirrored from ZeroAlloc.ORM.BatchMode
+    // (0=Auto, 1=Always, 2=Never). Phase B will consume the resulting strategy
+    // at emit time; Phase A only populates the field on the model.
+    private static BatchEmitStrategy ResolveBatchStrategy(string sql, int batchMode)
     {
-        if (string.IsNullOrEmpty(sql)) return 0;
-        var count = 1;
-        var inSingleQuote = false;
-        var inDoubleQuote = false;
-        for (var i = 0; i < sql.Length; i++)
-        {
-            var c = sql[i];
-            if (inSingleQuote)
-            {
-                // SQL string escape: '' inside '...' is a literal '.
-                if (c == '\'')
-                {
-                    if (i + 1 < sql.Length && sql[i + 1] == '\'')
-                    {
-                        i++; // skip the escaped quote
-                        continue;
-                    }
-                    inSingleQuote = false;
-                }
-                continue;
-            }
-            if (inDoubleQuote)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < sql.Length && sql[i + 1] == '"')
-                    {
-                        i++;
-                        continue;
-                    }
-                    inDoubleQuote = false;
-                }
-                continue;
-            }
-            switch (c)
-            {
-                case '\'':
-                    inSingleQuote = true;
-                    break;
-                case '"':
-                    inDoubleQuote = true;
-                    break;
-                case ';':
-                    // A trailing `;` (with only whitespace after) doesn't open a new
-                    // statement. Walk the remainder inline to avoid the substring
-                    // allocation of `sql[(i + 1)..].TrimStart()`.
-                    if (IsOnlyWhitespaceAfter(sql, i + 1))
-                        return count;
-                    count++;
-                    break;
-            }
-        }
-        return count;
-    }
+        var statementCount = SqlStatementSplitter.CountStatements(sql);
+        if (statementCount <= 1) return BatchEmitStrategy.SingleCommand;
 
-    private static bool IsOnlyWhitespaceAfter(string sql, int startIndex)
-    {
-        for (var j = startIndex; j < sql.Length; j++)
+        return batchMode switch
         {
-            if (!char.IsWhiteSpace(sql[j])) return false;
-        }
-        return true;
+            0 => BatchEmitStrategy.BatchWithFallback,
+            1 => BatchEmitStrategy.BatchAlways,
+            2 => BatchEmitStrategy.JoinedStatementsOnly,
+            _ => BatchEmitStrategy.BatchWithFallback,
+        };
     }
 
     private static bool IsMultiResultReturnType(ITypeSymbol returnType)
