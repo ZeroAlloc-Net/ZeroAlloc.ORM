@@ -61,12 +61,15 @@ public class StoredProcedureOutputParamsDetectionTests
     [Fact]
     public void Sproc_tuple_field_name_matches_parameter_case_insensitively()
     {
-        // C# parameter `newOrderId` (camelCase) matches tuple field `NewOrderId`
-        // (PascalCase). The classifier must accept the case-insensitive pairing
-        // because SQL parameter naming is case-insensitive on all major providers
-        // and C# conventions disagree on case for the two slots. Same source as
-        // the first test — included as a standalone case so a future regression
-        // that hardcodes ordinal-compare gets a clear failing test.
+        // Phase E review Fix 7 — exercise an ACTUAL case-mismatch between
+        // tuple field name and C# parameter name (tuple field `NEWORDERID`
+        // SHOUT_CASE vs camelCase parameter `newOrderId`). The classifier must
+        // accept the pairing because SQL parameter naming is case-insensitive
+        // on all major providers; a future regression that hardcodes
+        // StringComparer.Ordinal (instead of OrdinalIgnoreCase) on the lookup
+        // would fail to match here and break the test. Previously the test
+        // used identical source to the first test which did not actually
+        // exercise the case-insensitive comparer.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -80,7 +83,7 @@ public class StoredProcedureOutputParamsDetectionTests
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
                 [StoredProcedure("usp_InsertOrder")]
-                public partial Task<(OrderRow Result, int NewOrderId)> InsertAsync(
+                public partial Task<(OrderRow Result, int NEWORDERID)> InsertAsync(
                     int customerId, int newOrderId, CancellationToken ct);
             }
             """;
@@ -149,6 +152,45 @@ public class StoredProcedureOutputParamsDetectionTests
         var generated = result.Results[0].GeneratedSources[0].SourceText.ToString();
 
         Assert.Contains(SentinelMarker, generated, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Sproc_tuple_with_nullable_outer_and_output_param_rejected_via_ZAO022()
+    {
+        // Phase E review Fix 2 — `Task<(OrderRow Result, int NewOrderId)?>` with
+        // a matching C# parameter `newOrderId` is a SHAPE the v0.4 generator
+        // cannot emit (the "empty first result set => null" branch of nullable-
+        // outer tuples has unclear semantics when combined with output params).
+        // The classifier must reject the shape and surface ZAO022 so the
+        // adopter sees a compile-time signal rather than silently falling
+        // through to a MultiResultSet emit that mis-binds the parameter as
+        // input. The fix lives at the classifier branch in ClassifyEmitShape;
+        // detection-test stability is asserted by checking that ZAO022 fires
+        // exactly once on this tuple.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrderMaybe")]
+                public partial Task<(OrderRow Result, int NewOrderId)?> InsertAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+        var zao022 = diagnostics
+            .AsEnumerable()
+            .Where(d => string.Equals(d.Id, "ZAO022", System.StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(zao022);
     }
 
     [Fact]

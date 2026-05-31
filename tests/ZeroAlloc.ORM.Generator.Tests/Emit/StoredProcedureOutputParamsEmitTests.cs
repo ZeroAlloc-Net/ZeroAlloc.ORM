@@ -131,4 +131,66 @@ public class StoredProcedureOutputParamsEmitTests
         return Verify(GeneratorHarness.RunGenerator(source));
     }
 
+    [Fact]
+    public Task SprocWithOutputParams_nullable_int_output_emits_DBNull_guard()
+    {
+        // Phase E review Fix 1 — a nullable output element (`int?
+        // OptionalCount`) must emit a DBNull guard in the readback expression.
+        // Without the guard the direct Convert.ToInt32 call (or the cast
+        // fallback for Guid etc.) would throw InvalidCastException when the
+        // procedure leaves the output parameter at DBNull. The `is DBNull ?
+        // null : ...` ternary keeps the contract symmetric with scalar
+        // materialization's null tolerance. Non-nullable output positions
+        // intentionally pass DBNull straight into the cast and throw — the
+        // adopter opts in to NULL tolerance by declaring `T?`.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrderMaybeCount")]
+                public partial Task<(OrderRow Result, int? OptionalCount)> InsertAsync(
+                    int customerId, int? optionalCount, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public Task SprocWithOutputParams_multi_result_set_plus_output_emits_NextResult_chain()
+    {
+        // Phase E review Fix 3 — exercise the interleaving of (a) multi-result
+        // walks with NextResultAsync chaining between two result positions,
+        // (b) a list materialization across the first result set, (c) a row
+        // materialization across the second, and (d) an output parameter
+        // readback after reader disposal. This is the highest-regression-risk
+        // shape because it stresses both the drain-loop semantics and the
+        // multi-result-set NextResult chain at the same emit-site.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_GetHeadsAndInsertTail")]
+                public partial Task<(IReadOnlyList<OrderRow> Heads, OrderRow Tail, int NewOrderId)> GetHeadsAndInsertTailAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
 }
