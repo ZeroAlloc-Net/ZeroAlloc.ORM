@@ -59,6 +59,8 @@ public partial Task<(int Count, OrderRow First, IReadOnlyList<OrderRow> All)?> G
     CancellationToken ct);
 ```
 
+> Note: `LIMIT 1` is SQLite / Postgres / MySQL syntax. On SQL Server use `SELECT TOP 1 ...` instead.
+
 ## Choosing the dispatch path: `BatchMode`
 
 The generator emits two dispatch paths and picks one based on `[Query(Batch = ...)]`:
@@ -75,7 +77,10 @@ The generator emits two dispatch paths and picks one based on `[Query(Batch = ..
 - **`Never`** is useful when targeting providers whose `IAsyncDbBatch` shape is
   brittle (older ADO.NET drivers, in-memory test doubles) or when a
   query-rewriting middleware sits in front of the connection.
-- **`Always`** is rarely the right choice — it removes the safety net.
+- **`Always`** is rarely the right choice — it removes the safety net and fails
+  fast with `NotSupportedException` from the connection (`CreateBatch()` on a
+  provider without `IAsyncDbBatch`) when the underlying driver does not implement
+  batching.
 
 ## Arity must match: ZAO032 / ZAO033
 

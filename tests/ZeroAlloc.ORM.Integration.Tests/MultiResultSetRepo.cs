@@ -5,10 +5,11 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 
 // v0.3 Phase E — round-trip integration coverage for MultiResultSet emit.
 // Mirrors StreamingRepo's connection-injection convention (primary ctor field).
-// Three methods cover the matrix:
-//   * GetOrderWithLinesAutoAsync  — (Head, Lines) tuple via BatchMode.Auto (runtime branch).
-//   * GetOrderWithLinesNeverAsync — same shape via BatchMode.Never (forced ;-joined).
-//   * GetCountFirstAllAsync       — 3-element (Scalar, Row, List) tuple via BatchMode.Auto.
+// Four methods cover the matrix (both shapes × both batch modes):
+//   * GetOrderWithLinesAutoAsync   — (Head, Lines) tuple via BatchMode.Auto  (runtime branch).
+//   * GetOrderWithLinesNeverAsync  — (Head, Lines) tuple via BatchMode.Never (forced ;-joined).
+//   * GetCountFirstAllAsync        — 3-element (Scalar, Row, List) tuple via BatchMode.Auto.
+//   * GetCountFirstAllNeverAsync   — 3-element (Scalar, Row, List) tuple via BatchMode.Never.
 public sealed partial class MultiResultSetRepo(IAsyncDbConnection connection)
 {
     [Query(
@@ -29,5 +30,11 @@ public sealed partial class MultiResultSetRepo(IAsyncDbConnection connection)
         "SELECT COUNT(*) FROM Orders; SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT 1; SELECT Id, CustomerId, Total FROM Orders ORDER BY Id;",
         Batch = BatchMode.Auto)]
     public partial Task<(int Count, OrderRow First, IReadOnlyList<OrderRow> All)?> GetCountFirstAllAsync(
+        CancellationToken ct);
+
+    [Query(
+        "SELECT COUNT(*) FROM Orders; SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT 1; SELECT Id, CustomerId, Total FROM Orders ORDER BY Id;",
+        Batch = BatchMode.Never)]
+    public partial Task<(int Count, OrderRow First, IReadOnlyList<OrderRow> All)?> GetCountFirstAllNeverAsync(
         CancellationToken ct);
 }
