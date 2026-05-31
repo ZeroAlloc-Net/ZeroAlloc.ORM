@@ -728,6 +728,66 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Command_Identity_Task_int_emit_compiles_cleanly()
+    {
+        // v0.4 Phase C.1 — [Command(Kind = Identity)] returning Task<int> must
+        // emit a body that compiles. CS0030/CS0266 catch invalid scalar casts;
+        // CS8795/CS0759 catch partial-signature mismatches. The Sqlite RETURNING
+        // syntax is just literal text in CommandText so no runtime support is
+        // required from the emit; this verifies the materialization expression
+        // and null guard compile cleanly.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total) RETURNING Id", Kind = CommandKind.Identity)]
+                public partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Command_Identity_Task_value_object_emit_compiles_cleanly()
+    {
+        // v0.4 Phase C.1 — [Command(Kind = Identity)] returning a VO wrapping
+        // int must emit `new OrderId(Convert.ToInt32(__result!, ic))` cleanly.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly partial record struct OrderId(int Value);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total) RETURNING Id", Kind = CommandKind.Identity)]
+                public partial Task<OrderId> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a
