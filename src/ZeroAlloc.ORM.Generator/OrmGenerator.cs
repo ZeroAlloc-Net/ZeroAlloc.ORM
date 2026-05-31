@@ -695,11 +695,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // specific diagnostic (ZAO043 / ZAO044 / ZAO051) and bailed to Unknown,
         // ZAO022 / ZAO040 would be a misleading double-report on the same
         // defect. Suppress both in that case.
+        // v0.5 Phase E.1 — ZAO052 (recursive composite) belongs to the same
+        // class: it specialises the "composite shape can't be lowered yet"
+        // case that would otherwise surface as ZAO022.
         var hadFactoryDiagnostic = false;
         for (var di = 0; di < diagnostics.Count; di++)
         {
             var id = diagnostics[di].DescriptorId;
-            if (id == "ZAO043" || id == "ZAO044" || id == "ZAO051")
+            if (id == "ZAO043" || id == "ZAO044" || id == "ZAO051" || id == "ZAO052")
             {
                 hadFactoryDiagnostic = true;
                 break;
@@ -1223,6 +1226,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     : composite;
                 return (EmitShape.Composite, null, withNullable, null, HasReturnValue: true, SprocOutputParams: null);
             }
+
+            // v0.5 Phase E.1 — ZAO052: the composite-at-scalar path bailed,
+            // probe for the recursive-composite shape (outer is MultiArgCtor-
+            // shaped but at least one inner ctor param is itself MultiArgCtor).
+            // ConventionDiscovery returns Unknown for the outer in that case,
+            // so the regular flow falls through to ZAO022 with a generic
+            // message. ZAO052 surfaces the specific cause + workaround.
+            if (TryDetectRecursiveCompositeInner(compositeCandidate, conventionContext) is { } recursive)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO052",
+                    Location: returnTypeLocation,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        recursive.OuterTypeDisplay,
+                        recursive.InnerCtorArgName))));
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            }
         }
 
         // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
@@ -1551,6 +1572,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 continue;
             }
 
+            // v0.5 Phase E.1 — ZAO052: the ctor param type didn't resolve to a
+            // supported convention. Before falling through to the generic
+            // reader-null bail (which surfaces as ZAO022 / ZAO040 upstream),
+            // probe for the recursive-composite shape so adopters get the
+            // specific "composite-of-composite deferred to v0.6+" diagnostic.
+            if (diagnostics is not null
+                && methodName is not null
+                && resolution.Kind == ConventionKind.Unknown
+                && TryDetectRecursiveCompositeInner(underlying, conventionContext) is { } recursive)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO052",
+                    Location: location,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        methodName,
+                        recursive.OuterTypeDisplay,
+                        recursive.InnerCtorArgName))));
+                return null;
+            }
+
             // Pull the reader-method that lets the emitter read the wrapped primitive.
             // For Primitive conventions this IS the read; for ValueObject /
             // SingleArgCtor / StaticFactory we read the underlying primitive then
@@ -1624,6 +1665,60 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.Composite,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.Value));
+    }
+
+    // v0.5 Phase E.1 — probe for the "recursive composite" shape that
+    // TryMultiArgCtor rejects (returns Unknown) instead of accepting:
+    // a candidate type that has exactly one public ctor with > 1 parameters
+    // where at least one ctor parameter type itself resolves to MultiArgCtor.
+    // Pre-Phase-E this silently fell through to ZAO022; ZAO052 fires here
+    // with a specific message + workaround hint.
+    //
+    // Returns the name of the FIRST recursive inner ctor parameter when
+    // detected; null otherwise. Skips types that carry [Materialize(Factory)]
+    // (the factory dispatch path bypasses MultiArgCtor and is the documented
+    // workaround). Skips types where the inner composite carries its own
+    // [Materialize(Factory)] — adopters using the documented factory escape
+    // hatch should not see ZAO052.
+    private static (string OuterTypeDisplay, string InnerCtorArgName)? TryDetectRecursiveCompositeInner(
+        ITypeSymbol elementType,
+        ConventionContext conventionContext)
+    {
+        if (elementType is not INamedTypeSymbol named) return null;
+        // Skip if the outer type opts into [Materialize(Factory)] — that
+        // dispatch wins over MultiArgCtor convention (discovery order rule #1).
+        if (ReadMaterializeFactoryName(named.GetAttributes()) is not null) return null;
+
+        // Mirror TryMultiArgCtor's ctor-selection rule: single public N-arg
+        // (N > 1) ctor, no ambiguity.
+        IMethodSymbol? ctor = null;
+        var matchCount = 0;
+        foreach (var c in named.InstanceConstructors)
+        {
+            if (c.DeclaredAccessibility != Accessibility.Public || c.Parameters.Length <= 1) continue;
+            matchCount++;
+            if (matchCount > 1) return null;
+            ctor = c;
+        }
+        if (ctor is null) return null;
+
+        foreach (var p in ctor.Parameters)
+        {
+            var underlying = UnwrapNullableValueType(p.Type);
+            // Inner with explicit [Materialize(Factory)] is the documented
+            // workaround — don't fire ZAO052 in that case even if the
+            // factory's underlying composite shape looks recursive.
+            if (ReadMaterializeFactoryName(underlying.GetAttributes()) is not null) continue;
+            var innerResolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+            if (innerResolution.Kind == ConventionKind.MultiArgCtor)
+            {
+                var outerDisplay = named
+                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                    .ToDisplayString(TypeDisplayFormat);
+                return (outerDisplay, p.Name);
+            }
+        }
+        return null;
     }
 
     // Build the inner-column ColumnBinding list for a composite type. Each ctor
@@ -2258,6 +2353,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 if (compBinding is null) return null; // inner-column resolution failure.
                 columns.Add(compBinding);
                 continue;
+            }
+
+            // v0.5 Phase E.1 — ZAO052: parallel to the FlatRow probe, surface
+            // recursive composites at DomainEntity ctor positions with the
+            // specific deferred-feature diagnostic rather than the generic
+            // ZAO022 fall-through.
+            if (diagnostics is not null
+                && methodName is not null
+                && resolution.Kind == ConventionKind.Unknown
+                && TryDetectRecursiveCompositeInner(underlying, conventionContext) is { } recursive)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO052",
+                    Location: location,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        methodName,
+                        recursive.OuterTypeDisplay,
+                        recursive.InnerCtorArgName))));
+                return null;
             }
 
             string? reader = resolution.Kind switch
@@ -3124,6 +3238,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
         "ZAO051" => DiagnosticDescriptors.ZAO051_FactoryParameterColumnMismatch,
+        "ZAO052" => DiagnosticDescriptors.ZAO052_RecursiveCompositeDeferred,
         "ZAO050" => DiagnosticDescriptors.ZAO050_NullableCompositeRuntimeCheck,
         "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,

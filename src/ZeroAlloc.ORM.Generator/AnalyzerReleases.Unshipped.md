@@ -25,6 +25,7 @@ ZAO043  | ZeroAlloc.ORM | Error    | [Materialize(Factory)] references missing m
 ZAO044  | ZeroAlloc.ORM | Error    | Ambiguous convention discovery
 ZAO050  | ZeroAlloc.ORM | Warning  | Nullable composite type requires runtime all-or-nothing check
 ZAO051  | ZeroAlloc.ORM | Error    | Factory parameter does not match any SELECT column
+ZAO052  | ZeroAlloc.ORM | Error    | Recursive composite types are not supported in v0.5
 ZAO060  | ZeroAlloc.ORM | Error    | [StoredProcedure] async method has out/ref parameter (reserved)
 ZAO061  | ZeroAlloc.ORM | Error    | [StoredProcedure] name is empty
 ZAO062  | ZeroAlloc.ORM | Warning  | Named-tuple field does not match any parameter
