@@ -1764,47 +1764,91 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine("            if (__result is null || __result is global::System.DBNull) return null;");
         }
 
-        // Build the materialization expression. Underlying-primitive cast comes
-        // from PrimitiveCatalog (col.TypeName for primitives; conv.UnderlyingReader
-        // determines the cast target for factories — derived via the reader method's
-        // companion table on PrimitiveCatalog).
+        // Build the materialization expression. Provider-returned scalar types
+        // are not always exact-CLR-match (e.g. Sqlite returns System.Int64 for
+        // COUNT(*) and SUM, even when the C# return type is `int` / `decimal`).
+        // A direct `(int)__result` cast trips InvalidCastException at runtime
+        // because reference-typed unboxing is exact. We route through
+        // System.Convert.ToXxx where available — same pattern the existing
+        // EmitScalarInt uses — so int/long/short/byte/bool/decimal/double/
+        // float/string/DateTime are tolerant of width promotion. For types
+        // without a Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan) we
+        // fall back to a direct cast; those rarely surface as widened types
+        // from providers anyway.
         var bang = col.IsNullable ? "" : "!";
         string materialized;
         if (col.Convention is { } conv && conv.FactoryFullName is not null)
         {
-            // For factory shapes the cast targets the underlying primitive; the
-            // factory wraps that into the target type. UnderlyingReader names the
-            // GetXxx method (e.g. "GetInt32") — translate to the C# type name via
-            // a small table mirroring PrimitiveCatalog's reverse mapping.
-            var underlyingCast = UnderlyingCastTypeFromReader(conv.UnderlyingReader);
-            var innerCast = $"({underlyingCast})__result{bang}";
+            // For factory shapes the inner expression unwraps `__result` to the
+            // factory's expected primitive — Convert.ToXxx when available so the
+            // wrapping conversion handles the same provider-widening cases as
+            // the bare-primitive branch below. EnumAsString unwraps to string
+            // and routes through Enum.Parse<T>.
+            var underlyingType = UnderlyingCastTypeFromReader(conv.UnderlyingReader);
+            var innerExpr = BuildScalarConvertExpression(underlyingType, "__result" + bang);
             materialized = conv.Kind switch
             {
                 (int)ConventionKind.Enum
-                    => $"({conv.FactoryFullName}){innerCast}",
+                    => $"({conv.FactoryFullName}){innerExpr}",
                 // AOT note: Enum.Parse<T> is [RequiresUnreferencedCode] but safe
                 // for closed enum types. Mirrors EmitFlatRow's handling.
                 (int)ConventionKind.EnumAsString
                     => $"global::System.Enum.Parse<{conv.FactoryFullName}>((string)__result{bang})",
                 _ => conv.FactoryIsCtor
-                    ? $"new {conv.FactoryFullName}({innerCast})"
-                    : $"{conv.FactoryFullName}({innerCast})",
+                    ? $"new {conv.FactoryFullName}({innerExpr})"
+                    : $"{conv.FactoryFullName}({innerExpr})",
             };
         }
         else
         {
-            // Primitive: cast directly to the (possibly-nullable) display type.
-            // For Task<int?> the col.TypeName carries the `?` so the return path
-            // expects `int?` — but after the DBNull guard above, `__result` is
-            // proven non-null, so we can cast to the underlying primitive. We
-            // strip a trailing `?` from the type name when present.
+            // Primitive: route through Convert.ToXxx with InvariantCulture for
+            // width-tolerant conversion. For Task<int?> the col.TypeName carries
+            // the `?` — we strip it before dispatching so the inverse-table
+            // lookup matches the underlying type.
             var castType = StripNullableSuffix(col.TypeName);
-            materialized = $"({castType})__result{bang}";
+            materialized = BuildScalarConvertExpression(castType, "__result" + bang);
         }
 
         sb.AppendLine($"            return {materialized};");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // Build the expression that converts a boxed `object` scalar (the result of
+    // ExecuteScalarAsync) to the target primitive type. ADO.NET providers are
+    // free to widen / narrow numeric scalars — Sqlite returns Int64 for any
+    // integer aggregate, MS-SQL returns Int32 most of the time but Int64 for
+    // BIGINT, SUM over decimal columns may surface as either decimal or double
+    // depending on the driver. System.Convert.ToXxx absorbs all those
+    // permutations through IConvertible without surprising the user; the
+    // existing EmitScalarInt path uses the same pattern. For types lacking a
+    // Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan, custom strings
+    // outside the table) we fall back to a direct cast — those are exact-typed
+    // by providers in practice.
+    //
+    // `subject` is the expression evaluating to the boxed value (already
+    // post-bang where appropriate). The returned expression is suitable to use
+    // as a `return` value or as a constructor argument.
+    private static string BuildScalarConvertExpression(string targetType, string subject)
+    {
+        return targetType switch
+        {
+            "int" => $"global::System.Convert.ToInt32({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "long" => $"global::System.Convert.ToInt64({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "short" => $"global::System.Convert.ToInt16({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "byte" => $"global::System.Convert.ToByte({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "bool" => $"global::System.Convert.ToBoolean({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "decimal" => $"global::System.Convert.ToDecimal({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "double" => $"global::System.Convert.ToDouble({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "float" => $"global::System.Convert.ToSingle({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "string" => $"global::System.Convert.ToString({subject}, global::System.Globalization.CultureInfo.InvariantCulture)!",
+            "global::System.DateTime" => $"global::System.Convert.ToDateTime({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            // No Convert.ToXxx exists for Guid / byte[] / DateTimeOffset /
+            // TimeSpan — fall back to a direct cast. Providers return these as
+            // exact CLR types in practice (Sqlite TimeSpan via Microsoft.Data.Sqlite,
+            // Npgsql DateTimeOffset, etc.).
+            _ => $"({targetType}){subject}",
+        };
     }
 
     // Map an IDataReader.GetXxx reader-method name back to the C# primitive type

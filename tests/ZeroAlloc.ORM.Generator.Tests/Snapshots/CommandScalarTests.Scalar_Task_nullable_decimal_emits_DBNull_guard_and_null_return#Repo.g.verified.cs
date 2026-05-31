@@ -18,7 +18,7 @@ partial class Repo
             __cmd.CommandText = "SELECT SUM(Total) FROM Orders";
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (__result is null || __result is global::System.DBNull) return null;
-            return (decimal)__result;
+            return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
         {

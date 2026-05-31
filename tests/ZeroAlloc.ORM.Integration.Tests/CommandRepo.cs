@@ -25,4 +25,20 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
 
     [Command("UPDATE Orders SET Total = Total + 1 WHERE Id = @id")]
     public partial Task TouchOrderAsync(int id, CancellationToken ct);
+
+    // v0.4 Phase B.2 — [Command(Kind = Scalar)] round-trip coverage. Four methods
+    // mirror the snapshot matrix: COUNT(*) -> int, SUM(Total) WHERE Customer ->
+    // decimal, MAX(Created) on empty -> DateTime?, SUM(Total) -> value-object.
+    [Command("SELECT COUNT(*) FROM Orders", Kind = CommandKind.Scalar)]
+    public partial Task<int> CountOrdersAsync(CancellationToken ct);
+
+    [Command("SELECT COALESCE(SUM(Total), 0) FROM Orders WHERE CustomerId = @cust", Kind = CommandKind.Scalar)]
+    public partial Task<decimal> SumTotalsForCustomerAsync(int cust, CancellationToken ct);
+
+    [Command("SELECT MAX(Created) FROM Orders", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime?> MaxCreatedAsync(CancellationToken ct);
+
+    [Command("SELECT COALESCE(SUM(Total), 0) FROM Orders WHERE CustomerId = @cust", Kind = CommandKind.Scalar)]
+    public partial Task<TotalAmount> SumTotalsValueObjectAsync(int cust, CancellationToken ct);
 }
+

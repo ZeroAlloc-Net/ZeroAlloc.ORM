@@ -21,7 +21,7 @@ partial class Repo
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-            return (decimal)__result!;
+            return global::System.Convert.ToDecimal(__result!, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
         {

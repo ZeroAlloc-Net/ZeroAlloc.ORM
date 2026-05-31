@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT MAX(Id) FROM Orders";
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-            return new global::TestApp.OrderId((int)__result!);
+            return new global::TestApp.OrderId(global::System.Convert.ToInt32(__result!, global::System.Globalization.CultureInfo.InvariantCulture));
         }
         finally
         {
