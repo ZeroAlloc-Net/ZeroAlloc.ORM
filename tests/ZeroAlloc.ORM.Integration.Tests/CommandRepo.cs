@@ -49,4 +49,36 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
     // actual scalar.
     [Command("SELECT Total FROM Orders WHERE Id = -999", Kind = CommandKind.Scalar)]
     public partial Task<decimal> GetTotalForMissingIdAsync(CancellationToken ct);
+
+    // v0.4 Phase C.2 — [Command(Kind = Identity)] round-trip coverage. Four
+    // methods cover the matrix:
+    //   * InsertWithReturningAsync          — INSERT ... RETURNING Id -> Task<int>.
+    //   * InsertWithReturningVOAsync        — same INSERT, returns Task<OrderId> (VO).
+    //   * InsertWithLastInsertRowidAsync    — INSERT ...; SELECT last_insert_rowid()
+    //                                         exercises the ;-joined Sqlite idiom.
+    //   * InsertWithNoReturningRowAsync     — INSERT ... RETURNING Id WHERE FALSE
+    //                                         (no row inserted, no row returned) —
+    //                                         validates the null-guard throws.
+    [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total) RETURNING Id", Kind = CommandKind.Identity)]
+    public partial Task<int> InsertWithReturningAsync(int cust, decimal total, CancellationToken ct);
+
+    [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total) RETURNING Id", Kind = CommandKind.Identity)]
+    public partial Task<OrderId> InsertWithReturningVOAsync(int cust, decimal total, CancellationToken ct);
+
+    // ;-joined statement form. Sqlite's last_insert_rowid() returns the most
+    // recently inserted rowid on the current connection, so the INSERT + SELECT
+    // pair returns the auto-generated key on the same execution. The generator
+    // emits the SQL as a single literal string into __cmd.CommandText; Sqlite
+    // executes the statements as a batch and ExecuteScalarAsync consumes the
+    // SELECT's first value.
+    [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total); SELECT last_insert_rowid()", Kind = CommandKind.Identity)]
+    public partial Task<int> InsertWithLastInsertRowidAsync(int cust, decimal total, CancellationToken ct);
+
+    // RETURNING + WHERE FALSE yields zero-rows-returned. ExecuteScalarAsync's
+    // result is null; the generator's null-guard must throw
+    // InvalidOperationException naming "Identity command returned no value".
+    // Validates the regression-safety contract that an empty RETURNING clause
+    // surfaces as a clear exception rather than a silent zero / default.
+    [Command("INSERT INTO Orders (CustomerId, Total) SELECT @cust, @total WHERE 1 = 0 RETURNING Id", Kind = CommandKind.Identity)]
+    public partial Task<int> InsertWithNoReturningRowAsync(int cust, decimal total, CancellationToken ct);
 }
