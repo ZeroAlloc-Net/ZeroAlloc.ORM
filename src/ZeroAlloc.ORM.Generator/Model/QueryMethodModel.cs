@@ -29,6 +29,12 @@ internal enum EmitShape
     // shape against ExecuteNonQueryAsync, returning the rows-affected count (or void
     // for Task / ValueTask). Scalar / Identity variants land in Phase B / Phase C.
     CommandNonQuery,
+    // v0.4 Phase B — [Command(Kind = Scalar)] methods. Emits the open/execute/close
+    // lifecycle around ExecuteScalarAsync. Result materialization follows the
+    // ConventionDiscovery path so primitives, value-objects, single-arg-ctor records,
+    // and enums all funnel through a single shape. Nullable variants (Task<T?>)
+    // emit a DBNull/null guard before the cast.
+    CommandScalar,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

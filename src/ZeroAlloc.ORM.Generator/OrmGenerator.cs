@@ -617,10 +617,90 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
+        // v0.4 Phase B — [Command(Kind = Scalar)] dispatch. Accepts any return type
+        // shape that reduces to ExecuteScalarAsync's single-value result:
+        //   * Task<TPrimitive>      — primitive cast directly from object?.
+        //   * Task<TPrimitive?>     — DBNull/null guard before the cast.
+        //   * Task<TValueObject>    — factory wrap (ValueObject / SingleArgCtor /
+        //                              StaticFactory) over the unwrapped primitive.
+        //   * Task<TEnum>           — cast to the enum from the underlying integral.
+        //   * Task<TEnum?>          — same with DBNull/null guard.
+        //
+        // Container shapes (List<T>, tuples, IAsyncEnumerable<T>) on a Scalar kind
+        // are unsupported and fall through to Unknown so the [Command] fallback
+        // emit fires a NotImplementedException at runtime. A future task may
+        // upgrade this to a ZAO002 / ZAO040 surface.
+        if (isCommandAttribute && commandKind == CommandKindModel.Scalar)
+        {
+            if (method.ReturnType is not INamedTypeSymbol scalarReturn) return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+            // Task<T> / ValueTask<T> with arity 1.
+            if (scalarReturn.Arity != 1
+                || (scalarReturn.Name != "Task" && scalarReturn.Name != "ValueTask")
+                || scalarReturn.TypeArguments.Length != 1)
+            {
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+            }
+
+            var scalarInner = scalarReturn.TypeArguments[0];
+
+            // Detect nullable wrapper — `T?` reference annotation or `Nullable<T>`.
+            var scalarIsNullable = scalarInner.NullableAnnotation == NullableAnnotation.Annotated
+                || (scalarInner is INamedTypeSymbol sn
+                    && sn.IsGenericType
+                    && sn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+            var scalarUnwrapped = UnwrapNullableValueType(scalarInner)
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+            // Type display preserves the user's nullable annotation so the null
+            // sentinel cast (`(decimal?)null`) types correctly.
+            var scalarDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+                .WithMiscellaneousOptions(
+                    SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                    | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+            var scalarTypeDisplay = scalarInner.ToDisplayString(scalarDisplayFormat);
+
+            // ConventionDiscovery handles the four supported families uniformly.
+            var scalarResolution = ConventionDiscovery.Resolve(scalarUnwrapped, conventionContext);
+            string? scalarReader = scalarResolution.Kind switch
+            {
+                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(scalarUnwrapped),
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(scalarResolution),
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(scalarUnwrapped),
+                ConventionKind.EnumAsString => "GetString",
+                _ => null,
+            };
+            if (scalarReader is null)
+            {
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+            }
+
+            var scalarConvention = BuildConventionInfo(scalarUnwrapped, scalarResolution, scalarReader);
+
+            // The MaterializationModel carries one ColumnBinding describing the
+            // scalar's type + factory wiring; EmitCommandScalar reads it to build
+            // the cast / factory expression. TargetTypeFullName carries the
+            // unwrapped (non-nullable) type's fully-qualified name — the emit
+            // appends the nullable annotation independently when needed.
+            var scalarBinding = new ColumnBinding(
+                GetterMethod: scalarReader,
+                IsNullable: scalarIsNullable,
+                TypeName: scalarTypeDisplay,
+                Convention: scalarConvention);
+            var scalarMaterialization = new MaterializationModel(
+                Kind: MaterializationKind.ScalarPrimitive,
+                TargetTypeFullName: scalarUnwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(scalarBinding)));
+
+            return (EmitShape.CommandScalar, null, scalarMaterialization, null, HasReturnValue: true);
+        }
+
         if (isCommandAttribute)
         {
-            // Scalar / Identity Kinds fall through to Unknown in Phase A — Phase B / C
-            // wire the matching emit shapes.
+            // Identity Kind falls through to Unknown — Phase C wires the matching emit
+            // shape. The Phase A fallback in EmitRepository surfaces this via a
+            // NotImplementedException naming the kind so adopters know which milestone
+            // covers their shape.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
@@ -1482,6 +1562,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // without a return.
                     EmitCommandNonQuery(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.CommandScalar:
+                    // v0.4 Phase B.1 — [Command(Kind = Scalar)] emit. Open/execute/
+                    // close lifecycle around ExecuteScalarAsync. Result materialization
+                    // is uniform across primitives, value-objects, single-arg-ctor
+                    // records, and enums via the ConventionDiscovery integration
+                    // captured on m.Materialization.
+                    EmitCommandScalar(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
                     //   BatchAlways           -> IAsyncDbBatch path (B.2)
@@ -1508,18 +1596,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (m.IsCommand)
                     {
                         // v0.4 Phase A.1 — [Command] detected, scanner wired through to the
-                        // emit pipeline. Real shape emit lands in Phase A.2 (NonQuery), B
-                        // (Scalar), C (Identity). Emit a throwing stub so the consuming code
-                        // compiles but flags missing implementation at runtime. The stub's
-                        // generated source carries a comment pointing at the future-milestone
-                        // phase so adopters reading the .g.cs know which release ships their
-                        // shape.
+                        // emit pipeline. NonQuery (Phase A.2) and Scalar (Phase B.1) are
+                        // shipped; Identity (Phase C) is still pending. Emit a throwing
+                        // stub so the consuming code compiles but flags missing
+                        // implementation at runtime. The stub's generated source carries
+                        // a comment pointing at the future-milestone phase so adopters
+                        // reading the .g.cs know which release ships their shape.
                         var paramList = BuildParameterList(m.MethodParameters);
                         sb.AppendLine($"    {GeneratedCodeAttribute}");
                         sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
-                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase B (Scalar) / Phase C (Identity) for emit;");
+                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase C (Identity) for emit;");
                         sb.AppendLine($"        //            current stub fires NotImplementedException at first call.");
-                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase B / C.\");");
+                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase C.\");");
                     }
                     else
                     {
@@ -1620,6 +1708,141 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // v0.4 Phase B.1 — [Command(Kind = Scalar)] emit. Open/execute/close lifecycle
+    // around ExecuteScalarAsync. Materialization for the returned `object?` follows
+    // the ConventionDiscovery model captured on m.Materialization:
+    //
+    //   * Primitive             — direct cast `(T)__result!`.
+    //   * Nullable primitive    — `if (__result is null or DBNull) return null;`
+    //                              followed by the typed cast.
+    //   * ValueObject / SingleArgCtor / StaticFactory
+    //                           — wrap the unwrapped primitive cast in the factory
+    //                              call (`new OrderId((int)__result!)` etc.).
+    //   * Enum / EnumAsString   — cast to the enum's CLR type / Enum.Parse<T>(...).
+    //
+    // The single-column ColumnBinding carried on the MaterializationModel encodes
+    // the underlying-primitive reader / factory wiring so this emit reuses the
+    // exact same convention plumbing the row-shape emitters use; the only
+    // difference is the inbound expression — `(TUnderlying)__result!` instead of
+    // `__reader.GetXxx(N)`.
+    private static void EmitCommandScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null || mat.Columns.Length != 1)
+        {
+            // Defensive — classification should never assign CommandScalar without
+            // a single-column model. Emit a comment so the missing wiring is
+            // visible in the generated source; the surrounding partial still needs
+            // a body though, so we route through the stub form.
+            sb.AppendLine($"    // TODO: CommandScalar without single-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var col = mat.Columns[0];
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBindingWithIndent(sb, m, "            ");
+        sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
+
+        // Nullable path emits a DBNull/null guard before the typed cast; non-
+        // nullable path uses the `!` null-forgiving operator on `__result` so the
+        // C# compiler doesn't complain about dereferencing object?. Empty result
+        // sets / NULL columns will still throw at the cast — that's the contract
+        // for non-nullable scalar commands. Use Task<T?> when null is legal.
+        if (col.IsNullable)
+        {
+            sb.AppendLine("            if (__result is null || __result is global::System.DBNull) return null;");
+        }
+
+        // Build the materialization expression. Underlying-primitive cast comes
+        // from PrimitiveCatalog (col.TypeName for primitives; conv.UnderlyingReader
+        // determines the cast target for factories — derived via the reader method's
+        // companion table on PrimitiveCatalog).
+        var bang = col.IsNullable ? "" : "!";
+        string materialized;
+        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            // For factory shapes the cast targets the underlying primitive; the
+            // factory wraps that into the target type. UnderlyingReader names the
+            // GetXxx method (e.g. "GetInt32") — translate to the C# type name via
+            // a small table mirroring PrimitiveCatalog's reverse mapping.
+            var underlyingCast = UnderlyingCastTypeFromReader(conv.UnderlyingReader);
+            var innerCast = $"({underlyingCast})__result{bang}";
+            materialized = conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){innerCast}",
+                // AOT note: Enum.Parse<T> is [RequiresUnreferencedCode] but safe
+                // for closed enum types. Mirrors EmitFlatRow's handling.
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>((string)__result{bang})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({innerCast})"
+                    : $"{conv.FactoryFullName}({innerCast})",
+            };
+        }
+        else
+        {
+            // Primitive: cast directly to the (possibly-nullable) display type.
+            // For Task<int?> the col.TypeName carries the `?` so the return path
+            // expects `int?` — but after the DBNull guard above, `__result` is
+            // proven non-null, so we can cast to the underlying primitive. We
+            // strip a trailing `?` from the type name when present.
+            var castType = StripNullableSuffix(col.TypeName);
+            materialized = $"({castType})__result{bang}";
+        }
+
+        sb.AppendLine($"            return {materialized};");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // Map an IDataReader.GetXxx reader-method name back to the C# primitive type
+    // used for the scalar cast. Mirrors the inverse of PrimitiveCatalog's table —
+    // ConventionDiscovery factories carry the underlying primitive's reader, so
+    // we translate that reader back to the CLR type name for the `(T)__result`
+    // cast. Defaults to "object" if the reader is unrecognized; should never
+    // happen because BuildConventionInfo only populates UnderlyingReader from
+    // PrimitiveCatalog-recognized types.
+    private static string UnderlyingCastTypeFromReader(string? readerMethod) => readerMethod switch
+    {
+        "GetInt32" => "int",
+        "GetInt64" => "long",
+        "GetInt16" => "short",
+        "GetByte" => "byte",
+        "GetBoolean" => "bool",
+        "GetDecimal" => "decimal",
+        "GetDouble" => "double",
+        "GetFloat" => "float",
+        "GetString" => "string",
+        "GetDateTime" => "global::System.DateTime",
+        "GetGuid" => "global::System.Guid",
+        "GetFieldValue<global::System.DateTimeOffset>" => "global::System.DateTimeOffset",
+        "GetFieldValue<global::System.TimeSpan>" => "global::System.TimeSpan",
+        "GetFieldValue<byte[]>" => "byte[]",
+        _ => "object",
+    };
+
+    // Strip a trailing `?` from a (possibly fully-qualified) nullable type display.
+    // Used by EmitCommandScalar to turn `decimal?` into `decimal` for the cast
+    // target after the DBNull guard has proven `__result` non-null.
+    private static string StripNullableSuffix(string typeName)
+    {
+        if (typeName.Length > 0 && typeName[typeName.Length - 1] == '?')
+        {
+            return typeName.Substring(0, typeName.Length - 1);
+        }
+        return typeName;
     }
 
     // Single-row scalar with null tolerance — distinguishes three cases:
