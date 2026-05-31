@@ -20,6 +20,11 @@ internal enum EmitShape
     // from successive reader result sets. Element kinds (Scalar / Row / List) are
     // carried via MultiResultMaterializationModel.
     MultiResultSet,
+    // v0.3 Phase C — IAsyncEnumerable<T> return type emitted as a yield-based
+    // async iterator. Element materialization uses the same FlatRow / DomainEntity
+    // models as the single-row paths; the surrounding emit replaces "ReadAsync once
+    // then return" with "while ReadAsync yield return".
+    Streaming,
 }
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,

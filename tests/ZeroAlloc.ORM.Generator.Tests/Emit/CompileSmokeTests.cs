@@ -581,6 +581,41 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Streaming_emit_compiles_cleanly()
+    {
+        // v0.3 Phase C.2 — IAsyncEnumerable<T> yield-based iterator must compile.
+        // The bug-class filter catches partial-signature mismatches (CS8795/CS0759)
+        // — those would fire if [EnumeratorCancellation] gets stamped on a parameter
+        // the user's declaration doesn't carry the attribute on, or if the iterator
+        // state machine sees a non-async signature.
+        var source =
+            "using System.Collections.Generic;\n" +
+            "using System.Data.Async;\n" +
+            "using System.Runtime.CompilerServices;\n" +
+            "using System.Threading;\n" +
+            "using ZeroAlloc.ORM;\n" +
+            "\n" +
+            "namespace TestApp;\n" +
+            "\n" +
+            "public sealed record OrderRow(int Id, int CustomerId, decimal Total);\n" +
+            "\n" +
+            "public sealed partial class Repo(IAsyncDbConnection connection)\n" +
+            "{\n" +
+            "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE CustomerId = @customerId ORDER BY Id\")]\n" +
+            "    public partial IAsyncEnumerable<OrderRow> StreamByCustomerAsync(int customerId, [EnumeratorCancellation] CancellationToken ct);\n" +
+            "}\n";
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            // CS8419 (iterator cannot have ref-like locals) and CS4032 (cannot await in
+            // an iterator's finally) are streaming-specific bug classes — if the emit
+            // regresses we want them to surface as failures, not pass quietly.
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS8419" or "CS4032")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a
