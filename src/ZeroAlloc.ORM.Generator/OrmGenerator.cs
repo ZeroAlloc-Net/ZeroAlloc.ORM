@@ -2253,20 +2253,388 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //      BuildScalarConvertExpression.
     //   6. Connection epilogue.
     //
-    // v0.4 Phase E — [StoredProcedure] tuple-return with output parameters.
-    // Stub emit landed in E.1: produces a throwing partial body so the
-    // generated source compiles cleanly (the partial declaration needs an
-    // implementation half) but a runtime invocation fails loudly until E.2/E.3
-    // ship the real emit. The detection sentinel (`// EmitShape.SprocWithOutputParams`)
-    // is rendered by the EmitRepository switch above this method; downstream
-    // tests assert on that marker. E.2 replaces this stub with the
-    // reader-drain + parameter-readback emit; E.3 adds the output-only branch.
+    // v0.4 Phase E.2/E.3 — [StoredProcedure] tuple-return with output parameters.
+    // Two sub-shapes resolved at emit time off
+    // SprocOutputParamsMaterializationModel.ResultElements:
+    //
+    //   * Result + output (E.2): ResultElements.Length >= 1. Body opens the
+    //     reader, materializes each result-position element by walking through
+    //     ReadAsync / NextResultAsync (shared EmitMultiResultElement logic),
+    //     drains the remaining rows + result sets INSIDE the `await using`
+    //     scope, then disposes the reader. Parameter.Value is read back only
+    //     after the reader closes — most providers (SqlClient, Npgsql,
+    //     Microsoft.Data.Sqlite) only populate output parameters after the
+    //     reader is fully consumed and disposed.
+    //
+    //   * Output-only (E.3): ResultElements.Length == 0. Body calls
+    //     ExecuteNonQueryAsync; no reader is opened. Parameter.Value reads
+    //     happen immediately after the await.
+    //
+    // Both sub-shapes use:
+    //   * BuildConnectionPrologue/Epilogue for the EF-style ref-counted lifecycle.
+    //   * BuildCommandTextAssignment for the CommandText + CommandType = StoredProcedure block.
+    //   * EmitSprocOutputParamsBinding for the parameter binding, which sets
+    //     Direction = Output on the matching positions and captures every `__p_*`
+    //     local in scope so the readback can reference them.
+    //   * BuildSprocOutputReadbackExpression for the `.Value` -> typed value
+    //     conversion (mirrors BuildScalarConvertExpression's Convert.ToXxx funnel
+    //     and wraps the result in a VO factory call when the tuple element type
+    //     is a value-object / single-arg-ctor / enum).
+    //
+    // The detection sentinel (`// EmitShape.SprocWithOutputParams`) is rendered
+    // by EmitRepository's switch case so detection tests can assert reach without
+    // depending on the full body.
     private static void EmitSprocWithOutputParams(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
+        var mat = m.SprocOutputParamsMaterialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign SprocWithOutputParams
+            // without a model. Emit the partial method body as a throw so the
+            // missing wiring is visible at first invocation rather than at compile.
+            var paramListFallback = BuildParameterList(m.MethodParameters);
+            sb.AppendLine($"    {GeneratedCodeAttribute}");
+            sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
+            sb.AppendLine($"        => throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant: SprocWithOutputParams missing SprocOutputParamsMaterialization for '{m.MethodName}'.\");");
+            return;
+        }
+
         var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        // Build a case-insensitive set of parameter names that map to OUTPUT
+        // tuple positions so the binding emit can flip Direction = Output on
+        // exactly those positions. Lookup is case-insensitive to mirror the
+        // tuple-field <-> parameter pairing rule that drove classification.
+        var outputParamNames = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        foreach (var op in mat.OutputElements.Values)
+            outputParamNames.Add(op.MatchingParameterName);
+
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
-        sb.AppendLine("        => throw new global::System.NotImplementedException(\"SprocWithOutputParams emit lands in v0.4 Phase E.2/E.3\");");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitSprocOutputParamsBinding(sb, m, outputParamNames, "            ");
+
+        var hasResultSets = mat.ResultElements.Length > 0;
+        if (hasResultSets)
+        {
+            // Pre-declare each result-position local OUTSIDE the using scope so
+            // the final `return (...)` (which lives outside the using block) can
+            // reference them. The using block assigns these locals via a
+            // bare-assignment variant of EmitMultiResultElement; the
+            // `EmitSprocResultElements` helper drives both halves.
+            EmitSprocResultElementDeclarations(sb, mat.ResultElements, indent: "            ");
+
+            // E.2 — scoped reader so dispose happens before parameter readback.
+            // The drain loops (while-ReadAsync and while-NextResultAsync) live
+            // INSIDE the `await using` block — they force the provider to
+            // consume the entire response so the parameter collection is
+            // populated by the time the reader's DisposeAsync runs.
+            sb.AppendLine($"            await using (var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false))");
+            sb.AppendLine("            {");
+            // Assign the pre-declared __elem<i> locals. returnsNullable is
+            // hard-wired to false — the SprocWithOutputParams shape requires
+            // a non-nullable tuple return today; a nullable variant can be
+            // added later if adopter demand emerges.
+            EmitSprocResultElements(sb, mat.ResultElements, ct, indent: "                ");
+
+            // Drain remaining rows + result sets so output parameters get
+            // populated by every major provider. The inner `while ReadAsync`
+            // consumes the trailing rows of the last expected set; the outer
+            // `while NextResultAsync` then consumes any unexpected extra sets
+            // the procedure produced (defensive — providers tolerate either
+            // shape but only populate output params once the reader is
+            // logically at end-of-stream).
+            sb.AppendLine($"                while (await __reader.ReadAsync({ct}).ConfigureAwait(false)) {{ }}");
+            sb.AppendLine($"                while (await __reader.NextResultAsync({ct}).ConfigureAwait(false))");
+            sb.AppendLine("                {");
+            sb.AppendLine($"                    while (await __reader.ReadAsync({ct}).ConfigureAwait(false)) {{ }}");
+            sb.AppendLine("                }");
+            sb.AppendLine("            }");
+        }
+        else
+        {
+            // E.3 — output-only sproc; no result set. ExecuteNonQueryAsync
+            // returns the rows-affected count which we discard; the only
+            // values of interest live on the parameter collection.
+            sb.AppendLine($"            await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+
+        // Parameter readback — one local per OUTPUT element, populated from
+        // the captured `__p_<param>.Value`. Convention-aware: primitives funnel
+        // through BuildScalarConvertExpression, VO / single-arg-ctor wrap in
+        // the factory call, enums apply the int / string cast.
+        var outputs = mat.OutputElements;
+        for (var i = 0; i < outputs.Length; i++)
+        {
+            var op = outputs[i];
+            var local = "__out_" + op.TupleFieldName;
+            var paramLocal = "__p_" + op.MatchingParameterName;
+            var expr = BuildSprocOutputReadbackExpression(op, paramLocal);
+            sb.AppendLine($"            var {local} = {expr};");
+        }
+
+        // Final tuple construction — walk TupleElementOrder so the return
+        // expression matches the user's tuple declaration verbatim regardless
+        // of whether output positions came before or after result positions.
+        sb.Append("            return (");
+        var order = mat.TupleElementOrder;
+        for (var i = 0; i < order.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            var slot = order[i];
+            if (slot.Kind == SprocTupleSlotKind.Output)
+            {
+                var op = outputs[slot.IndexWithinKind];
+                sb.Append("__out_").Append(op.TupleFieldName);
+            }
+            else
+            {
+                sb.Append("__elem").Append(slot.IndexWithinKind.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+        sb.AppendLine(");");
+
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // Parameter-binding emit for the SprocWithOutputParams shape. Identical to
+    // EmitParameterBindingWithIndent except for one extra line per OUTPUT
+    // parameter: `{local}.Direction = global::System.Data.ParameterDirection.Output;`
+    // For output parameters we also SKIP the .Value assignment — the procedure
+    // populates the value after execution and assigning a CLR value upfront is
+    // either ignored or treated as the initial state by the provider; cleaner
+    // to leave it unset so reading back is unambiguous.
+    private static void EmitSprocOutputParamsBinding(
+        StringBuilder sb,
+        QueryMethodModel m,
+        System.Collections.Generic.HashSet<string> outputParamNames,
+        string indent)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (p.IsCancellationToken) continue;
+            var local = "__p_" + p.Name;
+            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"{indent}var {local} = __cmd.CreateParameter();");
+            sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+
+            var isOutput = outputParamNames.Contains(p.Name);
+            if (isOutput)
+            {
+                // Output position: set Direction and skip the .Value write.
+                // The procedure populates the value; reading it back happens
+                // after the reader closes / the command completes.
+                sb.AppendLine($"{indent}{local}.Direction = global::System.Data.ParameterDirection.Output;");
+            }
+            else
+            {
+                // Input position: identical to EmitParameterBindingWithIndent
+                // semantics — Convention-aware value expression, DBNull guard
+                // on nullable parameters.
+                var valueExpr = "@" + p.Name;
+                if (p.Convention is { } conv)
+                {
+                    if (conv.Kind == (int)ConventionKind.Enum)
+                    {
+                        var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+                        valueExpr = $"({castType})@{p.Name}";
+                    }
+                    else if (conv.Kind == (int)ConventionKind.EnumAsString)
+                    {
+                        valueExpr = $"@{p.Name}.ToString()";
+                    }
+                    else if (conv.ValuePropertyName is { } propName)
+                    {
+                        valueExpr = $"@{p.Name}.{propName}";
+                    }
+                }
+                if (p.IsNullable)
+                {
+                    sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+                }
+            }
+            sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
+        }
+    }
+
+    // Pre-declare each result-position tuple local OUTSIDE the using block so
+    // the final return tuple (which lives after the using's closing brace) can
+    // reference them. Declared with `default!` so the locals are unambiguously
+    // typed; the using-block body assigns them via plain assignment (no `var`).
+    //
+    // Type rendering per element kind:
+    //   * Row    — `el.ElementTypeName` (reference type; default null suppressed via `!`).
+    //   * List   — `global::System.Collections.Generic.List<el.ElementTypeName>`
+    //              (reference type; same `default!` strategy).
+    //   * Scalar — `el.ElementTypeName` plus `?` when IsNullable. Value-type
+    //              scalars (`int`) get `default` (zero); reference scalars
+    //              (`string`) get `default!`.
+    private static void EmitSprocResultElementDeclarations(
+        StringBuilder sb,
+        EquatableArray<MultiResultElement> elements,
+        string indent)
+    {
+        for (var i = 0; i < elements.Length; i++)
+        {
+            var el = elements[i];
+            var local = "__elem" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string typeDisplay;
+            switch (el.Kind)
+            {
+                case MultiResultElementKind.Row:
+                    typeDisplay = el.ElementTypeName;
+                    break;
+                case MultiResultElementKind.List:
+                    typeDisplay = $"global::System.Collections.Generic.List<{el.ElementTypeName}>";
+                    break;
+                case MultiResultElementKind.Scalar:
+                    typeDisplay = el.IsNullable ? el.ElementTypeName + "?" : el.ElementTypeName;
+                    break;
+                default:
+                    typeDisplay = el.ElementTypeName;
+                    break;
+            }
+            // `default!` produces a default-initialized local of the declared
+            // type while suppressing the nullable-reference warning for
+            // reference types and yielding a clean compile for value types.
+            sb.AppendLine($"{indent}{typeDisplay} {local} = default!;");
+        }
+    }
+
+    // Materialize each result-position tuple element from the open reader.
+    // Mirrors EmitMultiResultElements but (a) writes `__elem<i>` locals via
+    // assignment (the declarations were emitted upstream by
+    // EmitSprocResultElementDeclarations so the final tuple — assembled
+    // OUTSIDE the using scope — can reference them) and (b) hard-wires
+    // returnsNullable to false. A SprocWithOutputParams shape with a nullable
+    // outer tuple is not currently supported — an empty-first-result-set
+    // would have to mean both "skip the result row" AND "skip the output
+    // params", which is a semantically muddled contract. Adopter demand can
+    // revisit.
+    private static void EmitSprocResultElements(
+        StringBuilder sb,
+        EquatableArray<MultiResultElement> elements,
+        string ct,
+        string indent)
+    {
+        for (var i = 0; i < elements.Length; i++)
+        {
+            var el = elements[i];
+            if (i > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"{indent}if (!await __reader.NextResultAsync({ct}).ConfigureAwait(false))");
+                sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected {elements.Length} result sets; got \" + {i.ToString(System.Globalization.CultureInfo.InvariantCulture)} + \".\");");
+            }
+            EmitSprocResultElementAssignment(sb, el, i, ct, indent);
+        }
+    }
+
+    // Per-element assignment emit (no `var` declaration). Mirrors
+    // EmitMultiResultElement byte-for-byte for the reader loop semantics, but
+    // assigns to the pre-declared `__elem<i>` local instead of declaring it.
+    // The List branch instantiates a fresh List<T> in the assignment and
+    // populates via the same while-ReadAsync loop.
+    private static void EmitSprocResultElementAssignment(
+        StringBuilder sb,
+        MultiResultElement el,
+        int index,
+        string ct,
+        string indent)
+    {
+        var localName = "__elem" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        switch (el.Kind)
+        {
+            case MultiResultElementKind.Row:
+                {
+                    sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
+                    sb.AppendLine($"{indent}{localName} = new {el.ElementTypeName}(");
+                    EmitColumnReads(sb, el.Columns, indent + "    ", trailing: ");");
+                    break;
+                }
+            case MultiResultElementKind.List:
+                {
+                    sb.AppendLine($"{indent}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
+                    sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    sb.AppendLine($"{indent}{{");
+                    sb.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
+                    EmitColumnReads(sb, el.Columns, indent + "        ", trailing: "));");
+                    sb.AppendLine($"{indent}}}");
+                    break;
+                }
+            case MultiResultElementKind.Scalar:
+                {
+                    sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
+                    var readExpr = $"__reader.{el.GetterMethod}(0)";
+                    if (el.Convention is { } conv && conv.FactoryFullName is not null)
+                    {
+                        readExpr = conv.Kind switch
+                        {
+                            (int)ConventionKind.Enum
+                                => $"({conv.FactoryFullName}){readExpr}",
+                            (int)ConventionKind.EnumAsString
+                                => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                            _ => conv.FactoryIsCtor
+                                ? $"new {conv.FactoryFullName}({readExpr})"
+                                : $"{conv.FactoryFullName}({readExpr})",
+                        };
+                    }
+                    if (el.IsNullable)
+                    {
+                        sb.AppendLine($"{indent}{localName} = __reader.IsDBNull(0) ? ({el.ElementTypeName}?)null : {readExpr};");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{indent}{localName} = {readExpr};");
+                    }
+                    break;
+                }
+        }
+    }
+
+    // Build the expression that converts a DbParameter's boxed `.Value` into
+    // the tuple-element CLR type. Mirrors BuildScalarConvertExpression's funnel
+    // (Convert.ToXxx with InvariantCulture for the wide-numeric tolerance) and
+    // wraps the result in a VO factory call when the element type carries a
+    // Convention. Bang (`!`) post-fixes the .Value access because parameters
+    // declared as Direction = Output may surface DBNull / null at runtime; for
+    // non-nullable output positions we accept the cast-throw on null and let
+    // the adopter route through a nullable element if their procedure can omit
+    // the value. Symmetric with the scalar-materialization path's null handling.
+    private static string BuildSprocOutputReadbackExpression(SprocOutputParam op, string paramLocal)
+    {
+        var subject = paramLocal + ".Value!";
+        if (op.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            // Convention wrap. Enum / EnumAsString carry their own funnel
+            // (cast / Enum.Parse); VO / SingleArgCtor / StaticFactory wrap a
+            // Convert.ToXxx-funnelled inner expression on the underlying primitive.
+            var underlyingType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            var innerExpr = BuildScalarConvertExpression(underlyingType, subject);
+            return conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){innerExpr}",
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({BuildScalarConvertExpression("string", subject)})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({innerExpr})"
+                    : $"{conv.FactoryFullName}({innerExpr})",
+            };
+        }
+        // Bare primitive — Convert.ToXxx funnel for width tolerance.
+        return BuildScalarConvertExpression(op.TypeName, subject);
     }
 
     // `shapeLabelForError` appears only in the defensive comment when the

@@ -914,4 +914,73 @@ public class CompileSmokeTests
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    [Fact]
+    public void StoredProcedure_output_params_with_result_row_emit_compiles_cleanly()
+    {
+        // v0.4 Phase E.2 — [StoredProcedure] returning a tuple where one tuple
+        // field matches a C# parameter (Direction=Output) AND another tuple field
+        // is a result row. The emit binds the output param, drains the reader so
+        // the parameter value is populated, then reads the value back into the
+        // returned tuple. Smoke test catches partial-signature mismatches and
+        // unbound locals in the new EmitSprocWithOutputParams body.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(OrderRow Result, int NewOrderId)> InsertAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void StoredProcedure_output_params_value_object_output_emit_compiles_cleanly()
+    {
+        // Value-object output: the int readback from the parameter is wrapped in
+        // the VO's positional ctor before being assigned to the tuple position.
+        // Smoke test verifies the ConventionDiscovery funnel on output positions
+        // doesn't emit invalid C# (e.g. mismatched cast targets or undeclared
+        // factory references).
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+            public sealed record OrderId(int Value);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(OrderRow Result, OrderId NewOrderId)> InsertAsync(
+                    int customerId, OrderId newOrderId, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
 }
