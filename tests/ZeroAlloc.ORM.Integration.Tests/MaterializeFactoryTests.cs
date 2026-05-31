@@ -68,28 +68,42 @@ public class MaterializeFactoryTests
     [Fact]
     public async Task Factory_handles_invariant_decimal_format()
     {
-        // The point of the factory: avoid the culture dependency that
-        // `GetDecimal` would have. The DB stores '1.50' (en-US-style) and
-        // the factory parses with InvariantCulture so the test passes
-        // regardless of the host's CurrentCulture.
-        var fx = new SqliteFixture();
-        await using (fx.ConfigureAwait(false))
+        // Post-review Fix 11 — actively swap the host culture to de-DE (which
+        // uses ',' as the decimal separator). The factory uses
+        // CultureInfo.InvariantCulture so '1.50' parses as 1.5 regardless of
+        // the host culture; a non-factory path (GetDecimal under de-DE) would
+        // throw or misparse, proving the factory contract is what's pinning
+        // the round-trip.
+        var previousCulture = Thread.CurrentThread.CurrentCulture;
+        var previousUiCulture = Thread.CurrentThread.CurrentUICulture;
+        Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
+        Thread.CurrentThread.CurrentUICulture = new CultureInfo("de-DE");
+        try
         {
-            await fx.InitializeAsync().ConfigureAwait(false);
-            await fx.ExecuteDdlAsync(@"
-                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount TEXT NOT NULL, Currency TEXT NOT NULL);
-                INSERT INTO Orders (Id, Amount, Currency) VALUES (7, '1.50', 'GBP');").ConfigureAwait(false);
+            var fx = new SqliteFixture();
+            await using (fx.ConfigureAwait(false))
+            {
+                await fx.InitializeAsync().ConfigureAwait(false);
+                await fx.ExecuteDdlAsync(@"
+                    CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount TEXT NOT NULL, Currency TEXT NOT NULL);
+                    INSERT INTO Orders (Id, Amount, Currency) VALUES (7, '1.50', 'GBP');").ConfigureAwait(false);
 
-            var repo = new CompositeRepo(fx.Connection);
-            var money = await repo.GetTotalViaFactoryAsync(7, CancellationToken.None).ConfigureAwait(false);
+                var repo = new CompositeRepo(fx.Connection);
+                var money = await repo.GetTotalViaFactoryAsync(7, CancellationToken.None).ConfigureAwait(false);
 
-            money.Amount.Should().Be(1.50m);
-            money.Currency.Should().Be("GBP");
-            // Sanity: the factory really did parse via InvariantCulture
-            // (the test culture default for xunit on Windows is en-US which
-            // happens to match; the explicit check pins the contract).
-            var parsed = decimal.Parse("1.50", NumberStyles.Number, CultureInfo.InvariantCulture);
-            money.Amount.Should().Be(parsed);
+                money.Amount.Should().Be(1.50m);
+                money.Currency.Should().Be("GBP");
+                // Sanity: the factory really did parse via InvariantCulture
+                // (host CurrentCulture is de-DE here, where ',' is the decimal
+                // separator; '1.50' would parse as 150 under de-DE).
+                var parsed = decimal.Parse("1.50", NumberStyles.Number, CultureInfo.InvariantCulture);
+                money.Amount.Should().Be(parsed);
+            }
+        }
+        finally
+        {
+            Thread.CurrentThread.CurrentCulture = previousCulture;
+            Thread.CurrentThread.CurrentUICulture = previousUiCulture;
         }
     }
 }

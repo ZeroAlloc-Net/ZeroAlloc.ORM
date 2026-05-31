@@ -101,14 +101,40 @@ internal static class DiagnosticDescriptors
         "Type '{0}' carries [StoreAsString] but is not an enum. Apply [StoreAsString] to enum types only.",
         DiagnosticSeverity.Error);
 
+    // v0.5 Phase D post-review Fix 4 — message format now carries a 4th arg
+    // (`{3}`) that names the failure reason ("method not found", "method is not
+    // static", "method is not public", "factory parameter type '<TypeName>'
+    // could not be resolved by ConventionDiscovery", "[Materialize(Strategy =
+    // Custom)] requires a Factory argument", etc.). Threading the reason into
+    // the message keeps the descriptor count low and gives adopters an
+    // actionable hint without needing a second diagnostic.
     public static readonly DiagnosticDescriptor ZAO043_MaterializeFactoryMissing = Make(
         "ZAO043", "[Materialize(Factory)] references missing method",
-        "Method '{0}' references factory '{1}' via [Materialize(Factory=...)] but the method is not found on type '{2}' or is not static/public. [Materialize] support lands in v0.5.",
+        "Method '{0}': [Materialize(Factory = \"{1}\")] cannot resolve factory on type '{2}'. Reason: {3}.",
         DiagnosticSeverity.Error);
 
+    // v0.5 Phase D post-review Fix 3 — descriptor message is now attribute-name-
+    // agnostic so the same rule covers the original v0.2 ambiguity surface AND
+    // the Phase D "two static factory overloads with the same name" case.
+    // MessageArgs: {0} = type display, {1} = the ambiguous symbol name (factory
+    // method name, or convention shorthand) and a human-readable reason.
     public static readonly DiagnosticDescriptor ZAO044_AmbiguousDiscovery = Make(
         "ZAO044", "Ambiguous convention discovery",
-        "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
+        "Type '{0}' has ambiguous discovery for symbol '{1}'. {2}",
+        DiagnosticSeverity.Error);
+
+    // v0.5 Phase D post-review Fix 2 — fires when a [Materialize(Factory = "X")]
+    // factory's parameter NAME does not match any candidate column name (case-
+    // insensitive) at the position the factory dispatch is being built. Today
+    // the candidate column names come from the underlying composite type's
+    // MultiArgCtor parameter names (PascalCased) — the documented contract is
+    // "rename the factory parameter, use SQL 'AS' alias, or align the SELECT
+    // column order". For the FlatRow positional path / composite-at-scalar path
+    // where no candidate names are statically available, ZAO051 does NOT fire
+    // and positional matching is used as the documented fallback.
+    public static readonly DiagnosticDescriptor ZAO051_FactoryParameterColumnMismatch = Make(
+        "ZAO051", "Factory parameter does not match any SELECT column",
+        "Method '{0}': [Materialize(Factory = \"{1}\")] factory parameter '{2}' does not match any column name in the SELECT clause (case-insensitive). Rename the factory parameter, use SQL 'AS' alias, or align the SELECT order. Available columns: {3}.",
         DiagnosticSeverity.Error);
 
     // v0.5 Phase C — fires for every method position that uses a nullable

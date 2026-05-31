@@ -691,8 +691,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // dispatch surfaces them via the [Command]-aware fallback in EmitRepository.
         // ZAO022/ZAO040 are scoped to [Query] return-shape gaps; firing them for
         // [Command] would mislead the adopter.
+        // Post-review Fix 4 — when the classifier already fired a factory-
+        // specific diagnostic (ZAO043 / ZAO044 / ZAO051) and bailed to Unknown,
+        // ZAO022 / ZAO040 would be a misleading double-report on the same
+        // defect. Suppress both in that case.
+        var hadFactoryDiagnostic = false;
+        for (var di = 0; di < diagnostics.Count; di++)
+        {
+            var id = diagnostics[di].DescriptorId;
+            if (id == "ZAO043" || id == "ZAO044" || id == "ZAO051")
+            {
+                hadFactoryDiagnostic = true;
+                break;
+            }
+        }
+
         if (shape == EmitShape.Unknown
             && !isCommandAttribute
+            && !hadFactoryDiagnostic
             && IsSupportedReturnType(method.ReturnType)
             && !IsIAsyncEnumerable(method.ReturnType))
         {
@@ -1156,46 +1172,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         // v0.5 Phase D — `[Materialize(Factory = "X")]` resolution. Per design
         // Section 3, line 260 (discovery-order rule #1), an explicit factory
-        // annotation ALWAYS wins over convention discovery. The check sits BEFORE
-        // the composite / FlatRow / DomainEntity branches so a factory-annotated
-        // type at scalar position routes through the factory-dispatch shape no
-        // matter what convention discovery would have picked.
-        //
-        // Detection peels `Nullable<T>` (value type) and the reference-nullable
-        // annotation so `Task<Money?>` reaches the factory branch identically to
-        // `Task<Money>`. The factory's parameter list — NOT the type's ctor —
-        // drives the inner-column shape; an adopter's `static Money FromStorage(string, string)`
-        // routes to two GetString calls regardless of the underlying ctor types.
+        // annotation ALWAYS wins over convention discovery. Extracted into
+        // ResolveScalarFactoryShape (post-review Fix 6) to keep ClassifyEmitShape
+        // closer to readable. Returns non-null when EITHER a factory branch was
+        // taken (success or failure with ZAO043/051) OR the [Materialize(Strategy
+        // = Custom)] without-Factory diagnostic fired (Fix 8); null leaves the
+        // surrounding classifier to fall through to the composite / FlatRow /
+        // DomainEntity branches.
         {
-            var factoryInnerCandidate = UnwrapNullableValueType(inner)
-                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var factoryName = ResolveReturnTypeFactoryName(method, factoryInnerCandidate);
-            if (factoryName is not null)
-            {
-                var factoryIsNullableValueType =
-                    inner is INamedTypeSymbol fcn
-                    && fcn.IsGenericType
-                    && fcn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
-                var factoryIsNullableRef =
-                    inner.IsReferenceType
-                    && inner.NullableAnnotation == NullableAnnotation.Annotated;
-                var factoryMat = TryBuildFactoryDispatchMaterialization(
-                    factoryInnerCandidate,
-                    factoryName,
-                    isNullable: factoryIsNullableValueType || factoryIsNullableRef,
-                    conventionContext: conventionContext,
-                    diagnostics: diagnostics,
-                    methodName: method.Name,
-                    location: returnTypeLocation);
-                if (factoryMat is not null)
-                {
-                    return (EmitShape.Composite, null, factoryMat, null, HasReturnValue: true, SprocOutputParams: null);
-                }
-                // factoryMat == null after ZAO043 fires upstream — fall through to
-                // Unknown so the partial-method stub doesn't emit and the build
-                // surfaces the diagnostic.
-                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
-            }
+            var scalarFactoryShape = ResolveScalarFactoryShape(
+                method, inner, conventionContext, diagnostics, returnTypeLocation);
+            if (scalarFactoryShape is { } sfs) return sfs;
         }
 
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
@@ -1768,16 +1755,36 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // shape — that's the whole point of the factory pattern (Sqlite decimal-as-
     // text: `Money` ctor takes `decimal`, but `Money.FromStorage` takes `string`).
     //
-    // `useNamedColumns: true` populates ColumnName from each factory parameter
-    // name (PascalCased) for the DomainEntity nested path; false leaves ColumnName
-    // null for FlatRow positional reads.
+    // `useNamedColumns: true` populates ColumnName for the DomainEntity nested
+    // path; false leaves ColumnName null for FlatRow positional reads.
+    //
+    // v0.5 Phase D post-review Fix 1 — when `candidateColumnNames` is non-null,
+    // factory parameter NAMES drive matching: each factory parameter must match
+    // a candidate name with `OrdinalIgnoreCase`. Mismatches emit ZAO051 (when a
+    // diagnostics sink is supplied) and bail. The matched candidate name (NOT
+    // the PascalCased factory param name) becomes the ColumnName so the emit
+    // reads via `GetOrdinal("Amount")` regardless of whether the factory
+    // parameter is `amount`, `Amount`, or `amountText` (after rename).
+    //
+    // When `candidateColumnNames` is null we fall back to positional matching
+    // (FlatRow path / composite-at-scalar — no candidate names are statically
+    // available at classification time). In the positional fallback ColumnName
+    // is null when useNamedColumns is false, and falls back to the PascalCased
+    // factory parameter name when useNamedColumns is true.
     private static ImmutableArray<ColumnBinding>? TryBuildFactoryDispatchInnerColumns(
         IMethodSymbol factory,
         ConventionContext conventionContext,
-        bool useNamedColumns)
+        bool useNamedColumns,
+        ImmutableArray<string>? candidateColumnNames = null,
+        ImmutableArray<DiagnosticInfo>.Builder? diagnostics = null,
+        string? methodName = null,
+        string? factoryName = null,
+        LocationInfo? location = null)
     {
-        if (factory.Parameters.Length == 0) return null;
+        // Post-review Fix 10 — the `Parameters.Length == 0` guard was dead code:
+        // LookupStaticFactory already filters parameterless factories. Removed.
         var inner = ImmutableArray.CreateBuilder<ColumnBinding>(factory.Parameters.Length);
+        var useNameMatching = candidateColumnNames is { } cn && cn.Length > 0;
         foreach (var p in factory.Parameters)
         {
             var underlying = UnwrapNullableValueType(p.Type);
@@ -1792,7 +1799,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 ConventionKind.EnumAsString => "GetString",
                 _ => null,
             };
-            if (reader is null) return null;
+            if (reader is null)
+            {
+                if (diagnostics is not null && methodName is not null && factoryName is not null)
+                {
+                    EmitZAO043(
+                        diagnostics, methodName, factoryName,
+                        factory.ContainingType.ToDisplayString(),
+                        $"factory parameter type '{underlying.ToDisplayString()}' could not be resolved by ConventionDiscovery",
+                        location);
+                }
+                return null;
+            }
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
                 || (p.Type is INamedTypeSymbol pn
@@ -1804,15 +1822,139 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
                 .ToDisplayString(TypeDisplayFormat);
 
+            // Post-review Fix 1 — resolve the column NAME for this factory parameter.
+            // When candidate names are available (nested-in-composite path where the
+            // underlying type's ctor parameter names provide the candidate set), do
+            // case-insensitive name matching and bail with ZAO051 on mismatch.
+            // Otherwise (FlatRow positional / composite-at-scalar path) fall back to
+            // positional + PascalCased factory parameter name.
+            string? columnName;
+            if (useNameMatching)
+            {
+                string? matched = null;
+                foreach (var candidate in candidateColumnNames!.Value)
+                {
+                    if (string.Equals(candidate, p.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched = candidate;
+                        break;
+                    }
+                }
+                if (matched is null)
+                {
+                    if (diagnostics is not null && methodName is not null && factoryName is not null)
+                    {
+                        EmitZAO051(
+                            diagnostics, methodName, factoryName, p.Name,
+                            candidateColumnNames.Value, location);
+                    }
+                    return null;
+                }
+                columnName = useNamedColumns ? matched : null;
+            }
+            else
+            {
+                columnName = useNamedColumns ? ToPascalCase(p.Name) : null;
+            }
+
             inner.Add(new ColumnBinding(
                 GetterMethod: reader,
                 IsNullable: isNullable,
                 TypeName: unwrappedDisplay,
                 Convention: convention,
-                ColumnName: useNamedColumns ? ToPascalCase(p.Name) : null,
+                ColumnName: columnName,
                 CtorArgName: p.Name));
         }
         return inner.MoveToImmutable();
+    }
+
+    // Post-review Fix 1 — extract the candidate column-name set for name-based
+    // factory parameter matching. The candidate set comes from the underlying
+    // composite type's MultiArgCtor parameter names (PascalCased), which is what
+    // the convention discovery path would use as column names. Returns null
+    // when the type has no resolvable MultiArgCtor — in that case positional
+    // matching is used as the documented fallback (ZAO051 doesn't fire).
+    private static ImmutableArray<string>? TryGetFactoryColumnNameCandidates(
+        ITypeSymbol underlying,
+        ConventionContext conventionContext)
+    {
+        if (underlying is not INamedTypeSymbol named) return null;
+        var resolution = ConventionDiscovery.Resolve(named, conventionContext);
+        if (resolution.Kind != ConventionKind.MultiArgCtor) return null;
+        var ctorParams = resolution.ExpandedColumns;
+        if (ctorParams.IsDefault || ctorParams.Length == 0) return null;
+        var builder = ImmutableArray.CreateBuilder<string>(ctorParams.Length);
+        foreach (var p in ctorParams)
+        {
+            builder.Add(ToPascalCase(p.Name));
+        }
+        return builder.MoveToImmutable();
+    }
+
+    // Post-review Fix 6 — extracted from ClassifyEmitShape. Resolve the Phase D
+    // factory branch at scalar return position. Returns:
+    //   * non-null tuple => the caller MUST return it from the classifier
+    //     (either a successful Composite shape, or Unknown after ZAO043/044/051
+    //     fired).
+    //   * null => no [Materialize(Factory)] applies; the classifier should
+    //     continue with composite / FlatRow / DomainEntity branches.
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams)? ResolveScalarFactoryShape(
+        IMethodSymbol method,
+        ITypeSymbol inner,
+        ConventionContext conventionContext,
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        LocationInfo? returnTypeLocation)
+    {
+        var factoryInnerCandidate = UnwrapNullableValueType(inner)
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        var factoryName = ResolveReturnTypeFactoryName(method, factoryInnerCandidate);
+
+        // Post-review Fix 8 — [Materialize(Strategy = Custom)] without Factory
+        // is a silent no-op today (the classifier would otherwise fall through
+        // to convention discovery). Surface a tailored ZAO043 message so the
+        // adopter sees the misconfiguration at compile time.
+        if (factoryName is null)
+        {
+            var methodLevelHasCustomWithoutFactory =
+                HasCustomStrategyWithoutFactory(method.GetReturnTypeAttributes());
+            var typeLevelHasCustomWithoutFactory =
+                HasCustomStrategyWithoutFactory(factoryInnerCandidate.GetAttributes());
+            if (methodLevelHasCustomWithoutFactory || typeLevelHasCustomWithoutFactory)
+            {
+                EmitZAO043(
+                    diagnostics, method.Name,
+                    factoryName: "<missing>",
+                    targetTypeDisplay: factoryInnerCandidate.ToDisplayString(),
+                    reason: "[Materialize(Strategy = Custom)] requires a Factory argument",
+                    location: returnTypeLocation);
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            }
+            return null;
+        }
+
+        var factoryIsNullableValueType =
+            inner is INamedTypeSymbol fcn
+            && fcn.IsGenericType
+            && fcn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
+        var factoryIsNullableRef =
+            inner.IsReferenceType
+            && inner.NullableAnnotation == NullableAnnotation.Annotated;
+        var factoryMat = TryBuildFactoryDispatchMaterialization(
+            factoryInnerCandidate,
+            factoryName,
+            isNullable: factoryIsNullableValueType || factoryIsNullableRef,
+            conventionContext: conventionContext,
+            diagnostics: diagnostics,
+            methodName: method.Name,
+            location: returnTypeLocation);
+        if (factoryMat is not null)
+        {
+            return (EmitShape.Composite, null, factoryMat, null, HasReturnValue: true, SprocOutputParams: null);
+        }
+        // factoryMat == null after ZAO043/044/051 fired upstream — fall through
+        // to Unknown so the partial-method stub doesn't emit. ZAO022/040 are
+        // suppressed by the diagnostic-builder scan in TransformMethod (Fix 4).
+        return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
     }
 
     // v0.5 Phase D — build a Composite-kind MaterializationModel that invokes a
@@ -1835,21 +1977,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         if (targetType is not INamedTypeSymbol named)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, targetType.ToDisplayString(), location);
+            EmitZAO043(diagnostics, methodName, factoryName, targetType.ToDisplayString(), "method not found", location);
             return null;
         }
 
-        var factory = LookupStaticFactory(named, factoryName);
+        var factory = LookupStaticFactory(named, factoryName, out var overloadCount, out var failureReason);
         if (factory is null)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), location);
+            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), failureReason ?? "method not found", location);
+            return null;
+        }
+        if (overloadCount > 1)
+        {
+            EmitZAO044_OverloadAmbiguity(diagnostics, named.ToDisplayString(), factoryName, overloadCount, location);
             return null;
         }
 
-        var inner = TryBuildFactoryDispatchInnerColumns(factory, conventionContext, useNamedColumns: false);
+        // Composite-at-scalar shape: no SQL column names are available at
+        // classification time, so positional matching is the documented
+        // fallback. ZAO051 does not fire here.
+        var inner = TryBuildFactoryDispatchInnerColumns(
+            factory, conventionContext, useNamedColumns: false,
+            candidateColumnNames: null,
+            diagnostics: diagnostics, methodName: methodName,
+            factoryName: factoryName, location: location);
         if (inner is null)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), location);
+            // EmitZAO043 already fired inside TryBuildFactoryDispatchInnerColumns
+            // when the failure was a factory parameter type resolution miss. The
+            // null return here just propagates upward.
             return null;
         }
 
@@ -1880,21 +2036,39 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         if (underlying is not INamedTypeSymbol named)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, underlying.ToDisplayString(), location);
+            EmitZAO043(diagnostics, methodName, factoryName, underlying.ToDisplayString(), "method not found", location);
             return null;
         }
 
-        var factory = LookupStaticFactory(named, factoryName);
+        var factory = LookupStaticFactory(named, factoryName, out var overloadCount, out var failureReason);
         if (factory is null)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), location);
+            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), failureReason ?? "method not found", location);
+            return null;
+        }
+        if (overloadCount > 1)
+        {
+            EmitZAO044_OverloadAmbiguity(diagnostics, named.ToDisplayString(), factoryName, overloadCount, location);
             return null;
         }
 
-        var inner = TryBuildFactoryDispatchInnerColumns(factory, conventionContext, useNamedColumns);
+        // Post-review Fix 1 — name-based matching only applies when the inner
+        // reads will be column-name-keyed (DomainEntity nested path). For the
+        // FlatRow positional nested path, inner reads are positional so the
+        // documented fallback (positional matching, no ZAO051) applies.
+        var candidates = useNamedColumns
+            ? TryGetFactoryColumnNameCandidates(named, conventionContext)
+            : null;
+
+        var inner = TryBuildFactoryDispatchInnerColumns(
+            factory, conventionContext, useNamedColumns,
+            candidateColumnNames: candidates,
+            diagnostics: diagnostics, methodName: methodName,
+            factoryName: factoryName, location: location);
         if (inner is null)
         {
-            EmitZAO043(diagnostics, methodName, factoryName, named.ToDisplayString(), location);
+            // EmitZAO043 / EmitZAO051 already fired inside
+            // TryBuildFactoryDispatchInnerColumns. Propagate the null.
             return null;
         }
 
@@ -1918,14 +2092,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     // Emit ZAO043 into the supplied diagnostics builder. Centralised so the
-    // message-arg ordering stays consistent across the three call sites
-    // (scalar-position factory miss, nested-composite factory miss, factory
-    // inner-column resolution miss).
+    // message-arg ordering stays consistent across the call sites (scalar-
+    // position factory miss, nested-composite factory miss, factory inner-
+    // column resolution miss, [Materialize(Strategy = Custom)] without
+    // Factory).
+    //
+    // Post-review Fix 4 — the descriptor message now carries a 4th arg that
+    // names the failure reason. Possible reasons:
+    //   * "method not found"
+    //   * "method is not static"
+    //   * "method is not public"
+    //   * "factory parameter type '<TypeName>' could not be resolved by ConventionDiscovery"
+    //   * "[Materialize(Strategy = Custom)] requires a Factory argument"
     private static void EmitZAO043(
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         string methodName,
         string factoryName,
         string targetTypeDisplay,
+        string reason,
         LocationInfo? location)
     {
         diagnostics.Add(new DiagnosticInfo(
@@ -1934,7 +2118,48 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                 methodName,
                 factoryName,
-                targetTypeDisplay))));
+                targetTypeDisplay,
+                reason))));
+    }
+
+    // Post-review Fix 2 — emit ZAO051 (factory parameter / column-name
+    // mismatch). The available-columns list is rendered as a comma-separated
+    // string for the message.
+    private static void EmitZAO051(
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        string methodName,
+        string factoryName,
+        string factoryParamName,
+        ImmutableArray<string> candidateColumnNames,
+        LocationInfo? location)
+    {
+        diagnostics.Add(new DiagnosticInfo(
+            DescriptorId: "ZAO051",
+            Location: location,
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                methodName,
+                factoryName,
+                factoryParamName,
+                string.Join(", ", candidateColumnNames)))));
+    }
+
+    // Post-review Fix 3 — emit ZAO044 for static-factory overload ambiguity.
+    // Reuses the existing v0.2 descriptor (made attribute-name-agnostic in
+    // Fix 3 by adding a 3rd message arg for the reason).
+    private static void EmitZAO044_OverloadAmbiguity(
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        string targetTypeDisplay,
+        string factoryName,
+        int overloadCount,
+        LocationInfo? location)
+    {
+        diagnostics.Add(new DiagnosticInfo(
+            DescriptorId: "ZAO044",
+            Location: location,
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                targetTypeDisplay,
+                factoryName,
+                $"Found {overloadCount} matching static overloads; overload selection by signature is not supported. Reduce to a single static '{factoryName}' or use a distinct factory name."))));
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
@@ -2599,25 +2824,93 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return null;
     }
 
+    // Post-review Fix 8 — detect a `[Materialize(...)]` attribute that sets
+    // `Strategy = Custom` without a `Factory` argument. Returns true when the
+    // adopter has explicitly requested Custom but provided no factory name —
+    // a silent no-op today, which ZAO043 surfaces with a tailored reason.
+    private static bool HasCustomStrategyWithoutFactory(ImmutableArray<AttributeData> attrs)
+    {
+        foreach (var attr in attrs)
+        {
+            if (!string.Equals(
+                attr.AttributeClass?.ToDisplayString(),
+                "ZeroAlloc.ORM.MaterializeAttribute",
+                StringComparison.Ordinal))
+            {
+                continue;
+            }
+            string? factory = null;
+            // MaterializeStrategy.Custom == 3 (Auto=0, FlatRow=1, DomainEntity=2, Custom=3).
+            int? strategy = null;
+            foreach (var kvp in attr.NamedArguments)
+            {
+                if (string.Equals(kvp.Key, "Factory", StringComparison.Ordinal))
+                {
+                    if (kvp.Value.Value is string s && !string.IsNullOrEmpty(s))
+                        factory = s;
+                }
+                else if (string.Equals(kvp.Key, "Strategy", StringComparison.Ordinal))
+                {
+                    if (kvp.Value.Value is int i) strategy = i;
+                }
+            }
+            if (strategy == 3 && factory is null) return true;
+        }
+        return false;
+    }
+
     // Lookup the static factory method named `factoryName` on `targetType`. Returns
     // the matched IMethodSymbol when found, or null when missing / non-static. Picks
     // the first parameterized public/static match — multi-arg-overload selection by
     // signature is deferred to v0.6+ (today's contract: a single static factory of
     // the given name with > 0 parameters wins).
     private static IMethodSymbol? LookupStaticFactory(ITypeSymbol targetType, string factoryName)
+        => LookupStaticFactory(targetType, factoryName, out _, out _);
+
+    // Post-review Fix 3 — out-param overload reporting. The classifier needs to
+    // know when MULTIPLE static methods of the same name match so it can fire
+    // ZAO044 (overload-selection-by-signature is non-deterministic and we will
+    // not silently pick the first one). Returns the first match for backward
+    // compatibility; `matchCount` reports how many total static matches existed.
+    // `failureReason` is non-null when no callable static factory was found,
+    // and names the closest miss ("method not found", "method is not static",
+    // "method is not public") so ZAO043 can surface an actionable message.
+    private static IMethodSymbol? LookupStaticFactory(
+        ITypeSymbol targetType,
+        string factoryName,
+        out int matchCount,
+        out string? failureReason)
     {
+        matchCount = 0;
+        IMethodSymbol? first = null;
+        // Track the closest miss reason so the caller can surface it via ZAO043.
+        bool sawAnyMethod = false;
+        bool sawNonStatic = false;
+        bool sawWrongAccessibility = false;
         foreach (var member in targetType.GetMembers(factoryName))
         {
             if (member is not IMethodSymbol method) continue;
-            if (!method.IsStatic) continue;
+            sawAnyMethod = true;
+            if (!method.IsStatic) { sawNonStatic = true; continue; }
             if (method.DeclaredAccessibility != Accessibility.Public
                 && method.DeclaredAccessibility != Accessibility.Internal)
             {
+                sawWrongAccessibility = true;
                 continue;
             }
             if (method.Parameters.Length == 0) continue;
-            return method;
+            matchCount++;
+            first ??= method;
         }
+        if (first is not null)
+        {
+            failureReason = null;
+            return first;
+        }
+        failureReason = !sawAnyMethod ? "method not found"
+            : sawNonStatic ? "method is not static"
+            : sawWrongAccessibility ? "method is not public"
+            : "method not found";
         return null;
     }
 
@@ -2830,6 +3123,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO051" => DiagnosticDescriptors.ZAO051_FactoryParameterColumnMismatch,
         "ZAO050" => DiagnosticDescriptors.ZAO050_NullableCompositeRuntimeCheck,
         "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,

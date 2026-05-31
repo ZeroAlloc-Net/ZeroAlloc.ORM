@@ -103,6 +103,36 @@ public class MaterializeFactoryTests
     }
 
     [Fact]
+    public Task Factory_with_single_param_emits_factory_call()
+    {
+        // Post-review Fix 9 — covers the EmitComposite `Columns.Length < 1`
+        // relaxation for factory dispatch. The single-arg factory shape would
+        // normally route through the SingleArgCtor convention, but the explicit
+        // [Materialize(Factory)] annotation wins per discovery rule #1.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "From")]
+            public readonly record struct Money(decimal Amount)
+            {
+                public static Money From(decimal amount) => new Money(amount);
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
     public Task Factory_on_nullable_scalar_emits_all_or_nothing_with_factory_call()
     {
         var source = """

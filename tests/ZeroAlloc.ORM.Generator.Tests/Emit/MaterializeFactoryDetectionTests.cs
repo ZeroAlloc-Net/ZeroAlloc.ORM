@@ -148,6 +148,65 @@ public class MaterializeFactoryDetectionTests
     }
 
     [Fact]
+    public void Factory_name_not_found_suppresses_ZAO022_and_ZAO040()
+    {
+        // Post-review Fix 4 — when ZAO043 fires, ZAO022 / ZAO040 must NOT also
+        // fire (they would double-report the same defect).
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "DoesNotExist")]
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO043", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO022", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO040", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Materialize_strategy_custom_without_factory_emits_ZAO043()
+    {
+        // Post-review Fix 8 — [Materialize(Strategy = Custom)] without a
+        // Factory argument is a silent no-op today. Surface ZAO043 with a
+        // tailored reason so the adopter sees the misconfiguration.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Strategy = MaterializeStrategy.Custom)]
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO043", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Factory_method_is_instance_not_static_emits_ZAO043()
     {
         var source = """

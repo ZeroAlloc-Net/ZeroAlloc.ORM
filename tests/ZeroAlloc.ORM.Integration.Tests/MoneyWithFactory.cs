@@ -21,4 +21,3 @@ public readonly record struct MoneyWithFactory(decimal Amount, string Currency)
             decimal.Parse(amountText, NumberStyles.Number, CultureInfo.InvariantCulture),
             currency);
 }
-
