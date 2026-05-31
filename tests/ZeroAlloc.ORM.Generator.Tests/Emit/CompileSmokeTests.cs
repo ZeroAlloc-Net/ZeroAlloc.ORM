@@ -840,7 +840,11 @@ public class CompileSmokeTests
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
         var bugClass = compileDiagnostics
             .AsEnumerable()
-            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            // CS8795/CS0759 catch partial-method signature mismatches — e.g. a
+            // regression in BuildParameterList for sprocs that desyncs the emit
+            // signature from the user-declared partial. The other CS-codes catch
+            // missing-member / undeclared-local / unused-parameter regressions.
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
             .ToArray();
         Assert.Empty(bugClass);
     }
@@ -873,7 +877,11 @@ public class CompileSmokeTests
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
         var bugClass = compileDiagnostics
             .AsEnumerable()
-            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            // CS8795/CS0759 catch partial-method signature mismatches; CS8419/CS4032
+            // catch the streaming / multi-result-set specific bug classes (iterator
+            // can't have ref-like locals; can't await in iterator's finally) shared
+            // with the multi-result peer at line ~613.
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS8419" or "CS4032")
             .ToArray();
         Assert.Empty(bugClass);
     }
@@ -900,7 +908,9 @@ public class CompileSmokeTests
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
         var bugClass = compileDiagnostics
             .AsEnumerable()
-            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            // CS8795/CS0759 catch partial-method signature mismatches in the
+            // FlatRow sproc path (parameter list / return-type sync).
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
             .ToArray();
         Assert.Empty(bugClass);
     }

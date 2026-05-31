@@ -16,14 +16,16 @@ public sealed class StoredProcedureAttribute(string procedureName) : Attribute
     public string ProcedureName { get; } = procedureName;
 
     /// <summary>
-    /// Multi-statement strategy. Stored procedures already encapsulate multi-statement
-    /// behaviour server-side, so the default is <see cref="BatchMode.Never"/> — the
-    /// emit treats the procedure call as a single <c>DbCommand</c> regardless of how
-    /// many result sets it returns, with the materializer walking the reader via
-    /// <c>NextResultAsync</c>. Setting <see cref="BatchMode.Always"/> on a sproc is
-    /// generally meaningless (a sproc isn't a `;`-joined script that an <c>IAsyncDbBatch</c>
-    /// can usefully decompose) and is accepted only for symmetry with
-    /// <see cref="QueryAttribute"/>.
+    /// Reserved; currently ignored on sproc pipelines because stored procedures
+    /// encapsulate their own batching semantics server-side. The emit treats the
+    /// procedure call as a single <c>DbCommand</c> regardless of how many result
+    /// sets it returns, with the materializer walking the reader via
+    /// <c>NextResultAsync</c>. Setting <see cref="BatchMode.Always"/> on a sproc
+    /// is meaningless (a sproc isn't a `;`-joined script that an
+    /// <c>IAsyncDbBatch</c> can usefully decompose); the property is accepted only
+    /// for symmetry with <see cref="QueryAttribute"/>. A future diagnostic
+    /// (tracked in the v0.4-CLN backlog) will warn if a non-<see cref="BatchMode.Never"/>
+    /// value is used on a sproc.
     /// </summary>
     public BatchMode Batch { get; init; } = BatchMode.Never;
 }

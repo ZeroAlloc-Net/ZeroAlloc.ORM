@@ -12,18 +12,6 @@ using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator;
 
-// v0.4 Phase D — discriminator for the three attribute pipelines feeding
-// TransformMethod. Replaces the Phase A `isCommandAttribute` bool. The enum keeps
-// the dispatch surface explicit (every call site picks one of three named values)
-// and removes the boolean-pair ambiguity that two bools (`isCommandAttribute`,
-// `isStoredProcedureAttribute`) would invite.
-internal enum AttributePipelineKind
-{
-    Query,
-    Command,
-    StoredProcedure,
-}
-
 [Generator(LanguageNames.CSharp)]
 public sealed class OrmGenerator : IIncrementalGenerator
 {
@@ -218,9 +206,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // and ZAO008/ZAO032/ZAO033 SQL-statement-counting checks are suppressed
         // for sprocs since the procedure body lives server-side).
         var triggeringAttribute = ctx.Attributes.FirstOrDefault();
-        var firstStringArg = triggeringAttribute?
-            .ConstructorArguments
-            .FirstOrDefault().Value as string ?? string.Empty;
+        // All three triggering attributes today declare a `string` first ctor arg
+        // ([Query(Sql)], [Command(Sql)], [StoredProcedure(ProcedureName)]). The branch
+        // where Value isn't a string is structurally unreachable as long as the
+        // Abstractions surface stays string-typed. The defensive `is string` pattern
+        // (replacing the older `as string ?? string.Empty`) ensures that if a future
+        // overload ever changed the ctor signature, the failure is loud (the empty
+        // fallback would silently emit an empty CommandText, which on the sproc
+        // pipeline becomes a confusing runtime "stored procedure '' not found" error).
+        var rawCtorArg = triggeringAttribute?.ConstructorArguments.FirstOrDefault().Value;
+        var firstStringArg = rawCtorArg is string s
+            ? s
+            : rawCtorArg is null
+                ? string.Empty
+                : throw new global::System.InvalidOperationException(
+                    $"ORM triggering attribute ctor arg expected to be string, was {rawCtorArg.GetType().Name}.");
         var sql = isStoredProcedureAttribute ? string.Empty : firstStringArg;
         var procedureName = isStoredProcedureAttribute ? firstStringArg : string.Empty;
 
@@ -258,6 +258,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+
+        // ZAO061 — [StoredProcedure("")] / [StoredProcedure(null)] / whitespace-only.
+        // Originally scheduled for Phase F; brought forward in the Phase D fix-up so
+        // adopters never hit the silent-empty-CommandText runtime failure (which
+        // surfaces as a provider-specific "could not find stored procedure ''"
+        // message and is materially harder to diagnose than a compile-time error).
+        // Error severity so the existing hadError gate suppresses emit.
+        if (isStoredProcedureAttribute && string.IsNullOrWhiteSpace(procedureName))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO061",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
 
         // ZAO001 — method must be partial.
         if (!methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
@@ -315,7 +329,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // applies to [Query] methods where a `;` paired with a single-row /
         // single-scalar return type means the second statement is silently
         // discarded — surface as an error there but not on commands.
+        // v0.4 Phase D fix-up — explicit !isStoredProcedureAttribute suppression
+        // matches the declarative pattern used by ZAO032/ZAO033 below. Sprocs already
+        // pass through silently because m.Sql is empty for the sproc pipeline and
+        // CountStatements("") returns 0, so the && chain short-circuits. Adding the
+        // explicit gate makes the intent visible at the call site without changing
+        // behaviour (the boolean expression evaluates identically either way).
         if (!isCommandAttribute
+            && !isStoredProcedureAttribute
             && SqlStatementSplitter.CountStatements(sql) > 1
             && !IsMultiResultReturnType(method.ReturnType))
         {
@@ -394,10 +415,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && named.Value.Value is bool fromResource
                     && fromResource)
                 {
-                    // ZAO020 fires for both [Query] and [Command] from v0.4 onwards;
-                    // pass the triggering attribute name as the second arg so the
-                    // message reflects what the adopter actually wrote.
-                    var attributeName = isCommandAttribute ? "Command" : "Query";
+                    // ZAO020 fires for [Query], [Command], and [StoredProcedure] from
+                    // v0.4 onwards; pass the triggering attribute name as the second
+                    // arg so the message reflects what the adopter actually wrote.
+                    // The StoredProcedure branch is unreachable today (the sproc
+                    // attribute has no FromResource named arg), but the three-way
+                    // switch keeps the mapping robust against future surface changes.
+                    var attributeName = pipelineKind switch
+                    {
+                        AttributePipelineKind.Command => "Command",
+                        AttributePipelineKind.StoredProcedure => "StoredProcedure",
+                        _ => "Query",
+                    };
                     diagnostics.Add(new DiagnosticInfo(
                         DescriptorId: "ZAO020",
                         Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
@@ -1701,6 +1730,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
         _ => null,
     };
 
@@ -1915,9 +1945,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //   __cmd.CommandText = "<procedure name>";
     //   __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
     //
-    // The `cmdLocal` argument allows multi-command emit (batch path) to pass
-    // e.g. `__cmd0` / `__cmd1` instead of the default `__cmd`. The `indent` is
-    // the leading whitespace per line as for the other Build* helpers.
+    // The `cmdLocal` argument lets future multi-command shapes pass a non-default
+    // local; today all callers pass `__cmd`. The `indent` is the leading whitespace
+    // per line as for the other Build* helpers.
     private static void BuildCommandTextAssignment(StringBuilder sb, QueryMethodModel m, string cmdLocal, string indent)
     {
         var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
