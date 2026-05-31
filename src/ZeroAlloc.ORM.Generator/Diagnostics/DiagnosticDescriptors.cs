@@ -81,6 +81,11 @@ internal static class DiagnosticDescriptors
         "Method '{0}' returns a {1}-element tuple but the SQL has only {2} statement(s). Add the missing SELECT(s) or reduce the tuple arity.",
         DiagnosticSeverity.Error);
 
+    public static readonly DiagnosticDescriptor ZAO033_StatementsExceedTupleArity = Make(
+        "ZAO033", "SQL statement count exceeds tuple arity",
+        "Method '{0}' has {1} SQL statements but the tuple return has only {2} elements. Add missing tuple element types or remove the extra SELECT(s).",
+        DiagnosticSeverity.Error);
+
     public static readonly DiagnosticDescriptor ZAO040_NoConstructionStrategy = Make(
         "ZAO040", "No construction strategy resolved for type",
         "Cannot materialize type '{0}': no [Materialize], [ValueObject], static From factory, single-arg ctor, enum, or primitive convention matched. Add [Materialize(Factory=\"...\")] or define a convention method.",

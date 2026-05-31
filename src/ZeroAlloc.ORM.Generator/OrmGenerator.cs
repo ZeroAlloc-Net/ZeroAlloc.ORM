@@ -281,6 +281,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         tupleArity.ToString(System.Globalization.CultureInfo.InvariantCulture),
                         statementCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
             }
+            else if (statementCount > tupleArity)
+            {
+                // ZAO033 — inverse of ZAO032. Extra SELECTs would be silently dropped on
+                // the floor by the materializer; surface the mismatch so the adopter
+                // either widens the tuple or trims the SQL.
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO033",
+                    Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        statementCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        tupleArity.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
+            }
         }
 
         // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
@@ -1216,6 +1229,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         "ZAO032" => DiagnosticDescriptors.ZAO032_TupleArityExceedsStatements,
+        "ZAO033" => DiagnosticDescriptors.ZAO033_StatementsExceedTupleArity,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
         "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
