@@ -42,7 +42,7 @@ public class CompositeBindingDetectionTests
             .ToString();
 
         Assert.Contains(
-            "// CompositeBinding: total -> global::TestApp.Money (fields: 2)",
+            "// EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)",
             generated,
             System.StringComparison.Ordinal);
 
@@ -79,7 +79,7 @@ public class CompositeBindingDetectionTests
 
         // Composite sentinel for `total`.
         Assert.Contains(
-            "// CompositeBinding: total -> global::TestApp.Money (fields: 2)",
+            "// EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)",
             generated,
             System.StringComparison.Ordinal);
 
@@ -127,7 +127,7 @@ public class CompositeBindingDetectionTests
             .ToString();
 
         Assert.Contains(
-            "// CompositeBinding: outer -> global::TestApp.MoneyWithOrderId (fields: 2)",
+            "// EmitShape: CompositeBinding outer -> global::TestApp.MoneyWithOrderId (fields: 2)",
             generated,
             System.StringComparison.Ordinal);
         var diagnostics = result.Results[0].Diagnostics;

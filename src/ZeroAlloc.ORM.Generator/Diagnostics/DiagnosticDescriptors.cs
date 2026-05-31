@@ -147,4 +147,16 @@ internal static class DiagnosticDescriptors
         "ZAO062", "Named-tuple field does not match any parameter",
         "Method '{0}' tuple field '{1}' does not match any parameter — treated as a result column. If '{1}' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).",
         DiagnosticSeverity.Warning);
+
+    // v0.5 Phase B — fired when `[Param(Name = "...")]` is applied to a parameter
+    // whose type resolves to a MultiArgCtor (composite) convention. The composite
+    // binding emit generates N DbParameters positionally
+    // (`@{paramName}_{ctorArgName}`), so a single-name override cannot compose
+    // with N-way unpacking. Surfacing this at compile time is materially better
+    // than the alternative — silently dropping the override — which would
+    // mislead adopters into shipping a no-op attribute.
+    public static readonly DiagnosticDescriptor ZAO063_ParamNameOnCompositeUnsupported = Make(
+        "ZAO063", "[Param(Name = ...)] override is not supported on composite parameters",
+        "Parameter '{0}' on method '{1}' has [Param(Name = \"{2}\")] but is a composite type. Composite parameters generate suffixes positionally ('@{{param}}_{{ctorArgName}}'); the Name override is ignored. Remove the Name override or rename the C# parameter.",
+        DiagnosticSeverity.Error);
 }

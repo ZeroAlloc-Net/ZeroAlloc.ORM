@@ -153,14 +153,12 @@ internal sealed record ParameterInfo(
 //                        (`@{paramName}_{CtorArgName}`). Composite records expose
 //                        a matching property of the same name (PascalCase
 //                        matches by C# convention), so the unpacking accessor
-//                        is `@{paramName}.{CtorArgName}`.
+//                        is `@{paramName}.@{CtorArgName}` (the `@`-prefix on
+//                        the property is defensive — keyword names like
+//                        `@class` need it; ordinary identifiers are unaffected).
 //   IsNullable        -- inner ctor parameter is nullable (`int?` /
 //                        `Nullable<int>` / annotated reference type). Emit
 //                        routes through DBNull.Value when true.
-//   TypeName          -- fully-qualified type display, UNWRAPPED (matches
-//                        ColumnBinding.TypeName). Reserved for future emit
-//                        needs (e.g. parameter Direction inference); not
-//                        currently consumed by the binding shape.
 //   Convention        -- non-null when the inner field is a ValueObject /
 //                        SingleArgCtor / StaticFactory / Enum / EnumAsString —
 //                        mirrors the materialization-side recursive unwrap.
@@ -168,5 +166,4 @@ internal sealed record ParameterInfo(
 internal sealed record CompositeBindingField(
     string CtorArgName,
     bool IsNullable,
-    string TypeName,
     ConventionInfo? Convention);

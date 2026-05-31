@@ -7,7 +7,7 @@ namespace TestApp;
 partial class Repo
 {
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<int> UpdateAsync(int @id, global::TestApp.Money @total, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<int> UpdateTotalAsync(global::TestApp.Pricing @total, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -15,20 +15,16 @@ partial class Repo
         try
         {
             await using var __cmd = __conn.CreateCommand();
-            __cmd.CommandText = "UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id";
-            var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "@id";
-            __p_id.Value = @id;
-            __cmd.Parameters.Add(__p_id);
-            // EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)
+            __cmd.CommandText = "UPDATE Orders SET Amount = @total_Amount, Tier = @total_Tier WHERE Id = 1";
+            // EmitShape: CompositeBinding total -> global::TestApp.Pricing (fields: 2)
             var __p_total_Amount = __cmd.CreateParameter();
             __p_total_Amount.ParameterName = "@total_Amount";
             __p_total_Amount.Value = @total.@Amount;
             __cmd.Parameters.Add(__p_total_Amount);
-            var __p_total_Currency = __cmd.CreateParameter();
-            __p_total_Currency.ParameterName = "@total_Currency";
-            __p_total_Currency.Value = @total.@Currency;
-            __cmd.Parameters.Add(__p_total_Currency);
+            var __p_total_Tier = __cmd.CreateParameter();
+            __p_total_Tier.ParameterName = "@total_Tier";
+            __p_total_Tier.Value = @total.@Tier.ToString();
+            __cmd.Parameters.Add(__p_total_Tier);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
         finally

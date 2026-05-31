@@ -29,7 +29,7 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 // CompositeTests). FluentAssertions `.Should().Be(decimal)` trips EPS06
 // (hidden struct copy), so decimal assertions use Xunit.Assert.Equal
 // matching the CommandNonQueryTests pattern.
-public class CompositeBindingTests
+public class CompositeBindingIntegrationTests
 {
     [Fact]
     public async Task Insert_with_composite_parameter()
@@ -56,7 +56,7 @@ public class CompositeBindingTests
             {
                 probe.CommandText = "SELECT Amount, Currency FROM Orders WHERE Id = 1";
                 var reader = await probe.ExecuteReaderAsync(CancellationToken.None).ConfigureAwait(false);
-                await using (((System.IAsyncDisposable)reader).ConfigureAwait(false))
+                await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
                 {
                     var advanced = await reader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
                     advanced.Should().BeTrue();
@@ -158,7 +158,7 @@ public class CompositeBindingTests
             {
                 probe.CommandText = "SELECT Amount, Currency FROM Orders WHERE Id = 1";
                 var reader = await probe.ExecuteReaderAsync(CancellationToken.None).ConfigureAwait(false);
-                await using (((System.IAsyncDisposable)reader).ConfigureAwait(false))
+                await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
                 {
                     var advanced = await reader.ReadAsync(CancellationToken.None).ConfigureAwait(false);
                     advanced.Should().BeTrue();

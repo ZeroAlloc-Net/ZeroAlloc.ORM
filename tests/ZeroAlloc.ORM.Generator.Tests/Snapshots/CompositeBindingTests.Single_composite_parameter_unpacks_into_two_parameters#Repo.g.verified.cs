@@ -16,14 +16,14 @@ partial class Repo
         {
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = 1";
-            // CompositeBinding: total -> global::TestApp.Money (fields: 2)
+            // EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)
             var __p_total_Amount = __cmd.CreateParameter();
             __p_total_Amount.ParameterName = "@total_Amount";
-            __p_total_Amount.Value = @total.Amount;
+            __p_total_Amount.Value = @total.@Amount;
             __cmd.Parameters.Add(__p_total_Amount);
             var __p_total_Currency = __cmd.CreateParameter();
             __p_total_Currency.ParameterName = "@total_Currency";
-            __p_total_Currency.Value = @total.Currency;
+            __p_total_Currency.Value = @total.@Currency;
             __cmd.Parameters.Add(__p_total_Currency);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
