@@ -25,6 +25,20 @@ internal enum EmitShape
     // models as the single-row paths; the surrounding emit replaces "ReadAsync once
     // then return" with "while ReadAsync yield return".
     Streaming,
+    // v0.4 Phase A — [Command(Kind = NonQuery)] methods. Emits the open/execute/close
+    // shape against ExecuteNonQueryAsync, returning the rows-affected count (or void
+    // for Task / ValueTask). Scalar / Identity variants land in Phase B / Phase C.
+    CommandNonQuery,
+}
+
+// Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side
+// so QueryMethodModel stays cache-safe (no symbol/Compilation refs leak in via the
+// abstraction enum's metadata; this enum is a plain value type).
+internal enum CommandKindModel
+{
+    NonQuery,
+    Scalar,
+    Identity,
 }
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,
@@ -43,7 +57,13 @@ internal sealed record QueryMethodModel(
     MultiResultMaterializationModel? MultiResultMaterialization,
     EquatableArray<ParameterInfo> MethodParameters,
     string? CancellationTokenParameterName,
-    EquatableArray<DiagnosticInfo> Diagnostics);
+    EquatableArray<DiagnosticInfo> Diagnostics,
+    // v0.4 Phase A — true when the source method is annotated with [Command] rather
+    // than [Query]. Drives the EmitShape.CommandNonQuery (and future Scalar / Identity)
+    // dispatch. IsQuery and IsCommand are mutually exclusive — ZAO005 fires when both
+    // are seen on the same method.
+    bool IsCommand = false,
+    CommandKindModel CommandKind = CommandKindModel.NonQuery);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

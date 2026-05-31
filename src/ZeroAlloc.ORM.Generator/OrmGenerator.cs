@@ -16,6 +16,7 @@ namespace ZeroAlloc.ORM.Generator;
 public sealed class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
+    private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
     private const string GeneratorVersion = "0.1.0";
@@ -28,7 +29,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: QueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx))
+                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: false))
+            .Where(static m => m is not null)!;
+
+        // v0.4 Phase A — [Command] attribute pickup. Re-uses the same TransformMethod
+        // pathway (parameter binding, connection-access resolution, ZAO* diagnostics)
+        // and sets IsCommand = true so emit dispatch can pick the CommandNonQuery
+        // shape. Both pipelines feed into the same grouping step; methods carrying
+        // both [Query] and [Command] surface ZAO005 (extended in v0.4 from the v0.3
+        // single-Query rule).
+        var commandMethods = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: CommandAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: true))
             .Where(static m => m is not null)!;
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
@@ -36,7 +50,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // location, etc.) — we take them from g.First() instead of duplicating them
         // on each QueryMethodModel. R8 hoist: this removes the prior fallback that
         // grabbed type-properties off `repo.Methods.Values[0]` downstream.
-        var grouped = queryMethods.Collect()
+        //
+        // v0.4 Phase A: [Query] + [Command] pipelines are unioned before grouping so a
+        // single QueryRepositoryModel covers both attribute kinds on the same type.
+        // The (containingTypeFullName, methodName) tuple uniquely identifies a method;
+        // we dedupe on that key inside the group so a method that picks up both
+        // pipelines (the ZAO005 multi-attribute case) doesn't produce two emit slots.
+        var allMethods = queryMethods.Collect()
+            .Combine(commandMethods.Collect())
+            .SelectMany(static (pair, _) =>
+            {
+                var seen = new HashSet<(string, string)>();
+                var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
+                foreach (var m in pair.Left)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                foreach (var m in pair.Right)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                return union.ToImmutable();
+            });
+
+        var grouped = allMethods.Collect()
             .SelectMany(static (methods, _) =>
                 methods.GroupBy(m => m!.Method.ContainingTypeFullName, StringComparer.Ordinal)
                        .Select(g =>
@@ -98,7 +139,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         });
     }
 
-    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx)
+    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, bool isCommandAttribute)
     {
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
@@ -109,10 +150,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // per-parameter classification so the lookup cost amortizes.
         var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
 
-        var queryAttribute = ctx.Attributes.FirstOrDefault();
-        var sql = queryAttribute?
+        // The triggering attribute. For [Query] this is the QueryAttribute; for the
+        // [Command] pipeline this is the CommandAttribute. We pull the SQL out of the
+        // first ctor arg either way — both attributes share that signature.
+        var triggeringAttribute = ctx.Attributes.FirstOrDefault();
+        var sql = triggeringAttribute?
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
+
+        // v0.4 Phase A — read [Command(Kind = ...)] from the named args. Default is
+        // NonQuery to mirror the abstraction default. Only consulted when this method
+        // came in via the [Command] pipeline; [Query] sets CommandKind to NonQuery
+        // (irrelevant — IsCommand stays false).
+        var commandKind = CommandKindModel.NonQuery;
+        if (isCommandAttribute && triggeringAttribute is not null)
+        {
+            foreach (var named in triggeringAttribute.NamedArguments)
+            {
+                if (string.Equals(named.Key, "Kind", StringComparison.Ordinal)
+                    && named.Value.Value is int kindValue)
+                {
+                    commandKind = (CommandKindModel)kindValue;
+                }
+            }
+        }
 
         var (connectionAccess, connectionResolved) = ResolveConnectionAccess(containing);
 
@@ -141,14 +202,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
-        // ZAO005 — multiple [Query] attributes on one method.
-        // v0.1 only ships [Query]; [Command] and [StoredProcedure] return in v0.4 at
-        // which point this check expands to cover all three ORM attributes.
+        // ZAO005 — multiple ORM attributes on one method.
+        // v0.4 Phase A extends from the v0.1 single-Query check to cover [Query] +
+        // [Command] overlap. Phase D will add [StoredProcedure] to the count when
+        // that attribute lands. Counting both pipelines' attributes on the same
+        // method handles both the "two [Query]" case AND the "one [Query], one
+        // [Command]" case via a single >1 threshold.
+        //
+        // We dedupe ZAO005 by emitting it ONLY when invoked from the [Query]
+        // pipeline (or, if no [Query] is present, from the [Command] pipeline) so
+        // a method with both attributes doesn't fire ZAO005 twice. The TransformMethod
+        // grouping later dedupes by (containing-type, method-name) which would
+        // suppress one of the emit slots; surfacing ZAO005 from whichever pipeline
+        // "wins" the dedup race is fine since both fire with the same message.
         var ormAttrCount = method.GetAttributes()
-            .Count(a => string.Equals(
-                a.AttributeClass?.ToDisplayString(),
-                "ZeroAlloc.ORM.QueryAttribute",
-                StringComparison.Ordinal));
+            .Count(a =>
+            {
+                var fqn = a.AttributeClass?.ToDisplayString();
+                return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
+                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal);
+            });
         if (ormAttrCount > 1)
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -236,9 +309,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ResolveBatchStrategy below — keeping the read in one place avoids a
         // second scan over the attribute's NamedArguments.
         var batchMode = 0; // BatchMode.Auto default
-        if (queryAttribute is not null)
+        if (triggeringAttribute is not null)
         {
-            foreach (var named in queryAttribute.NamedArguments)
+            foreach (var named in triggeringAttribute.NamedArguments)
             {
                 if (string.Equals(named.Key, "FromResource", StringComparison.Ordinal)
                     && named.Value.Value is bool fromResource
@@ -259,7 +332,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var strategy = ResolveBatchStrategy(sql, batchMode);
 
-        var (shape, nullableReaderMethod, materialization, multiResultMaterialization) = ClassifyEmitShape(method, conventionContext);
+        var (shape, nullableReaderMethod, materialization, multiResultMaterialization) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind);
 
         // ZAO032 — MultiResultSet tuple arity exceeds the SQL statement count. Detection
         // ran fine (the tuple itself is classifiable), but the SQL has fewer SELECTs
@@ -312,7 +385,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ZAO007 covers IAsyncEnumerable<T>-without-EnumeratorCancellation separately,
         // so we suppress both ZAO022 and ZAO040 for IAsyncEnumerable to avoid the
         // double-diagnostic case.
+        //
+        // v0.4 Phase A.1: also suppress ZAO022/ZAO040 for [Command]-attributed methods
+        // — they intentionally short-circuit to Unknown in Phase A.1 so the emit
+        // dispatch surfaces them via the [Command]-aware fallback in EmitRepository.
+        // ZAO022/ZAO040 are scoped to [Query] return-shape gaps; firing them for
+        // [Command] would mislead the adopter.
         if (shape == EmitShape.Unknown
+            && !isCommandAttribute
             && IsSupportedReturnType(method.ReturnType)
             && !IsIAsyncEnumerable(method.ReturnType))
         {
@@ -451,7 +531,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MultiResultMaterialization: multiResultMaterialization,
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
-            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
+            IsCommand: isCommandAttribute,
+            CommandKind: commandKind);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -476,8 +558,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // that no longer carries the symbol.
     private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization) ClassifyEmitShape(
         IMethodSymbol method,
-        ConventionContext conventionContext)
+        ConventionContext conventionContext,
+        bool isCommandAttribute,
+        CommandKindModel commandKind)
     {
+        // v0.4 Phase A.1 — [Command] methods detected and flow through to the model
+        // with IsCommand = true. Phase A.1 stops short of dispatching to a Command
+        // emit shape: routes to Unknown to suppress the Query-path classifications
+        // (e.g. Task<int> would otherwise land on ScalarInt and emit
+        // ExecuteScalarAsync — the wrong shape for a NonQuery command). Phase A.2
+        // introduces EmitShape.CommandNonQuery + EmitCommandNonQuery and replaces
+        // this short-circuit with the real classification. Phase B / C extend for
+        // Scalar / Identity Kinds.
+        if (isCommandAttribute)
+        {
+            _ = commandKind;
+            return (EmitShape.Unknown, null, null, null);
+        }
+
         if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null);
 
         // v0.3 Phase C — IAsyncEnumerable<T> streaming. Match by metadata name + arity
@@ -1352,7 +1450,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     }
                     break;
                 default:
-                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
+                    if (m.IsCommand)
+                    {
+                        // v0.4 Phase A.1 — [Command] detected, scanner wired through to the
+                        // emit pipeline. Real shape emit lands in Phase A.2 (NonQuery), B
+                        // (Scalar), C (Identity). Emit a throwing stub so the consuming code
+                        // compiles but flags missing implementation at runtime.
+                        var paramList = BuildParameterList(m.MethodParameters);
+                        sb.AppendLine($"    {GeneratedCodeAttribute}");
+                        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase A.2 / B / C.\");");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
+                    }
                     break;
             }
         }
