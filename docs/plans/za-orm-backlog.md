@@ -309,6 +309,26 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
      that exercises the batch branch in CI.
 - File-header comment in `MultiResultSetTests.cs` records this state honestly.
 
+### v0.3-CLN4 — Collapse release-please to a single linked version
+
+- Source: v0.3 release prep (2026-05-31, PR #46 fix-up).
+- Current `release-please-config.json` versions the four packages independently per
+  conventional commit scope. In practice the project ships all four at the same
+  SemVer (0.1.0 / 0.2.0 / 0.3.0), so the per-package bumps drift apart immediately:
+  - The `generator:` scope still carries a v0.1 era BREAKING-CHANGES footer that
+    keeps proposing `generator-v1.0.0` instead of tracking the umbrella version.
+  - `typeconversions` saw only patch-level commits this cycle and proposed `0.2.1`.
+  - We patched 0.3.0 in via `release-as` overrides this release, but the overrides
+    must be removed before v0.4 work begins or the next release will be wrong.
+- Fix options:
+  1. Switch to release-please's `linked-versions` plugin so the four packages share
+     one bump cadence.
+  2. Collapse to a single `release-type` block at root and drop the per-package
+     configs; let one CHANGELOG cover everything.
+  3. Keep per-package configs but commit to bumping all four together via
+     `Release-As:` commit footers each release.
+- Pick before opening the v0.4 milestone branch.
+
 ---
 
 ## P1 — Milestone v0.4 (2 weeks): commands + sprocs
