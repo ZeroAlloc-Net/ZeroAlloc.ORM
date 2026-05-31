@@ -1289,6 +1289,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         case BatchEmitStrategy.BatchAlways:
                             EmitMultiResultSetBatch(sb, m, repo.ConnectionAccess);
                             break;
+                        case BatchEmitStrategy.JoinedStatementsOnly:
+                            EmitMultiResultSetJoined(sb, m, repo.ConnectionAccess);
+                            break;
                         default:
                             EmitMultiResultSetStub(sb, m);
                             break;
@@ -1582,6 +1585,54 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("        {");
         EmitBatchSetup(sb, m, statements);
         sb.AppendLine($"            await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        EmitMultiResultElements(sb, mat, ct, indent: "            ");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // v0.3 Phase B.3 — ;-joined fallback for MultiResultSet. Used for
+    // BatchEmitStrategy.JoinedStatementsOnly when the adopter has explicitly set
+    // BatchMode.Never. Also called by the falsy branch of BatchWithFallback (B.4)
+    // for providers without IAsyncDbBatch support.
+    //
+    // Differences from EmitMultiResultSetBatch:
+    //   * Single command (the SQL already contains the `;` separators) — no batch.
+    //   * Parameters bound ONCE — the joined SQL re-uses the same `@param` across
+    //     statements; the provider re-binds for each as a single command execution.
+    //   * Per-element reader walk is identical (shared via EmitMultiResultElements).
+    private static void EmitMultiResultSetJoined(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.MultiResultMaterialization;
+        if (mat is null)
+        {
+            EmitMultiResultSetStub(sb, m);
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        // The original SQL already carries `;` separators between statements — emit
+        // it verbatim. Joining via `string.Join("; ", Split(...))` would normalize
+        // whitespace, which is desirable but loses the user's original layout in
+        // multi-line raw string SQL. Verbatim keeps snapshots predictable.
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: "            ");
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
