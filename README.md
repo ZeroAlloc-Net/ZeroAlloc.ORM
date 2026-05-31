@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.3 shipped (multi-result tuples + IAsyncEnumerable streaming). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** Pre-release. v0.4 shipped (`[Command]` + `[StoredProcedure]` + named-tuple output parameters). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -18,7 +18,7 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 | Package | Description | NativeAOT |
 |---------|-------------|---|
 | **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Param]`, `[StoreAsString]`) + exception types. Remaining attributes (`[Command]`, `[StoredProcedure]`, `[Materialize]`) land in their implementing milestones (v0.4–v0.5). | ✅ |
+| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[StoreAsString]`) + exception types. `[Materialize]` lands in v0.5. | ✅ |
 | **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
 | **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
 
@@ -125,7 +125,51 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 
 - **New diagnostics ZAO032 / ZAO033** — arity mismatch between a tuple return and the number of `;`-separated SQL statements. ZAO032 fires when the tuple has more elements than statements; ZAO033 fires when it has fewer. Both at build time, so the wrong shape never ships.
 
-Deferred to later milestones: `[Command]` / `[StoredProcedure]` (v0.4), multi-column composite types (v0.5).
+### Added in v0.4
+
+- **`[Command]` attribute** — non-`SELECT` SQL with three result-shape modes selected via `CommandKind`. `NonQuery` returns rows-affected (`int`), `Scalar` returns the first column of the first row (any materialization-eligible type), `Identity` returns the inserted identity value through provider-aware suffixes (`SCOPE_IDENTITY()` for SQL Server, `LAST_INSERT_ROWID()` for Sqlite, `RETURNING` for Postgres). See [`docs/cookbook/commands.md`](docs/cookbook/commands.md).
+
+  ```csharp
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [Command("UPDATE Orders SET Total = @total WHERE Id = @id", Kind = CommandKind.NonQuery)]
+      public partial Task<int> UpdateTotalAsync(int id, decimal total, CancellationToken ct);
+
+      [Command("SELECT COUNT(*) FROM Orders WHERE CustomerId = @customerId", Kind = CommandKind.Scalar)]
+      public partial Task<int> CountByCustomerAsync(int customerId, CancellationToken ct);
+
+      [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@customerId, @total)", Kind = CommandKind.Identity)]
+      public partial Task<int> InsertAsync(int customerId, decimal total, CancellationToken ct);
+  }
+  ```
+
+- **`[StoredProcedure]` attribute** — emit `CommandType = StoredProcedure` with the procedure name as `CommandText`. Result shapes mirror `[Query]`: scalar, single-row, list, multi-result-set tuples. Parameters bind by name. See [`docs/cookbook/stored-procedures.md`](docs/cookbook/stored-procedures.md).
+
+  ```csharp
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [StoredProcedure("usp_GetOrderWithLines")]
+      public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetWithLinesAsync(
+          int orderId, CancellationToken ct);
+  }
+  ```
+
+- **Named-tuple output parameters** — on `[StoredProcedure]` methods, tuple return fields beyond the first map to `ParameterDirection.Output` SQL parameters by name. Output values are copied back into the tuple after execution. The first tuple field is still the result-set materialization (scalar, row, or list); subsequent named fields are output params.
+
+  ```csharp
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [StoredProcedure("usp_CreateOrder")]
+      public partial Task<(int rowsAffected, int newOrderId, decimal computedTotal)> CreateAsync(
+          int customerId, CancellationToken ct);
+  }
+  ```
+
+  The generator emits `Direction = ParameterDirection.Output` on `@newOrderId` and `@computedTotal`, executes the proc, then reads the output values back into the returned tuple.
+
+- **New diagnostics ZAO060 (reserved) / ZAO061 / ZAO062** — sproc-side compile-time guardrails. ZAO060 is reserved for a future `out`/`ref`-on-async check (the C# compiler already rejects `out`/`ref` on async-returning partials, so the dedicated ZAO060 message is unnecessary at the source-generator layer for now). ZAO061 fires on `[StoredProcedure("")]` (empty procedure name). ZAO062 fires when a named-tuple output-parameter field doesn't appear as a method parameter that could carry the output back to SQL — the name must match an `@param` the proc declares.
+
+Deferred to later milestones: composite materialization e.g. `Money(decimal, string)` (v0.5), `[Materialize(Factory)]` factory routing (v0.5), provider routing of identity suffixes beyond Sqlite (v2), ActivitySource / built-in observability (v0.6 via ZA.Telemetry composition), TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope), stored-procedure integration tests (v0.6 Postgres fixture).
 
 ## Design + roadmap
 
