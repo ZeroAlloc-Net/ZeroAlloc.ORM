@@ -673,6 +673,61 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Command_Scalar_Task_int_emit_compiles_cleanly()
+    {
+        // v0.4 Phase B.1 — [Command(Kind = Scalar)] returning Task<int> must
+        // emit a body that compiles. CS0030/CS0266 catch invalid scalar casts;
+        // CS8795/CS0759 catch partial-signature mismatches.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("SELECT COUNT(*) FROM Orders", Kind = CommandKind.Scalar)]
+                public partial Task<int> CountAsync(CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Command_Scalar_Task_nullable_decimal_emit_compiles_cleanly()
+    {
+        // v0.4 Phase B.1 — [Command(Kind = Scalar)] returning Task<decimal?> must
+        // emit the DBNull/null guard and the `(decimal)__result` cast cleanly.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("SELECT SUM(Total) FROM Orders", Kind = CommandKind.Scalar)]
+                public partial Task<decimal?> GetTotalOrNullAsync(CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a

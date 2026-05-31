@@ -25,4 +25,28 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
 
     [Command("UPDATE Orders SET Total = Total + 1 WHERE Id = @id")]
     public partial Task TouchOrderAsync(int id, CancellationToken ct);
+
+    // v0.4 Phase B.2 — [Command(Kind = Scalar)] round-trip coverage. Four methods
+    // mirror the snapshot matrix: COUNT(*) -> int, SUM(Total) WHERE Customer ->
+    // decimal, MAX(Created) on empty -> DateTime?, SUM(Total) -> value-object.
+    [Command("SELECT COUNT(*) FROM Orders", Kind = CommandKind.Scalar)]
+    public partial Task<int> CountOrdersAsync(CancellationToken ct);
+
+    [Command("SELECT COALESCE(SUM(Total), 0) FROM Orders WHERE CustomerId = @cust", Kind = CommandKind.Scalar)]
+    public partial Task<decimal> SumTotalsForCustomerAsync(int cust, CancellationToken ct);
+
+    [Command("SELECT MAX(Created) FROM Orders", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime?> MaxCreatedAsync(CancellationToken ct);
+
+    [Command("SELECT COALESCE(SUM(Total), 0) FROM Orders WHERE CustomerId = @cust", Kind = CommandKind.Scalar)]
+    public partial Task<TotalAmount> SumTotalsValueObjectAsync(int cust, CancellationToken ct);
+
+    // v0.4 Phase B code-review Fix 1 regression coverage. A non-nullable
+    // `Task<int>` scalar against a SELECT that produces NO ROWS yields a null
+    // `__result` from ExecuteScalarAsync. The generator's null-guard must throw
+    // InvalidOperationException instead of letting Convert.ToInt32(null, ic)
+    // silently return 0 — a data-corruption hazard for callers expecting an
+    // actual scalar.
+    [Command("SELECT Total FROM Orders WHERE Id = -999", Kind = CommandKind.Scalar)]
+    public partial Task<decimal> GetTotalForMissingIdAsync(CancellationToken ct);
 }

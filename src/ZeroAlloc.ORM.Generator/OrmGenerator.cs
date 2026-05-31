@@ -350,6 +350,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind);
 
+        // ZAO002 — [Command(Kind = Scalar)] requires a scalar-shaped return type
+        // (Task<T> / ValueTask<T> reducing to a primitive, value-object, or enum).
+        // When the return type is a container (List<T>, IAsyncEnumerable<T>, tuple,
+        // etc.) classification falls through to Unknown; raise the compile-time
+        // diagnostic here so the adopter sees the failure at build time instead of
+        // hitting the runtime NotImplementedException stub. The existing ZAO002
+        // path at the top of TransformMethod covers the "return type isn't even
+        // Task<T>" case via IsSupportedReturnType; THIS branch covers the more
+        // subtle "Task<T> but T isn't a scalar shape on Kind=Scalar" case.
+        if (shape == EmitShape.Unknown
+            && isCommandAttribute
+            && commandKind == CommandKindModel.Scalar
+            && IsSupportedReturnType(method.ReturnType))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO002",
+                Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    method.ReturnType.ToDisplayString()))));
+        }
+
         // ZAO032 — MultiResultSet tuple arity exceeds the SQL statement count. Detection
         // ran fine (the tuple itself is classifiable), but the SQL has fewer SELECTs
         // than the tuple requires; the runtime would attempt to read past the last
@@ -617,10 +639,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
+        // v0.4 Phase B — [Command(Kind = Scalar)] dispatch. Extracted to
+        // ClassifyCommandScalar so this method stays focused on the shape-table.
+        if (isCommandAttribute && commandKind == CommandKindModel.Scalar)
+        {
+            return ClassifyCommandScalar(method, conventionContext);
+        }
+
         if (isCommandAttribute)
         {
-            // Scalar / Identity Kinds fall through to Unknown in Phase A — Phase B / C
-            // wire the matching emit shapes.
+            // Identity Kind falls through to Unknown — Phase C wires the matching emit
+            // shape. The Phase A fallback in EmitRepository surfaces this via a
+            // NotImplementedException naming the kind so adopters know which milestone
+            // covers their shape.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
@@ -726,6 +757,90 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
     }
 
+    // v0.4 Phase B — [Command(Kind = Scalar)] dispatch. Accepts any return type
+    // shape that reduces to ExecuteScalarAsync's single-value result:
+    //   * Task<TPrimitive>      — Convert.ToXxx funnel from object?.
+    //   * Task<TPrimitive?>     — DBNull/null guard before the cast.
+    //   * Task<TValueObject>    — factory wrap (ValueObject / SingleArgCtor /
+    //                              StaticFactory) over the unwrapped primitive.
+    //   * Task<TEnum>           — cast to the enum from the underlying integral.
+    //   * Task<TEnum?>          — same with DBNull/null guard.
+    //
+    // Container shapes (List<T>, tuples, IAsyncEnumerable<T>) on a Scalar kind
+    // are unsupported. Returning EmitShape.Unknown surfaces ZAO002 at compile time
+    // via the diagnostic block in TransformMethod (see the ZAO002-for-Scalar
+    // branch); the Phase A runtime stub is the secondary defense if the diagnostic
+    // is suppressed.
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyCommandScalar(
+        IMethodSymbol method,
+        ConventionContext conventionContext)
+    {
+        if (method.ReturnType is not INamedTypeSymbol scalarReturn)
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        // Task<T> / ValueTask<T> with arity 1.
+        if (scalarReturn.Arity != 1
+            || (scalarReturn.Name != "Task" && scalarReturn.Name != "ValueTask")
+            || scalarReturn.TypeArguments.Length != 1)
+        {
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        var scalarInner = scalarReturn.TypeArguments[0];
+
+        // Detect nullable wrapper — `T?` reference annotation or `Nullable<T>`.
+        var scalarIsNullable = scalarInner.NullableAnnotation == NullableAnnotation.Annotated
+            || (scalarInner is INamedTypeSymbol sn
+                && sn.IsGenericType
+                && sn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+        var scalarUnwrapped = UnwrapNullableValueType(scalarInner)
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+        // Type display carries the UNWRAPPED (non-nullable) type — the column
+        // binding stores the cast-target type and tracks the nullable bit
+        // separately on IsNullable. Downstream emitters (scalar / row) that
+        // need `(T?)null` append the `?` based on IsNullable.
+        var scalarDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        var scalarTypeDisplay = scalarUnwrapped.ToDisplayString(scalarDisplayFormat);
+
+        // ConventionDiscovery handles the four supported families uniformly.
+        var scalarResolution = ConventionDiscovery.Resolve(scalarUnwrapped, conventionContext);
+        string? scalarReader = scalarResolution.Kind switch
+        {
+            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(scalarUnwrapped),
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveUnderlyingReaderForFactory(scalarResolution),
+            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(scalarUnwrapped),
+            ConventionKind.EnumAsString => "GetString",
+            _ => null,
+        };
+        if (scalarReader is null)
+        {
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        var scalarConvention = BuildConventionInfo(scalarUnwrapped, scalarResolution, scalarReader);
+
+        // The MaterializationModel carries one ColumnBinding describing the
+        // scalar's type + factory wiring; EmitCommandScalar reads it to build
+        // the cast / factory expression. TargetTypeFullName carries the
+        // unwrapped (non-nullable) type's fully-qualified name — the emit
+        // appends the nullable annotation independently when needed.
+        var scalarBinding = new ColumnBinding(
+            GetterMethod: scalarReader,
+            IsNullable: scalarIsNullable,
+            TypeName: scalarTypeDisplay,
+            Convention: scalarConvention);
+        var scalarMaterialization = new MaterializationModel(
+            Kind: MaterializationKind.ScalarPrimitive,
+            TargetTypeFullName: scalarUnwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(scalarBinding)));
+
+        return (EmitShape.CommandScalar, null, scalarMaterialization, null, HasReturnValue: true);
+    }
+
     // Attempt to classify `elementType` as a positional record whose constructor params
     // resolve to known conventions. Returns null if the type isn't a record, has no
     // public ctor with parameters, or any parameter falls outside the conventions
@@ -792,10 +907,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
             var convention = BuildConventionInfo(underlying, resolution, reader);
 
+            // TypeName stores the UNWRAPPED type — IsNullable carries the nullable
+            // bit. Downstream emitters that need `(T?)null` append the `?` based
+            // on IsNullable. Strip both `Nullable<T>` (already done by `underlying`)
+            // AND the reference-type nullable annotation so `string?` -> `string`.
+            var unwrappedDisplay = underlying
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                .ToDisplayString(typeDisplayFormat);
+
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
                 IsNullable: isNullable,
-                TypeName: p.Type.ToDisplayString(typeDisplayFormat),
+                TypeName: unwrappedDisplay,
                 Convention: convention));
         }
 
@@ -869,10 +992,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // mirrors what a hand-written reader would do.
             var columnName = ToPascalCase(p.Name);
 
+            // TypeName stores the UNWRAPPED type (see FlatRow for rationale).
+            var unwrappedDisplay = underlying
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                .ToDisplayString(typeDisplayFormat);
+
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
                 IsNullable: isNullable,
-                TypeName: p.Type.ToDisplayString(typeDisplayFormat),
+                TypeName: unwrappedDisplay,
                 Convention: convention,
                 ColumnName: columnName));
         }
@@ -1078,18 +1206,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         };
         return underlying is null ? null : PrimitiveCatalog.GetScalarReaderMethod(underlying);
     }
-
-    // Map an IDataReader.GetXxx reader-method name back to the C# integral type used
-    // for the binding-cast (`(int)@status` etc.). The cast must target the enum's
-    // underlying primitive, not the enum type, so the DbParameter sees an integer.
-    private static string EnumUnderlyingCastTypeFromReader(string? readerMethod) => readerMethod switch
-    {
-        "GetInt32" => "int",
-        "GetInt64" => "long",
-        "GetInt16" => "short",
-        "GetByte" => "byte",
-        _ => "int", // safe default; non-integral readers never apply to enums
-    };
 
     // Enum's underlying integral type drives both the column-read (GetInt32 by
     // default; GetByte / GetInt16 / GetInt64 for byte / short / long backed enums)
@@ -1482,6 +1598,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // without a return.
                     EmitCommandNonQuery(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.CommandScalar:
+                    // v0.4 Phase B.1 — [Command(Kind = Scalar)] emit. Open/execute/
+                    // close lifecycle around ExecuteScalarAsync. Result materialization
+                    // is uniform across primitives, value-objects, single-arg-ctor
+                    // records, and enums via the ConventionDiscovery integration
+                    // captured on m.Materialization.
+                    EmitCommandScalar(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
                     //   BatchAlways           -> IAsyncDbBatch path (B.2)
@@ -1508,18 +1632,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (m.IsCommand)
                     {
                         // v0.4 Phase A.1 — [Command] detected, scanner wired through to the
-                        // emit pipeline. Real shape emit lands in Phase A.2 (NonQuery), B
-                        // (Scalar), C (Identity). Emit a throwing stub so the consuming code
-                        // compiles but flags missing implementation at runtime. The stub's
-                        // generated source carries a comment pointing at the future-milestone
-                        // phase so adopters reading the .g.cs know which release ships their
-                        // shape.
+                        // emit pipeline. NonQuery (Phase A.2) and Scalar (Phase B.1) are
+                        // shipped; Identity (Phase C) is still pending. Emit a throwing
+                        // stub so the consuming code compiles but flags missing
+                        // implementation at runtime. The stub's generated source carries
+                        // a comment pointing at the future-milestone phase so adopters
+                        // reading the .g.cs know which release ships their shape.
                         var paramList = BuildParameterList(m.MethodParameters);
                         sb.AppendLine($"    {GeneratedCodeAttribute}");
                         sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
-                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase B (Scalar) / Phase C (Identity) for emit;");
+                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase C (Identity) for emit;");
                         sb.AppendLine($"        //            current stub fires NotImplementedException at first call.");
-                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase B / C.\");");
+                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase C.\");");
                     }
                     else
                     {
@@ -1620,6 +1744,164 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // v0.4 Phase B.1 — [Command(Kind = Scalar)] emit. Open/execute/close lifecycle
+    // around ExecuteScalarAsync. Materialization for the returned `object?` follows
+    // the ConventionDiscovery model captured on m.Materialization:
+    //
+    //   * Primitive             — null-guard then Convert.ToXxx funnel. The
+    //                              non-nullable branch THROWS InvalidOperationException
+    //                              on a null `__result` (empty result set or a NULL
+    //                              column) because Convert.ToInt32(null, ic) silently
+    //                              returns 0 — a data-corruption hazard for callers
+    //                              expecting an actual count/sum. Convert.ToXxx still
+    //                              throws InvalidCastException on DBNull.Value, so the
+    //                              guard only needs to handle pure `null`.
+    //   * Nullable primitive    — `if (__result is null or DBNull) return null;`
+    //                              followed by the typed Convert.ToXxx cast.
+    //   * ValueObject / SingleArgCtor / StaticFactory
+    //                           — wrap the unwrapped primitive cast in the factory
+    //                              call (`new OrderId(Convert.ToInt32(__result!, ic))`).
+    //   * Enum / EnumAsString   — cast to the enum's CLR type / Enum.Parse<T>(...).
+    //
+    // The single-column ColumnBinding carried on the MaterializationModel encodes
+    // the underlying-primitive reader / factory wiring so this emit reuses the
+    // exact same convention plumbing the row-shape emitters use; the only
+    // difference is the inbound expression — `Convert.ToXxx(__result!, ic)`
+    // instead of `__reader.GetXxx(N)`.
+    private static void EmitCommandScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null || mat.Columns.Length != 1)
+        {
+            // Defensive — classification should never assign CommandScalar without
+            // a single-column model. Emit a comment so the missing wiring is
+            // visible in the generated source; the surrounding partial still needs
+            // a body though, so we route through the stub form.
+            sb.AppendLine($"    // TODO: CommandScalar without single-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var col = mat.Columns[0];
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBindingWithIndent(sb, m, "            ");
+        sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
+
+        // Nullable path emits a DBNull/null guard before the typed cast; the
+        // non-nullable path STILL guards against pure `null` because
+        // Convert.ToInt32(null, ic) returns 0 per .NET docs — silently returning
+        // a sentinel zero for an empty COUNT result would corrupt caller logic.
+        // Convert.ToXxx still throws InvalidCastException on DBNull.Value, so
+        // the non-nullable branch only needs the `null` guard (DBNull funnels
+        // through Convert.ToXxx and throws).
+        if (col.IsNullable)
+        {
+            sb.AppendLine("            if (__result is null or global::System.DBNull) return null;");
+        }
+        else
+        {
+            sb.AppendLine("            if (__result is null)");
+            sb.AppendLine("                throw new global::System.InvalidOperationException(\"Scalar command returned no value; use Task<T?> if null is legal.\");");
+        }
+
+        // Build the materialization expression. Provider-returned scalar types
+        // are not always exact-CLR-match (e.g. Sqlite returns System.Int64 for
+        // COUNT(*) and SUM, even when the C# return type is `int` / `decimal`).
+        // A direct `(int)__result` cast trips InvalidCastException at runtime
+        // because reference-typed unboxing is exact. We route through
+        // System.Convert.ToXxx where available — same pattern the existing
+        // EmitScalarInt uses — so int/long/short/byte/bool/decimal/double/
+        // float/string/DateTime are tolerant of width promotion. For types
+        // without a Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan) we
+        // fall back to a direct cast; those rarely surface as widened types
+        // from providers anyway.
+        var bang = col.IsNullable ? "" : "!";
+        string materialized;
+        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            // For factory shapes the inner expression unwraps `__result` to the
+            // factory's expected primitive — Convert.ToXxx when available so the
+            // wrapping conversion handles the same provider-widening cases as
+            // the bare-primitive branch below. EnumAsString unwraps to string
+            // through the SAME Convert.ToString funnel so all scalar branches
+            // converge on one conversion machinery.
+            var underlyingType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            var innerExpr = BuildScalarConvertExpression(underlyingType, "__result" + bang);
+            materialized = conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){innerExpr}",
+                // AOT note: Enum.Parse<T> is [RequiresUnreferencedCode] but safe
+                // for closed enum types. Mirrors EmitFlatRow's handling.
+                // BuildScalarConvertExpression("string", ...) returns
+                // `Convert.ToString(__result!, ic)!` — the trailing `!` ensures
+                // Enum.Parse<T> sees a non-null string.
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({BuildScalarConvertExpression("string", "__result" + bang)})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({innerExpr})"
+                    : $"{conv.FactoryFullName}({innerExpr})",
+            };
+        }
+        else
+        {
+            // Primitive: route through Convert.ToXxx with InvariantCulture for
+            // width-tolerant conversion. col.TypeName carries the UNWRAPPED type
+            // display (the model stores the cast target separately from the
+            // nullable bit, so we don't have to strip a trailing `?` here).
+            materialized = BuildScalarConvertExpression(col.TypeName, "__result" + bang);
+        }
+
+        sb.AppendLine($"            return {materialized};");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // Build the expression that converts a boxed `object` scalar (the result of
+    // ExecuteScalarAsync) to the target primitive type. ADO.NET providers are
+    // free to widen / narrow numeric scalars — Sqlite returns Int64 for any
+    // integer aggregate, MS-SQL returns Int32 most of the time but Int64 for
+    // BIGINT, SUM over decimal columns may surface as either decimal or double
+    // depending on the driver. System.Convert.ToXxx absorbs all those
+    // permutations through IConvertible without surprising the user; the
+    // existing EmitScalarInt path uses the same pattern. For types lacking a
+    // Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan, custom strings
+    // outside the table) we fall back to a direct cast — those are exact-typed
+    // by providers in practice.
+    //
+    // `subject` is the expression evaluating to the boxed value (already
+    // post-bang where appropriate). The returned expression is suitable to use
+    // as a `return` value or as a constructor argument.
+    private static string BuildScalarConvertExpression(string targetType, string subject)
+    {
+        return targetType switch
+        {
+            "int" => $"global::System.Convert.ToInt32({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "long" => $"global::System.Convert.ToInt64({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "short" => $"global::System.Convert.ToInt16({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "byte" => $"global::System.Convert.ToByte({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "bool" => $"global::System.Convert.ToBoolean({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "decimal" => $"global::System.Convert.ToDecimal({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "double" => $"global::System.Convert.ToDouble({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "float" => $"global::System.Convert.ToSingle({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            "string" => $"global::System.Convert.ToString({subject}, global::System.Globalization.CultureInfo.InvariantCulture)!",
+            "global::System.DateTime" => $"global::System.Convert.ToDateTime({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
+            // No Convert.ToXxx exists for Guid / byte[] / DateTimeOffset /
+            // TimeSpan — fall back to a direct cast. Providers return these as
+            // exact CLR types in practice (Sqlite TimeSpan via Microsoft.Data.Sqlite,
+            // Npgsql DateTimeOffset, etc.).
+            _ => $"({targetType}){subject}",
+        };
     }
 
     // Single-row scalar with null tolerance — distinguishes three cases:
@@ -1723,7 +2005,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName})null : {readExpr}";
+                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName}?)null : {readExpr}";
             }
             else
             {
@@ -1795,7 +2077,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
             }
             else
             {
@@ -1898,7 +2180,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
             }
             else
             {
@@ -2045,7 +2327,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 if (conv.Kind == (int)ConventionKind.Enum)
                 {
-                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
                     valueExpr = $"({castType})@{p.Name}";
                 }
                 else if (conv.Kind == (int)ConventionKind.EnumAsString)
@@ -2090,7 +2372,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 if (conv.Kind == (int)ConventionKind.Enum)
                 {
-                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
                     valueExpr = $"({castType})@{p.Name}";
                 }
                 else if (conv.Kind == (int)ConventionKind.EnumAsString)
@@ -2195,7 +2477,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 if (conv.Kind == (int)ConventionKind.Enum)
                 {
-                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
                     valueExpr = $"({castType})@{p.Name}";
                 }
                 else if (conv.Kind == (int)ConventionKind.EnumAsString)
@@ -2365,7 +2647,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             string expr;
             if (col.IsNullable)
             {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
             }
             else
             {
@@ -2425,7 +2707,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // for an int-backed enum; for byte/short/long-backed enums the cast
                     // target derives from the GetXxx reader name. The provider then sees
                     // the integral value; SQL stores it as INTEGER.
-                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
                     valueExpr = $"({castType})@{p.Name}";
                 }
                 else if (conv.Kind == (int)ConventionKind.EnumAsString)

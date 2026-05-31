@@ -51,8 +51,11 @@ internal sealed record ConventionInfo(
 //   GetterMethod -- IDataReader.GetXxx method name (e.g. "GetInt32").
 //   IsNullable   -- ctor parameter type is a nullable reference or Nullable<T>;
 //                   emit wraps the GetXxx call in an IsDBNull(N) guard.
-//   TypeName     -- fully-qualified parameter type display, used when the emit
-//                   needs to cast the null sentinel (e.g. `(int?)null`).
+//   TypeName     -- fully-qualified parameter type display, UNWRAPPED (no trailing
+//                   `?`, reference-nullability annotation stripped). The emit
+//                   appends `?` based on IsNullable when it needs to cast a null
+//                   sentinel (e.g. `({TypeName}?)null`). Stored unwrapped so the
+//                   scalar-emit cast target maps directly without re-stripping.
 //   Convention   -- non-null only when the column resolves to a non-primitive
 //                   convention (ValueObject, SingleArgCtor, StaticFactory). When
 //                   null the emitter falls back to the primitive `reader.GetXxx(N)`
