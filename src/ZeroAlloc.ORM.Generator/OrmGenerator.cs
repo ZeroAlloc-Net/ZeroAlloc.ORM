@@ -1279,7 +1279,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     EmitDomainEntity(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.MultiResultSet:
-                    EmitMultiResultSetStub(sb, m);
+                    // v0.3 Phase B — per-strategy dispatch:
+                    //   BatchAlways           -> IAsyncDbBatch path (B.2)
+                    //   JoinedStatementsOnly  -> ;-joined single-command fallback (B.3)
+                    //   BatchWithFallback     -> runtime branch on CanCreateBatch (B.4)
+                    //   anything else         -> stub (shouldn't reach here, defensive)
+                    switch (m.Strategy)
+                    {
+                        case BatchEmitStrategy.BatchAlways:
+                            EmitMultiResultSetBatch(sb, m, repo.ConnectionAccess);
+                            break;
+                        default:
+                            EmitMultiResultSetStub(sb, m);
+                            break;
+                    }
                     break;
                 default:
                     sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
@@ -1530,6 +1543,273 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+    }
+
+    // v0.3 Phase B.2 — IAsyncDbBatch path for MultiResultSet. Emits one BatchCommand
+    // per SQL statement (each with its own per-parameter binding block — locals are
+    // suffixed `_N` to avoid collision when the same `@param` appears in multiple
+    // statements), then walks result sets via NextResultAsync between elements.
+    //
+    // Element-kind dispatch:
+    //   * Row     -> ReadAsync once, ctor invocation. First element returning empty
+    //                is the canonical "no aggregate" signal -> return null when
+    //                ReturnsNullable; non-first elements throw a materialization
+    //                exception (the SQL said it'd produce that many result sets).
+    //   * List    -> while(ReadAsync) Add(...). Empty result is legal (empty list).
+    //   * Scalar  -> ReadAsync once, IsDBNull-guarded GetXxx(0). Same first-element
+    //                empty contract as Row.
+    private static void EmitMultiResultSetBatch(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.MultiResultMaterialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign MultiResultSet without a model.
+            EmitMultiResultSetStub(sb, m);
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        var statements = SqlStatementSplitter.Split(m.Sql);
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        EmitBatchSetup(sb, m, statements);
+        sb.AppendLine($"            await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        EmitMultiResultElements(sb, mat, ct, indent: "            ");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // Render the `__batch` + per-statement BatchCommand setup. Each statement gets its
+    // own block scope so the per-command `__p_<name>_N` locals don't leak. Parameter
+    // binding mirrors EmitParameterBinding but each parameter local is suffixed with
+    // the command index to keep them distinct.
+    private static void EmitBatchSetup(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements)
+    {
+        sb.AppendLine("            await using var __batch = __conn.CreateBatch();");
+        for (var i = 0; i < statements.Length; i++)
+        {
+            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
+            var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.AppendLine();
+            sb.AppendLine($"            var {cmdLocal} = __batch.CreateBatchCommand();");
+            sb.AppendLine($"            {cmdLocal}.CommandText = {stmtLiteral};");
+            EmitBatchCommandParameterBinding(sb, m, cmdLocal, i);
+            sb.AppendLine($"            __batch.BatchCommands.Add({cmdLocal});");
+        }
+        sb.AppendLine();
+    }
+
+    // Per-statement parameter binding. Identical to EmitParameterBinding apart from
+    // (a) targeting a specific `__cmdN` local instead of the implicit `__cmd` and
+    // (b) suffixing the per-parameter local with the command index so two commands
+    // referencing the same `@id` don't collide on `__p_id`.
+    private static void EmitBatchCommandParameterBinding(StringBuilder sb, QueryMethodModel m, string cmdLocal, int cmdIndex)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (p.IsCancellationToken) continue;
+            var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"            var {local} = {cmdLocal}.CreateParameter();");
+            sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
+
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv)
+            {
+                if (conv.Kind == (int)ConventionKind.Enum)
+                {
+                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    valueExpr = $"({castType})@{p.Name}";
+                }
+                else if (conv.Kind == (int)ConventionKind.EnumAsString)
+                {
+                    valueExpr = $"@{p.Name}.ToString()";
+                }
+                else if (conv.ValuePropertyName is { } propName)
+                {
+                    valueExpr = $"@{p.Name}.{propName}";
+                }
+            }
+
+            if (p.IsNullable)
+            {
+                sb.AppendLine($"            {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"            {local}.Value = {valueExpr};");
+            }
+            sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
+        }
+    }
+
+    // Shared per-tuple-element materialization. Used by both the batch (B.2) and
+    // joined-fallback (B.3) emit paths — same reader semantics either way once the
+    // reader is open.
+    //
+    // The first non-List element gates the optional "return null" on empty (this is
+    // the canonical "no aggregate present" signal). For non-first elements that
+    // expected a fresh result set, NextResultAsync returning false throws the
+    // ZeroAllocOrmMaterializationException so the adopter sees a clear runtime
+    // signal that the database returned fewer result sets than the tuple declared.
+    private static void EmitMultiResultElements(StringBuilder sb, MultiResultMaterializationModel mat, string ct, string indent)
+    {
+        var elements = mat.Elements;
+        for (var i = 0; i < elements.Length; i++)
+        {
+            var el = elements[i];
+            if (i > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"{indent}if (!await __reader.NextResultAsync({ct}).ConfigureAwait(false))");
+                sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected {elements.Length} result sets; got \" + {i.ToString(System.Globalization.CultureInfo.InvariantCulture)} + \".\");");
+            }
+            EmitMultiResultElement(sb, el, i, mat.ReturnsNullable, ct, indent);
+        }
+
+        // Build the return tuple expression from the per-element locals.
+        sb.Append($"{indent}return (");
+        for (var i = 0; i < elements.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append("__elem").Append(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        sb.AppendLine(");");
+    }
+
+    private static void EmitMultiResultElement(StringBuilder sb, MultiResultElement el, int index, bool returnsNullable, string ct, string indent)
+    {
+        var localName = "__elem" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        switch (el.Kind)
+        {
+            case MultiResultElementKind.Row:
+                {
+                    sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    if (returnsNullable && index == 0)
+                    {
+                        // First-row-of-first-set empty => return null. Only fires for
+                        // Task<(...)?> — non-nullable returns fall through to the
+                        // exception arm below.
+                        sb.AppendLine($"{indent}    return null;");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
+                    }
+                    sb.AppendLine($"{indent}var {localName} = new {el.ElementTypeName}(");
+                    EmitColumnReads(sb, el.Columns, indent + "    ", trailing: ");");
+                    break;
+                }
+            case MultiResultElementKind.List:
+                {
+                    sb.AppendLine($"{indent}var {localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
+                    sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    sb.AppendLine($"{indent}{{");
+                    sb.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
+                    EmitColumnReads(sb, el.Columns, indent + "        ", trailing: "));");
+                    sb.AppendLine($"{indent}}}");
+                    break;
+                }
+            case MultiResultElementKind.Scalar:
+                {
+                    sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    if (returnsNullable && index == 0)
+                    {
+                        sb.AppendLine($"{indent}    return null;");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
+                    }
+                    var readExpr = $"__reader.{el.GetterMethod}(0)";
+                    if (el.Convention is { } conv && conv.FactoryFullName is not null)
+                    {
+                        readExpr = conv.Kind switch
+                        {
+                            (int)ConventionKind.Enum
+                                => $"({conv.FactoryFullName}){readExpr}",
+                            (int)ConventionKind.EnumAsString
+                                => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                            _ => conv.FactoryIsCtor
+                                ? $"new {conv.FactoryFullName}({readExpr})"
+                                : $"{conv.FactoryFullName}({readExpr})",
+                        };
+                    }
+                    if (el.IsNullable)
+                    {
+                        sb.AppendLine($"{indent}var {localName} = __reader.IsDBNull(0) ? ({el.ElementTypeName}?)null : {readExpr};");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{indent}var {localName} = {readExpr};");
+                    }
+                    break;
+                }
+        }
+    }
+
+    // Render the ordered column-read expressions for a Row / List element. Mirrors
+    // the EmitFlatRow column loop but emits one expression per line with a trailing
+    // comma except for the last. The `trailing` parameter lets the caller close the
+    // outer ctor call appropriately (")" for Row, "))" for List's inner Add).
+    private static void EmitColumnReads(StringBuilder sb, EquatableArray<ColumnBinding> cols, string indent, string trailing)
+    {
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var isLast = i == cols.Length - 1;
+            string ordinalExpr;
+            // Mirror EmitFlatRow / EmitDomainEntity: positional FlatRow uses ordinal
+            // index; column-name DomainEntity routes through GetOrdinal("Name").
+            if (col.ColumnName is { } columnName)
+            {
+                var colNameLiteral = SymbolDisplay.FormatLiteral(columnName, quote: true);
+                ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+            }
+            else
+            {
+                ordinalExpr = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.Kind switch
+                {
+                    (int)ConventionKind.Enum
+                        => $"({conv.FactoryFullName}){readExpr}",
+                    (int)ConventionKind.EnumAsString
+                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                    _ => conv.FactoryIsCtor
+                        ? $"new {conv.FactoryFullName}({readExpr})"
+                        : $"{conv.FactoryFullName}({readExpr})",
+                };
+            }
+            string expr;
+            if (col.IsNullable)
+            {
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName})null : {readExpr}";
+            }
+            else
+            {
+                expr = readExpr;
+            }
+            var lineTrailing = isLast ? trailing : ",";
+            sb.AppendLine($"{indent}{expr}{lineTrailing}");
+        }
     }
 
     // v0.3 Phase B.1 — stub emit for the MultiResultSet shape. The detection has
