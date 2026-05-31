@@ -127,4 +127,43 @@ internal sealed record ParameterInfo(
     bool IsCancellationToken,
     string? ParamNameOverride = null,
     bool IsNullable = false,
-    ConventionInfo? Convention = null);
+    ConventionInfo? Convention = null,
+    // v0.5 Phase B — composite parameter binding. Non-default when the parameter's
+    // type resolves to ConventionKind.MultiArgCtor (e.g. `Money(decimal Amount,
+    // string Currency)`). The binding emitter walks this list to produce one
+    // DbParameter per inner field, named `@{Name}_{Field.CtorArgName}`. When
+    // default (empty / IsDefault), the parameter binds via the primitive /
+    // VO / enum path captured in Convention.
+    //
+    // CompositeTypeFullName is the globally-qualified composite type display
+    // (e.g. "global::TestApp.Money"); the emitter uses it only for the
+    // classifier sentinel comment. The unpacking accessor (`@total.Amount`)
+    // derives from the C# parameter name and each field's PascalCased property
+    // name — records auto-generate properties matching ctor arg names.
+    EquatableArray<CompositeBindingField> CompositeFields = default,
+    string? CompositeTypeFullName = null);
+
+// v0.5 Phase B — one inner field of a composite parameter (e.g. `Amount` /
+// `Currency` of a `Money(decimal Amount, string Currency)` parameter).
+// Stored as primitives + strings + an optional ConventionInfo so the surrounding
+// model stays cache-safe for incremental-generator equality.
+//
+//   CtorArgName       -- the ctor parameter NAME on the composite type, used to
+//                        derive the emitted DbParameter name suffix
+//                        (`@{paramName}_{CtorArgName}`). Composite records expose
+//                        a matching property of the same name (PascalCase
+//                        matches by C# convention), so the unpacking accessor
+//                        is `@{paramName}.@{CtorArgName}` (the `@`-prefix on
+//                        the property is defensive — keyword names like
+//                        `@class` need it; ordinary identifiers are unaffected).
+//   IsNullable        -- inner ctor parameter is nullable (`int?` /
+//                        `Nullable<int>` / annotated reference type). Emit
+//                        routes through DBNull.Value when true.
+//   Convention        -- non-null when the inner field is a ValueObject /
+//                        SingleArgCtor / StaticFactory / Enum / EnumAsString —
+//                        mirrors the materialization-side recursive unwrap.
+//                        Null for primitive fields.
+internal sealed record CompositeBindingField(
+    string CtorArgName,
+    bool IsNullable,
+    ConventionInfo? Convention);
