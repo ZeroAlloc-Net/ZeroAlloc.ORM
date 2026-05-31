@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.4 shipped (`[Command]` + `[StoredProcedure]` + named-tuple output parameters). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** Pre-release. v0.5 shipped (multi-column composites + `[Materialize(Factory)]` + nullable composite handling). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -18,7 +18,7 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 | Package | Description | NativeAOT |
 |---------|-------------|---|
 | **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[StoreAsString]`) + exception types. `[Materialize]` lands in v0.5. | ✅ |
+| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[StoreAsString]`, `[Materialize]`) + exception types. | ✅ |
 | **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
 | **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
 
@@ -169,7 +169,43 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 
 - **New diagnostics ZAO060 (reserved) / ZAO061 / ZAO062** — sproc-side compile-time guardrails. ZAO060 is reserved for a future `out`/`ref`-on-async check (the C# compiler already rejects `out`/`ref` on async-returning partials, so the dedicated ZAO060 message is unnecessary at the source-generator layer for now). ZAO061 fires on `[StoredProcedure("")]` (empty procedure name). ZAO062 fires when a named-tuple output-parameter field doesn't appear as a method parameter that could carry the output back to SQL — the name must match an `@param` the proc declares.
 
-Deferred to later milestones: composite materialization e.g. `Money(decimal, string)` (v0.5), `[Materialize(Factory)]` factory routing (v0.5), provider routing of identity suffixes beyond Sqlite (v2), ActivitySource / built-in observability (v0.6 via ZA.Telemetry composition), TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope), stored-procedure integration tests (v0.6 Postgres fixture).
+### Added in v0.5
+
+- **Multi-column composites (Money pattern)** — declare a positional-ctor type like `Money(decimal Amount, string Currency)` and the generator unpacks it into N SQL columns automatically. Each ctor parameter resolves through the existing convention pipeline (primitive / enum / value-object / single-arg-ctor / static-factory). Nested composites flatten transparently — `record OrderRow(int Id, Money Total)` reads as 3 columns. See [`docs/cookbook/composites.md`](docs/cookbook/composites.md).
+
+  ```csharp
+  public readonly record struct Money(decimal Amount, string Currency);
+
+  public sealed partial class OrderRepo(IAsyncDbConnection connection)
+  {
+      [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+      public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
+
+      [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
+      public partial Task<int> UpdateTotalAsync(int id, Money total, CancellationToken ct);
+  }
+  ```
+
+  Composite method parameters bind via positional unpacking: `Money total` → `@total_Amount` + `@total_Currency`. Naming uses the parameter name + `_` + ctor-parameter name; the SQL author picks how the columns line up.
+
+- **Nullable composites (all-or-nothing)** — `Money? Total` means "all composite columns NULL → `null`; any composite column NULL while others have values → `ZeroAllocOrmMaterializationException` at runtime." Compile-time warning **ZAO050** fires on each nullable-composite materialization site to flag that the partial-null case is undetectable at compile time and is by-design a runtime throw.
+
+- **`[Materialize(Factory = "...")]`** — explicit factory resolution for cases where the SQL shape doesn't match the C# ctor. The named `static` factory's parameter list maps to columns by name (positional fallback when SQL column names aren't available). Canonical use case: Sqlite stores `decimal` as TEXT, so route through a `Money.FromText(string amountText, string currency)` factory.
+
+  ```csharp
+  [Materialize(Factory = nameof(FromText))]
+  public readonly record struct Money(decimal Amount, string Currency)
+  {
+      public static Money FromText(string Amount, string Currency) =>
+          new(decimal.Parse(Amount, CultureInfo.InvariantCulture), Currency);
+  }
+  ```
+
+  Diagnostics: **ZAO043** if the named factory doesn't exist; **ZAO044** if discovery is ambiguous; **ZAO051** if the factory's parameter list cannot be reconciled with the available columns.
+
+- **New diagnostics ZAO050 / ZAO051 / ZAO052 / ZAO063** — composite + factory + sproc-batch guardrails. ZAO050 (nullable-composite partial-null runtime-only check, see above). ZAO051 (factory parameter list unresolved). ZAO052 (recursive composite — a composite ctor parameter that is itself another composite — explicitly deferred to v0.6+ with a clear error). ZAO063 (informational: `[StoredProcedure(Batch = ...)]` with a non-default value is silently ignored — sprocs encapsulate their own batching semantics).
+
+Deferred to later milestones: recursive composites (v0.6+, ZAO052 flags them today); ActivitySource / built-in observability (v0.6 via ZA.Telemetry composition); Postgres / SQL Server integration fixtures including stored-procedure round-trips (v0.6); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2).
 
 ## Design + roadmap
 
