@@ -273,7 +273,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var strategy = ResolveBatchStrategy(sql, batchMode);
 
-        var (shape, nullableReaderMethod, materialization) = ClassifyEmitShape(method, conventionContext);
+        var (shape, nullableReaderMethod, materialization, multiResultMaterialization) = ClassifyEmitShape(method, conventionContext);
 
         // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
         // diagnostics:
@@ -427,6 +427,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ReturnTypeDisplay: returnTypeDisplay,
             NullableScalarReaderMethod: nullableReaderMethod,
             Materialization: materialization,
+            MultiResultMaterialization: multiResultMaterialization,
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
@@ -452,15 +453,33 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // For NullableScalar we also return the IDataReader.GetXxx method name to use
     // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
     // that no longer carries the symbol.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization) ClassifyEmitShape(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization) ClassifyEmitShape(
         IMethodSymbol method,
         ConventionContext conventionContext)
     {
-        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null);
+        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null);
         // Restrict to Task<T> for now; ValueTask<T> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null);
+        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null);
 
         var inner = named.TypeArguments[0];
+
+        // v0.3 Phase B — tuple return type (with optional outer nullable) flagged as
+        // MultiResultSet. Element shapes (scalar / single row / list) are captured on
+        // MultiResultMaterializationModel so the emit can choose its per-element loop.
+        // We peel `Nullable<T>` here as well as the `T?` reference-annotation form
+        // because `Task<(...)?>` surfaces either way depending on how the user writes
+        // the tuple.
+        var tupleCandidate = UnwrapNullableValueType(inner);
+        var tupleReturnsNullable = inner.NullableAnnotation == NullableAnnotation.Annotated
+            || !ReferenceEquals(tupleCandidate, inner);
+        if (tupleCandidate is INamedTypeSymbol tupleNamed && tupleNamed.IsTupleType && tupleNamed.TupleElements.Length >= 2)
+        {
+            var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext);
+            if (multi is not null)
+                return (EmitShape.MultiResultSet, null, null, multi);
+            // Tuple shape but at least one element wasn't classifiable: fall through to
+            // Unknown so ZAO022 (or a future ZAO032/033) surfaces the gap.
+        }
 
         // Scalar shapes now tolerate user parameters at the signature level — Phase 6
         // emits the binding loop so the SQL placeholders resolve at runtime. FlatRow
@@ -471,7 +490,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var readerMethod = GetScalarPrimitiveReaderInfo(inner);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null);
+                return (EmitShape.NullableScalar, readerMethod, null, null);
         }
 
         // Nullable value type: Task<int?> / Task<Nullable<T>>.
@@ -482,12 +501,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var underlying = innerNamed.TypeArguments[0];
             var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null);
+                return (EmitShape.NullableScalar, readerMethod, null, null);
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
-        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null);
+        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null);
 
         // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
         // conventions. v0.2 Phase C extends column resolution from "primitive only" to
@@ -501,7 +520,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var flat = TryBuildFlatRowMaterialization(elementType, conventionContext);
             if (flat is not null)
-                return (EmitShape.FlatRow, null, flat);
+                return (EmitShape.FlatRow, null, flat, null);
 
             // v0.2 Phase E — DomainEntity: a non-record class with a single public
             // ctor whose parameters all resolve to known conventions. The detection
@@ -511,10 +530,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // positional path stays the default for records).
             var domain = TryBuildDomainEntityMaterialization(elementType, conventionContext);
             if (domain is not null)
-                return (EmitShape.DomainEntity, null, domain);
+                return (EmitShape.DomainEntity, null, domain, null);
         }
 
-        return (EmitShape.Unknown, null, null);
+        return (EmitShape.Unknown, null, null, null);
     }
 
     // Attempt to classify `elementType` as a positional record whose constructor params
@@ -672,6 +691,177 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.DomainEntity,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // v0.3 Phase B — classify a tuple return type's elements for multi-result-set
+    // emit. Each tuple element drives one reader result set and resolves to a
+    // MultiResultElement (Scalar / Row / List). Returns null if any element fails
+    // to classify so the surrounding ClassifyEmitShape can fall through to Unknown.
+    //
+    // List<T>/IReadOnlyList<T>/IEnumerable<T> are accepted as List-kind elements; the
+    // inner T must be a record (FlatRow) or a class with a single public ctor
+    // (DomainEntity). Single record/class elements are Row-kind; primitive / enum /
+    // value-object elements are Scalar-kind.
+    private static MultiResultMaterializationModel? TryBuildMultiResultMaterialization(
+        INamedTypeSymbol tupleType,
+        bool returnsNullable,
+        ConventionContext conventionContext)
+    {
+        var elementsBuilder = ImmutableArray.CreateBuilder<MultiResultElement>(tupleType.TupleElements.Length);
+        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+        foreach (var field in tupleType.TupleElements)
+        {
+            var element = TryClassifyTupleElement(field.Name, field.Type, conventionContext, typeDisplayFormat);
+            if (element is null) return null;
+            elementsBuilder.Add(element);
+        }
+
+        // Tuple type display carries the outer nullable annotation when applicable; the
+        // partial method signature needs the `?` to match the user declaration verbatim.
+        var tupleDisplay = tupleType.ToDisplayString(typeDisplayFormat);
+        if (returnsNullable && !tupleDisplay.EndsWith("?", System.StringComparison.Ordinal))
+            tupleDisplay += "?";
+
+        return new MultiResultMaterializationModel(
+            TupleTypeDisplay: tupleDisplay,
+            ReturnsNullable: returnsNullable,
+            Elements: new EquatableArray<MultiResultElement>(elementsBuilder.MoveToImmutable()));
+    }
+
+    // Classify ONE tuple element. Order of attempts mirrors the single-shape path:
+    //   1. List<T> / IReadOnlyList<T> / IEnumerable<T> -> List element (record/class T).
+    //   2. Record T -> Row element (FlatRow positional).
+    //   3. Class T with single public ctor -> Row element (DomainEntity column-name).
+    //   4. Primitive / Enum / Value-object -> Scalar element.
+    // Returns null when no rule matches so the caller can bail the whole tuple.
+    private static MultiResultElement? TryClassifyTupleElement(
+        string tupleFieldName,
+        ITypeSymbol elementType,
+        ConventionContext conventionContext,
+        SymbolDisplayFormat typeDisplayFormat)
+    {
+        // Strip the outer nullable annotation; per-element nullability flows via
+        // IsNullable so the emit can wrap reads in IsDBNull guards.
+        var isNullable = elementType.NullableAnnotation == NullableAnnotation.Annotated
+            || (elementType is INamedTypeSymbol n
+                && n.IsGenericType
+                && n.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+        var unwrapped = UnwrapNullableValueType(elementType)
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+        // (1) List-kind: the element type is a recognized list-like generic of arity 1.
+        if (unwrapped is INamedTypeSymbol listLike
+            && listLike.IsGenericType
+            && listLike.TypeArguments.Length == 1
+            && IsListLikeName(listLike))
+        {
+            var inner = listLike.TypeArguments[0]
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+            // Inner element must materialize as a row — FlatRow or DomainEntity.
+            var flat = TryBuildFlatRowMaterialization(inner, conventionContext);
+            if (flat is not null)
+            {
+                return new MultiResultElement(
+                    Kind: MultiResultElementKind.List,
+                    TupleFieldName: tupleFieldName,
+                    ElementTypeName: inner.ToDisplayString(typeDisplayFormat),
+                    GetterMethod: null,
+                    Convention: null,
+                    IsNullable: false,
+                    Columns: flat.Columns);
+            }
+            var domain = TryBuildDomainEntityMaterialization(inner, conventionContext);
+            if (domain is not null)
+            {
+                return new MultiResultElement(
+                    Kind: MultiResultElementKind.List,
+                    TupleFieldName: tupleFieldName,
+                    ElementTypeName: inner.ToDisplayString(typeDisplayFormat),
+                    GetterMethod: null,
+                    Convention: null,
+                    IsNullable: false,
+                    Columns: domain.Columns);
+            }
+            return null;
+        }
+
+        // (2/3) Row-kind: a single record or class instance per result set. Records take
+        // the FlatRow positional path; classes with a single ctor take the DomainEntity
+        // column-name path.
+        var rowFlat = TryBuildFlatRowMaterialization(unwrapped, conventionContext);
+        if (rowFlat is not null)
+        {
+            return new MultiResultElement(
+                Kind: MultiResultElementKind.Row,
+                TupleFieldName: tupleFieldName,
+                ElementTypeName: unwrapped.ToDisplayString(typeDisplayFormat),
+                GetterMethod: null,
+                Convention: null,
+                IsNullable: isNullable,
+                Columns: rowFlat.Columns);
+        }
+        var rowDomain = TryBuildDomainEntityMaterialization(unwrapped, conventionContext);
+        if (rowDomain is not null)
+        {
+            return new MultiResultElement(
+                Kind: MultiResultElementKind.Row,
+                TupleFieldName: tupleFieldName,
+                ElementTypeName: unwrapped.ToDisplayString(typeDisplayFormat),
+                GetterMethod: null,
+                Convention: null,
+                IsNullable: isNullable,
+                Columns: rowDomain.Columns);
+        }
+
+        // (4) Scalar-kind: primitive / enum / value-object. Reuses the same
+        // reader-method derivation that single-row shapes use so the emit stays
+        // consistent across shape boundaries.
+        var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
+        string? reader = resolution.Kind switch
+        {
+            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(unwrapped),
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveUnderlyingReaderForFactory(resolution),
+            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(unwrapped),
+            ConventionKind.EnumAsString => "GetString",
+            _ => null,
+        };
+        if (reader is null) return null;
+
+        var convention = BuildConventionInfo(unwrapped, resolution, reader);
+        return new MultiResultElement(
+            Kind: MultiResultElementKind.Scalar,
+            TupleFieldName: tupleFieldName,
+            ElementTypeName: unwrapped.ToDisplayString(typeDisplayFormat),
+            GetterMethod: reader,
+            Convention: convention,
+            IsNullable: isNullable,
+            Columns: EquatableArray<ColumnBinding>.Empty);
+    }
+
+    // Match List<T> / IReadOnlyList<T> / IList<T> / IEnumerable<T> / ICollection<T> /
+    // IReadOnlyCollection<T> by metadata name. Tuple elements typed as one of these
+    // generic collections route to the List-kind reader loop. Anything else (array,
+    // HashSet, custom collection) is intentionally out of scope for v0.3 Phase B —
+    // List<T> is the canonical accumulator and the others are recognized so the
+    // common adopter shapes (e.g. IReadOnlyList<T>) flow through without forcing a
+    // List<T> rewrite.
+    private static bool IsListLikeName(INamedTypeSymbol type)
+    {
+        var ns = type.ContainingNamespace?.ToDisplayString();
+        if (!string.Equals(ns, "System.Collections.Generic", System.StringComparison.Ordinal))
+            return false;
+        return type.Name is "List"
+            or "IList"
+            or "IReadOnlyList"
+            or "IEnumerable"
+            or "ICollection"
+            or "IReadOnlyCollection";
     }
 
     // PascalCase a ctor parameter name for the SQL column lookup. C# parameter names
@@ -894,6 +1084,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Peel Task<T> / ValueTask<T> wrappers to inspect the element type.
         var inner = UnwrapAsyncWrapper(returnType);
         if (inner is null) return false;
+        // v0.3 Phase B — `Task<(...)?>` is the canonical multi-result return shape;
+        // peel the Nullable<T> wrapper so the tuple check below sees the ValueTuple
+        // directly rather than the surrounding `Nullable<...>` generic.
+        inner = UnwrapNullableValueType(inner);
         if (inner is INamedTypeSymbol named)
         {
             // ValueTuple (sugar form `(T1, T2)`) — Roslyn surfaces this via IsTupleType.
@@ -1083,6 +1277,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     break;
                 case EmitShape.DomainEntity:
                     EmitDomainEntity(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.MultiResultSet:
+                    EmitMultiResultSetStub(sb, m);
                     break;
                 default:
                     sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
@@ -1333,6 +1530,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+    }
+
+    // v0.3 Phase B.1 — stub emit for the MultiResultSet shape. The detection has
+    // landed but the real emit lands in B.2-B.4 (batch path, joined fallback, runtime
+    // branch). We still need a method body — CS8795 requires a partial method to have
+    // an implementation — so we throw a clear NotImplementedException that points
+    // adopters at the milestone where the path becomes live.
+    private static void EmitMultiResultSetStub(StringBuilder sb, QueryMethodModel m)
+    {
+        var paramList = BuildParameterList(m.MethodParameters);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("        => throw new global::System.NotImplementedException(\"MultiResultSet emit lands in v0.3 Phase B.2-B.4\");");
     }
 
     // Emit DbParameter binding for each user-declared method parameter (CancellationToken
