@@ -165,13 +165,80 @@ public static class ConventionDiscovery
             ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty);
     }
 
-    // Multi-arg composite shapes (DateRange(DateTime From, DateTime To), etc.) are
-    // reserved for v0.5. The placeholder keeps the priority ladder symmetric.
+    // Multi-arg composite shapes — Money(decimal Amount, string Currency) and friends.
+    // v0.5 Phase A wires this up. A type qualifies when:
+    //   * it has exactly one public ctor with > 1 parameters,
+    //   * every ctor parameter resolves via Resolve() to Primitive / Enum / EnumAsString /
+    //     ValueObject / SingleArgCtor / StaticFactory (i.e. classifiable to a single column),
+    //   * NO ctor parameter is itself a MultiArgCtor (recursive composites are
+    //     deferred to v0.6+; this rule keeps the inner-column list flat at one level).
+    //
+    // Each ctor parameter is surfaced in ExpandedColumns so callers (the generator)
+    // can iterate the inner-column shape without re-doing the symbol walk.
     private static ConventionResult? TryMultiArgCtor(INamedTypeSymbol type, ConventionContext context)
     {
-        _ = type;
-        _ = context;
-        return null;
+        // Records with single-arg ctor were already matched upstream. Allow record /
+        // non-record classes and structs equally — the shape we care about is "a
+        // type with one public N-arg ctor and no per-arg-name unwrap requirement".
+        //
+        // v0.5 Phase A (post-review Fix 4) — manual single-pass walk avoids the
+        // `Where(...).ToArray()` allocation; the classifier sits in a hot path
+        // (one Resolve() call per ctor parameter the generator inspects).
+        IMethodSymbol? ctor = null;
+        var matchCount = 0;
+        foreach (var c in type.InstanceConstructors)
+        {
+            if (c.DeclaredAccessibility != Accessibility.Public || c.Parameters.Length <= 1) continue;
+            matchCount++;
+            if (matchCount > 1) return null; // second qualifying ctor — ambiguous.
+            ctor = c;
+        }
+        if (ctor is null) return null;
+
+        // Each inner ctor parameter must resolve to a single-column convention.
+        // Recursive composites (an inner param is itself a MultiArgCtor) are
+        // explicitly rejected here. Today the outer type then falls through to
+        // ConventionKind.Unknown, which the generator surfaces as ZAO022
+        // ("unsupported emit shape") via the existing classifier. Phase E will
+        // add a dedicated ZAO0xx with a clearer "recursive composites deferred"
+        // message; until then ZAO022 is the diagnostic adopters see.
+        foreach (var p in ctor.Parameters)
+        {
+            var unwrapped = UnwrapForResolve(p.Type);
+            var inner = Resolve(unwrapped, context);
+            switch (inner.Kind)
+            {
+                case ConventionKind.Primitive:
+                case ConventionKind.Enum:
+                case ConventionKind.EnumAsString:
+                case ConventionKind.ValueObject:
+                case ConventionKind.StaticFactory:
+                case ConventionKind.SingleArgCtor:
+                    continue;
+                default:
+                    // Unknown OR MultiArgCtor (recursive) — bail out of composite detection.
+                    return null;
+            }
+        }
+
+        return new ConventionResult(
+            ConventionKind.MultiArgCtor,
+            Factory: ctor,
+            Value: null,
+            ExpandedColumns: ctor.Parameters);
+    }
+
+    // Peel Nullable<T> for the inner-column resolution. Mirrors the unwrap the
+    // generator does at the FlatRow/DomainEntity column-resolution sites.
+    private static ITypeSymbol UnwrapForResolve(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol named
+            && named.IsGenericType
+            && named.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T)
+        {
+            return named.TypeArguments[0];
+        }
+        return type;
     }
 
     private static bool HasAttribute(INamedTypeSymbol type, string fqn)

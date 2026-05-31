@@ -4,12 +4,19 @@ namespace ZeroAlloc.ORM.Generator.Model;
 // result type. v0.1 implements FlatRow (positional record with primitive ctor params);
 // ScalarPrimitive is conceptually present for symmetry but ScalarInt/NullableScalar
 // shapes still represent the scalar cases. DomainEntity/Custom land in v0.2+.
+//
+// v0.5 Phase A — Composite is a scalar-position multi-column type (Money(decimal,
+// string) returned as Task<Money>). The MaterializationModel.Columns carries the
+// flattened inner-column list; the emitter produces `new T(reader.GetXxx(0), ...)`.
+// Nested composites (`record OrderRow(int Id, Money Total)`) reuse FlatRow with
+// ColumnBinding.InnerColumns populated for the composite ctor parameter.
 internal enum MaterializationKind
 {
     ScalarPrimitive,
     FlatRow,
     DomainEntity,
     Custom,
+    Composite,
 }
 
 // Cache-safe projection of ZeroAlloc.TypeConversions.ConventionResult. The discovery
@@ -65,12 +72,26 @@ internal sealed record ConventionInfo(
 //                   for DomainEntity shapes where the emit pulls the ordinal via
 //                   `__reader.GetOrdinal("ColumnName")` so SELECT column order is
 //                   not load-bearing.
+//   InnerColumns -- v0.5 Phase A: non-empty when this ctor parameter is itself a
+//                   composite (MultiArgCtor) type — the column expands into a sub-binding
+//                   list. The emitter renders `new T(reader.GetXxx(ord+0), reader.GetXxx(ord+1), ...)`
+//                   instead of a single read. GetterMethod / TypeName / Convention
+//                   describe the composite TYPE (TypeName is the composite's FQN, used
+//                   as the ctor target via `new <TypeName>(...)`); the actual primitive
+//                   reads live on the inner ColumnBinding entries. Recursive composites
+//                   (an InnerColumn entry itself has InnerColumns) are rejected upstream
+//                   in v0.5 — ConventionDiscovery's MultiArgCtor rule refuses to classify
+//                   them. Flat one-level expansion is the v0.5 contract.
+// EquatableArray<ColumnBinding>.default is IsDefault==true with zero heap allocation;
+// non-composite leaf bindings carry this field for free (no per-binding empty-array
+// instance is materialized when InnerColumns is unused).
 internal sealed record ColumnBinding(
     string GetterMethod,
     bool IsNullable,
     string TypeName,
     ConventionInfo? Convention = null,
-    string? ColumnName = null);
+    string? ColumnName = null,
+    EquatableArray<ColumnBinding> InnerColumns = default);
 
 // Materialization plan for a single [Query] method's return row.
 //

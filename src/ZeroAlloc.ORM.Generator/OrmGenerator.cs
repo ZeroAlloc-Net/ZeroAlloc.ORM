@@ -25,6 +25,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string GeneratedCodeAttribute =
         "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
 
+    // v0.5 Phase A (post-review Fix 15) — fully-qualified display format with
+    // nullable reference-type annotations preserved. Used at every site that
+    // computes a ToDisplayString on a parameter type for FlatRow / DomainEntity /
+    // composite materialization. Hoisted to a static readonly so the
+    // SymbolDisplayFormat builder isn't rebuilt per Resolve() / per ctor param.
+    private static readonly SymbolDisplayFormat TypeDisplayFormat =
+        SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var queryMethods = context.SyntaxProvider
@@ -996,6 +1007,36 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
         if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true, SprocOutputParams: null);
 
+        // v0.5 Phase A — composite at scalar position. `Task<Money>` where
+        // `Money(decimal Amount, string Currency)` constructs the composite type
+        // directly from the SELECT list. Tried BEFORE FlatRow's nullable-reference
+        // branch so a non-nullable composite return shape funnels here (records
+        // with a single-arg ctor were already classified as SingleArgCtor upstream;
+        // multi-arg ctor types reach MultiArgCtor only when they have > 1 ctor params).
+        //
+        // Task<Money?> (nullable composite at scalar position) is Phase C's
+        // all-or-nothing emit; for Phase A we leave it for the FlatRow/Unknown
+        // fall-through below.
+        if (!inner.IsReferenceType || inner.NullableAnnotation != NullableAnnotation.Annotated)
+        {
+            // v0.5 Phase A (post-review Fix 5) — short-circuit on Nullable<T> BEFORE
+            // running UnwrapNullableValueType. The unwrap is wasted work when we'll
+            // bail anyway; Phase C will lift this gate when it adds the nullable
+            // composite branch.
+            var compositeIsNullableValueType =
+                inner is INamedTypeSymbol cn
+                && cn.IsGenericType
+                && cn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
+            if (!compositeIsNullableValueType)
+            {
+                var compositeCandidate = UnwrapNullableValueType(inner)
+                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+                var composite = TryBuildCompositeMaterialization(compositeCandidate, conventionContext);
+                if (composite is not null)
+                    return (EmitShape.Composite, null, composite, null, HasReturnValue: true, SprocOutputParams: null);
+            }
+        }
+
         // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
         // conventions. v0.2 Phase C extends column resolution from "primitive only" to
         // anything ConventionDiscovery surfaces (ValueObject, SingleArgCtor, StaticFactory).
@@ -1245,10 +1286,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (ctor is null) return null;
 
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
-        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
         foreach (var p in ctor.Parameters)
         {
@@ -1257,6 +1294,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // IS the reader-target — string is read with GetString regardless of nullability.
             var underlying = UnwrapNullableValueType(p.Type);
             var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            // v0.5 Phase A — composite ctor parameter (Money(decimal, string)
+            // embedded in `record OrderRow(int Id, Money Total)`). The inner columns
+            // flatten into the outer FlatRow's column list at the emit level; here
+            // we capture them as InnerColumns on the binding so the column-index
+            // math threads through correctly. Nullable composite ctor params are
+            // Phase C's all-or-nothing case — for Phase A we reject them so the
+            // surrounding classification falls through to Unknown.
+            if (resolution.Kind == ConventionKind.MultiArgCtor)
+            {
+                var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: false);
+                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                columns.Add(compBinding);
+                continue;
+            }
 
             // Pull the reader-method that lets the emitter read the wrapped primitive.
             // For Primitive conventions this IS the read; for ValueObject /
@@ -1292,7 +1344,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // AND the reference-type nullable annotation so `string?` -> `string`.
             var unwrappedDisplay = underlying
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                .ToDisplayString(typeDisplayFormat);
+                .ToDisplayString(TypeDisplayFormat);
 
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
@@ -1305,6 +1357,134 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.FlatRow,
             TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(columns.MoveToImmutable()));
+    }
+
+    // v0.5 Phase A — composite at scalar position. Build a MaterializationModel
+    // whose Columns list flattens the composite's ctor parameters into N inner
+    // ColumnBindings. The model's TargetTypeFullName carries the composite type
+    // itself (Money) — the emit calls `new TargetTypeFullName(__reader.GetXxx(0), ...)`.
+    //
+    // Returns null when the type isn't classifiable as a composite via
+    // ConventionDiscovery.MultiArgCtor (e.g. it's a primitive, an enum, a
+    // single-arg-ctor record, or recursive — recursive bails out inside
+    // ConventionDiscovery itself).
+    private static MaterializationModel? TryBuildCompositeMaterialization(
+        ITypeSymbol elementType,
+        ConventionContext conventionContext)
+    {
+        if (elementType is not INamedTypeSymbol named) return null;
+        var resolution = ConventionDiscovery.Resolve(named, conventionContext);
+        if (resolution.Kind != ConventionKind.MultiArgCtor) return null;
+
+        var columns = TryBuildCompositeInnerColumns(resolution, conventionContext);
+        if (columns is null) return null;
+
+        return new MaterializationModel(
+            Kind: MaterializationKind.Composite,
+            TargetTypeFullName: named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(columns.Value));
+    }
+
+    // Build the inner-column ColumnBinding list for a composite type. Each ctor
+    // parameter resolves to a single column (primitive / VO / SingleArgCtor /
+    // StaticFactory / Enum / EnumAsString); recursive composites are rejected at
+    // the ConventionDiscovery layer so the list is one level deep.
+    private static ImmutableArray<ColumnBinding>? TryBuildCompositeInnerColumns(
+        ConventionResult resolution,
+        ConventionContext conventionContext)
+    {
+        var ctorParams = resolution.ExpandedColumns;
+        // Defensive: TryMultiArgCtor upstream already enforces Parameters.Length > 1,
+        // but this guard protects against future ConventionDiscovery contract drift.
+        if (ctorParams.IsDefault || ctorParams.Length < 2) return null;
+
+        var inner = ImmutableArray.CreateBuilder<ColumnBinding>(ctorParams.Length);
+        foreach (var p in ctorParams)
+        {
+            var underlying = UnwrapNullableValueType(p.Type);
+            var innerResolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            string? reader = innerResolution.Kind switch
+            {
+                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(innerResolution),
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+                ConventionKind.EnumAsString => "GetString",
+                _ => null,
+            };
+            if (reader is null) return null;
+
+            var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
+                || (p.Type is INamedTypeSymbol pn
+                    && pn.IsGenericType
+                    && pn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+            var convention = BuildConventionInfo(underlying, innerResolution, reader);
+            var unwrappedDisplay = underlying
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                .ToDisplayString(TypeDisplayFormat);
+
+            inner.Add(new ColumnBinding(
+                GetterMethod: reader,
+                IsNullable: isNullable,
+                TypeName: unwrappedDisplay,
+                Convention: convention));
+        }
+        return inner.MoveToImmutable();
+    }
+
+    // v0.5 Phase A (post-review Fix 6) — shared helper for "composite ctor param
+    // nested inside a FlatRow / DomainEntity row". Handles the nullable-composite
+    // rejection (Phase C territory), the inner-column build, the optional
+    // GetOrdinal-name population for DomainEntity callers, and the outer
+    // ColumnBinding construction. Returns null when the composite is nullable
+    // (caller should bail to Phase C) or when the inner-column resolution fails.
+    //
+    // `useNamedColumns` toggles the inner reads between positional (FlatRow,
+    // ColumnName: null) and column-name-keyed (DomainEntity, ColumnName: PascalCase
+    // of each inner ctor param name).
+    private static ColumnBinding? TryBuildCompositeColumnBinding(
+        IParameterSymbol param,
+        ITypeSymbol underlying,
+        ConventionResult resolution,
+        ConventionContext conventionContext,
+        bool useNamedColumns)
+    {
+        var isCompositeNullable = param.Type.NullableAnnotation == NullableAnnotation.Annotated
+            || (param.Type is INamedTypeSymbol cp
+                && cp.IsGenericType
+                && cp.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+        if (isCompositeNullable) return null; // Phase C handles nullable composites.
+
+        var innerCols = TryBuildCompositeInnerColumns(resolution, conventionContext);
+        if (innerCols is null) return null;
+
+        var innerBindings = innerCols.Value;
+        if (useNamedColumns)
+        {
+            // For DomainEntity the inner reads use column-name lookups; populate
+            // ColumnName on each inner binding from the ctor-param name.
+            var ctorParams = resolution.ExpandedColumns;
+            var withNames = ImmutableArray.CreateBuilder<ColumnBinding>(innerBindings.Length);
+            for (var ix = 0; ix < innerBindings.Length; ix++)
+            {
+                var b = innerBindings[ix];
+                withNames.Add(b with { ColumnName = ToPascalCase(ctorParams[ix].Name) });
+            }
+            innerBindings = withNames.MoveToImmutable();
+        }
+
+        var compositeTypeDisplay = underlying
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+            .ToDisplayString(TypeDisplayFormat);
+        return new ColumnBinding(
+            GetterMethod: string.Empty, // not used for composite; reads live on InnerColumns.
+            IsNullable: false,
+            TypeName: compositeTypeDisplay,
+            Convention: null,
+            ColumnName: null,
+            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings));
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
@@ -1336,16 +1516,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (publicParameterizedCtors.Length != 1) return null;
         var ctor = publicParameterizedCtors[0];
 
-        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
 
         foreach (var p in ctor.Parameters)
         {
             var underlying = UnwrapNullableValueType(p.Type);
             var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            // v0.5 Phase A — composite ctor parameter on a DomainEntity. The
+            // inner-column lookup uses GetOrdinal(<inner-column-name>) so each
+            // primitive read is keyed by name. Composite types provide column-name
+            // candidates via the inner ctor parameter names PascalCased.
+            // Nullable composite ctor params are Phase C; reject for now.
+            if (resolution.Kind == ConventionKind.MultiArgCtor)
+            {
+                var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: true);
+                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                columns.Add(compBinding);
+                continue;
+            }
 
             string? reader = resolution.Kind switch
             {
@@ -1374,7 +1563,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // TypeName stores the UNWRAPPED type (see FlatRow for rationale).
             var unwrappedDisplay = underlying
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                .ToDisplayString(typeDisplayFormat);
+                .ToDisplayString(TypeDisplayFormat);
 
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
@@ -2153,6 +2342,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // rather than offering a Task<T?> escape hatch.
                     EmitCommandIdentity(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.Composite:
+                    // v0.5 Phase A — composite at scalar position. Sentinel
+                    // comment marks the classifier branch; the real emit body
+                    // lands in EmitComposite. Wording (`flattened columns: N`)
+                    // matches the nested FlatRow / DomainEntity sentinels (Fix 7).
+                    // The `!.` (Fix 8) reflects the EmitComposite invariant that
+                    // m.Materialization is non-null on this branch — the bail-on-null
+                    // guard inside EmitComposite asserts the same.
+                    {
+                        var compCount = m.Materialization!.Columns.Length;
+                        sb.AppendLine($"    // EmitShape: composite {m.Materialization!.TargetTypeFullName} (flattened columns: {compCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+                    }
+                    EmitComposite(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.SprocWithOutputParams:
                     // v0.4 Phase E — [StoredProcedure] returning a named tuple
                     // with at least one tuple field matching a C# parameter.
@@ -2878,8 +3081,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
+        // v0.5 Phase A — flattened column count accounts for nested composites. The
+        // OUTER ctor arity may be < flattened-column count when one or more ctor
+        // params are MultiArgCtor composites (each expanding to N inner reads).
+        var flattenedColumnCount = ComputeFlattenedColumnCount(mat.Columns);
+        var hasNestedComposite = flattenedColumnCount > mat.Columns.Length;
+
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        // v0.5 Phase A (post-review Fix 1) — sentinel sits BEFORE the
+        // [GeneratedCode] attribute for parity with the v0.4 SprocWithOutputParams
+        // sentinel and the v0.5 composite-scalar sentinel.
+        if (hasNestedComposite)
+        {
+            sb.AppendLine($"    // EmitShape: FlatRow with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        }
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
@@ -2892,50 +3108,145 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("                return null;");
         sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
         var cols = mat.Columns;
+        var ordinal = 0;
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
-            // Primitive: direct GetXxx. Value-object / single-arg-ctor / static-factory:
-            // wrap the primitive read in the discovered factory call (Phase C tasks
-            // C.2/C.4/C.5). Nullable columns short-circuit to `null` via IsDBNull —
-            // the cast carries the nullable type so the ternary types correctly.
-            var readExpr = $"__reader.{col.GetterMethod}({i})";
-            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            // v0.5 Phase A — composite ctor parameter: expand into a nested
+            // `new T(reader.GetXxx(ord), ...)` call spanning N consecutive
+            // ordinals. The outer FlatRow's ordinal cursor advances by N for
+            // the composite; following columns continue from ord+N.
+            if (col.InnerColumns.Length > 0)
             {
-                // Enum default-int: cast the underlying primitive to the enum type
-                // (`(global::TestApp.OrderStatus)__reader.GetInt32(N)`).
-                // EnumAsString: parse the string via `global::System.Enum.Parse<T>(...)`.
-                // Both branches keep the inner read expression unchanged; only the
-                // wrapper differs from the factory cases above.
-                readExpr = conv.Kind switch
-                {
-                    (int)ConventionKind.Enum
-                        => $"({conv.FactoryFullName}){readExpr}",
-                    // AOT note: Enum.Parse<T> is annotated [RequiresUnreferencedCode]
-                    // but is safe for closed enum types with a finite member set.
-                    // v0.2 ships this baseline; v0.3+ can switch to a source-generated
-                    // parse table if AOT-trim warnings bite a real consumer.
-                    (int)ConventionKind.EnumAsString
-                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                    _ => conv.FactoryIsCtor
-                        ? $"new {conv.FactoryFullName}({readExpr})"
-                        : $"{conv.FactoryFullName}({readExpr})",
-                };
+                EmitNestedCompositeConstruction(sb, col, ordinal, "                ", trailing);
+                ordinal += col.InnerColumns.Length;
+                continue;
             }
-            string expr;
-            if (col.IsNullable)
-            {
-                expr = $"__reader.IsDBNull({i}) ? ({col.TypeName}?)null : {readExpr}";
-            }
-            else
-            {
-                expr = readExpr;
-            }
+            var expr = BuildPositionalReadExpression(col, ordinal);
             sb.AppendLine($"                {expr}{trailing}");
+            ordinal++;
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // Sum the flattened column count for a materialization's binding list. A
+    // composite binding (InnerColumns non-empty) contributes its inner count;
+    // leaf bindings contribute 1. Used by FlatRow / DomainEntity to thread the
+    // column-index cursor across nested composites correctly.
+    private static int ComputeFlattenedColumnCount(EquatableArray<ColumnBinding> columns)
+    {
+        var n = 0;
+        foreach (var col in columns)
+        {
+            n += col.InnerColumns.Length > 0 ? col.InnerColumns.Length : 1;
+        }
+        return n;
+    }
+
+    // Emit `new T(reader.GetXxx(ord+0), reader.GetXxx(ord+1), ...)` for a composite
+    // ctor parameter nested inside a FlatRow / DomainEntity. The composite's inner
+    // bindings consume a contiguous ordinal range starting at `baseOrdinal`. Each
+    // inner column's read expression is built via BuildPositionalReadExpression —
+    // convention wrappers (VO / SingleArgCtor / StaticFactory / Enum / EnumAsString)
+    // layer on top of the primitive read as in the leaf case.
+    //
+    // `trailing` is the outer FlatRow's per-column suffix (a comma for non-last
+    // columns, `);` for the last). The composite's closing paren is merged with
+    // that suffix on the same line so the generated source matches the visual
+    // shape of the existing FlatRow snapshots (no orphaned `,` / `);` on its own
+    // indent level).
+    private static void EmitNestedCompositeConstruction(
+        StringBuilder sb,
+        ColumnBinding composite,
+        int baseOrdinal,
+        string indent,
+        string trailing)
+    {
+        sb.AppendLine($"{indent}new {composite.TypeName}(");
+        var inner = composite.InnerColumns;
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            // Last inner column: close the composite `)` AND attach the outer
+            // `trailing` (`,` or `);`) so the diff stays compact. Intermediate
+            // columns get a plain `,`.
+            var innerTrailing = j == inner.Length - 1 ? ")" + trailing : ",";
+            var readExpr = BuildPositionalReadExpression(b, baseOrdinal + j);
+            sb.AppendLine($"{indent}    {readExpr}{innerTrailing}");
+        }
+    }
+
+    // v0.5 Phase A — composite at scalar position emit. The user declared
+    // `Task<Money> M(...)`; the SELECT list produces the composite's inner
+    // columns at ordinals 0..N-1 and we construct `new Money(GetXxx(0), ...)`
+    // directly. Empty result-set throws ZeroAllocOrmMaterializationException —
+    // the composite return is non-nullable, so there's no `return null` escape
+    // hatch (Phase C adds the Task<Money?> all-or-nothing branch).
+    private static void EmitComposite(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        // Length < 2 invariant: a 1-arg ctor would have routed through TrySingleArgCtor
+        // (different convention), not TryMultiArgCtor. Defensive guard against model drift.
+        if (mat is null || mat.Kind != MaterializationKind.Composite || mat.Columns.Length < 2)
+        {
+            sb.AppendLine($"    // TODO: Composite without inner-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Composite scalar query returned no row.\");");
+        sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+        var cols = mat.Columns;
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? ");" : ",";
+            var readExpr = BuildPositionalReadExpression(col, i);
+            sb.AppendLine($"                {readExpr}{trailing}");
+        }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // Build the materialization expression for a single ColumnBinding at the given
+    // positional ordinal. Convention wrappers (VO / SingleArgCtor / StaticFactory /
+    // Enum / EnumAsString) are layered on top of the raw GetXxx read identically to
+    // EmitFlatRow. Nullable columns wrap in a `IsDBNull(N) ? null : ...` ternary.
+    // Composite ColumnBindings (InnerColumns non-empty) are NOT supported here —
+    // those are flattened by the outer caller (EmitFlatRow / EmitDomainEntity).
+    private static string BuildPositionalReadExpression(ColumnBinding col, int ordinal)
+    {
+        var readExpr = $"__reader.{col.GetterMethod}({ordinal})";
+        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            readExpr = conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){readExpr}",
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({readExpr})"
+                    : $"{conv.FactoryFullName}({readExpr})",
+            };
+        }
+        if (col.IsNullable)
+        {
+            return $"__reader.IsDBNull({ordinal}) ? ({col.TypeName}?)null : {readExpr}";
+        }
+        return readExpr;
     }
 
     // Multi-arg class materialization. Conceptually identical to EmitFlatRow but each
@@ -2956,8 +3267,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
+        // v0.5 Phase A — DomainEntity may contain nested composites just like FlatRow.
+        // Flattened column count drives the sentinel comment; the column reads still
+        // funnel through GetOrdinal(name) because DomainEntity keys columns by name.
+        var flattenedColumnCount = ComputeFlattenedColumnCount(mat.Columns);
+        var hasNestedComposite = flattenedColumnCount > mat.Columns.Length;
+
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        // v0.5 Phase A (post-review Fix 1) — sentinel BEFORE attribute (see EmitFlatRow).
+        if (hasNestedComposite)
+        {
+            sb.AppendLine($"    // EmitShape: DomainEntity with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        }
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
@@ -2974,39 +3296,73 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
+            // v0.5 Phase A — composite ctor parameter in a DomainEntity. The inner
+            // ColumnBindings carry their own column names (PascalCased inner ctor
+            // param names) so each inner read still uses GetOrdinal; the outer
+            // construction wraps in `new TComposite(...)`.
+            if (col.InnerColumns.Length > 0)
+            {
+                EmitNestedCompositeConstructionByOrdinalName(sb, col, "                ", trailing);
+                continue;
+            }
             // Column name comes from the ctor parameter (PascalCased). The literal
             // is passed verbatim into GetOrdinal; SQL's case-insensitive default
             // matching keeps `customerId` and `CustomerId` interchangeable on
             // SQLite / PostgreSQL / SQL Server.
-            var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
-            var ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
-            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-            if (col.Convention is { } conv && conv.FactoryFullName is not null)
-            {
-                readExpr = conv.Kind switch
-                {
-                    (int)ConventionKind.Enum
-                        => $"({conv.FactoryFullName}){readExpr}",
-                    (int)ConventionKind.EnumAsString
-                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                    _ => conv.FactoryIsCtor
-                        ? $"new {conv.FactoryFullName}({readExpr})"
-                        : $"{conv.FactoryFullName}({readExpr})",
-                };
-            }
-            string expr;
-            if (col.IsNullable)
-            {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-            }
-            else
-            {
-                expr = readExpr;
-            }
+            var expr = BuildOrdinalNameReadExpression(col);
             sb.AppendLine($"                {expr}{trailing}");
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // Build the materialization expression for a single ColumnBinding using
+    // GetOrdinal(<ColumnName>). Convention wrappers and nullable IsDBNull guards
+    // layer on top identically to the positional variant.
+    private static string BuildOrdinalNameReadExpression(ColumnBinding col)
+    {
+        var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
+        var ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+        var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        {
+            readExpr = conv.Kind switch
+            {
+                (int)ConventionKind.Enum
+                    => $"({conv.FactoryFullName}){readExpr}",
+                (int)ConventionKind.EnumAsString
+                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                _ => conv.FactoryIsCtor
+                    ? $"new {conv.FactoryFullName}({readExpr})"
+                    : $"{conv.FactoryFullName}({readExpr})",
+            };
+        }
+        if (col.IsNullable)
+        {
+            return $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
+        }
+        return readExpr;
+    }
+
+    // Emit `new T(__reader.GetOrdinal("A") and friends, ...)` for a composite ctor
+    // parameter nested inside a DomainEntity. Each inner ColumnBinding carries its
+    // own ColumnName; the inner read uses GetOrdinal(name) so SELECT column order
+    // doesn't matter.
+    private static void EmitNestedCompositeConstructionByOrdinalName(
+        StringBuilder sb,
+        ColumnBinding composite,
+        string indent,
+        string trailing)
+    {
+        sb.AppendLine($"{indent}new {composite.TypeName}(");
+        var inner = composite.InnerColumns;
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            var innerTrailing = j == inner.Length - 1 ? ")" + trailing : ",";
+            var readExpr = BuildOrdinalNameReadExpression(b);
+            sb.AppendLine($"{indent}    {readExpr}{innerTrailing}");
+        }
     }
 
     // v0.3 Phase C.2 — IAsyncEnumerable<T> streaming. Emits a yield-based async

@@ -64,6 +64,12 @@ internal enum EmitShape
     // being empty and switches from ExecuteReaderAsync to ExecuteNonQueryAsync;
     // a single shape value keeps the classifier surface narrow.
     SprocWithOutputParams,
+    // v0.5 Phase A — multi-column composite at scalar return position.
+    // `Task<Money>` where `Money(decimal Amount, string Currency)`: the SELECT list
+    // produces N columns and the emit constructs the composite via `new T(reader.GetXxx(0), ...)`.
+    // Nested composites in FlatRow / DomainEntity rows still ride those shapes;
+    // Composite is the standalone scalar-position shape.
+    Composite,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

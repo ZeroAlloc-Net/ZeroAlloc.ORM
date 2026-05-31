@@ -1015,4 +1015,136 @@ public class CompileSmokeTests
         Assert.Empty(bugClass);
     }
 
+    // v0.5 Phase A.2 — composite scalar emit compiles cleanly.
+    [Fact]
+    public void Composite_scalar_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    // v0.5 Phase A.2 — composite scalar with a value-object inner ctor parameter
+    // compiles cleanly. Exercises the layered convention emit
+    // (`new Money(reader.GetDecimal(0), OrderId.From(reader.GetInt32(1)))`).
+    [Fact]
+    public void Composite_scalar_with_value_object_inner_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+            using ZeroAlloc.ValueObjects;
+
+            namespace TestApp;
+
+            [ValueObject]
+            public readonly partial struct OrderId
+            {
+                public int Value { get; }
+                public OrderId(int v) { Value = v; }
+                public static OrderId From(int value) => new(value);
+            }
+
+            public readonly record struct Money(decimal Amount, OrderId Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    // v0.5 Phase A.3 — composite nested in FlatRow compiles cleanly.
+    [Fact]
+    public void Composite_nested_in_flat_row_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+            public sealed record OrderRow(int Id, Money Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    // v0.5 Phase A.3 — composite nested in DomainEntity (class with single
+    // public ctor) compiles cleanly. GetOrdinal-keyed reads layered with the
+    // composite construction.
+    [Fact]
+    public void Composite_nested_in_domain_entity_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public class OrderEntity
+            {
+                public int Id { get; }
+                public Money Total { get; }
+                public OrderEntity(int id, Money total) { Id = id; Total = total; }
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<OrderEntity?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
 }
