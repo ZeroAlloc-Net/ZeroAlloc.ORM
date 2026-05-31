@@ -616,6 +616,63 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void Command_NonQuery_Task_int_emit_compiles_cleanly()
+    {
+        // v0.4 Phase A.2 — [Command(Kind = NonQuery)] returning Task<int> must
+        // produce a body that compiles. CS8795 / CS0759 catch partial-signature
+        // mismatches; the other CS-codes catch generator output regressions.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total)")]
+                public partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Command_NonQuery_Task_void_emit_compiles_cleanly()
+    {
+        // v0.4 Phase A.2 — [Command(Kind = NonQuery)] returning Task (no value)
+        // emits ExecuteNonQueryAsync without a return statement. Tests that the
+        // signature-rendering path for arity-0 Task / ValueTask doesn't trip the
+        // partial-signature checks.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("DELETE FROM Orders WHERE Id = @id")]
+                public partial Task DeleteOrderAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void Keyword_CancellationToken_name_emit_compiles_cleanly()
     {
         // Regression: when a user names their CancellationToken parameter with a

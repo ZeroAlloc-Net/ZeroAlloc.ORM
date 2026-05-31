@@ -562,17 +562,44 @@ public sealed class OrmGenerator : IIncrementalGenerator
         bool isCommandAttribute,
         CommandKindModel commandKind)
     {
-        // v0.4 Phase A.1 — [Command] methods detected and flow through to the model
-        // with IsCommand = true. Phase A.1 stops short of dispatching to a Command
-        // emit shape: routes to Unknown to suppress the Query-path classifications
-        // (e.g. Task<int> would otherwise land on ScalarInt and emit
-        // ExecuteScalarAsync — the wrong shape for a NonQuery command). Phase A.2
-        // introduces EmitShape.CommandNonQuery + EmitCommandNonQuery and replaces
-        // this short-circuit with the real classification. Phase B / C extend for
-        // Scalar / Identity Kinds.
+        // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
+        //   * Task<int>, ValueTask<int>  — return rows-affected count.
+        //   * Task, ValueTask            — fire-and-await (no return value).
+        // Other return shapes (Task<string>, Task<MyClass>, etc.) on a NonQuery
+        // command fall through to Unknown so the existing emit stub (in
+        // EmitRepository's default branch) keeps the consumer's build alive while
+        // surfacing the missing-implementation as a runtime throw.
+        //
+        // Scalar (Phase B) and Identity (Phase C) kinds are NOT classified in
+        // Phase A; they fall through to Unknown and route to the [Command] stub
+        // emit path. The stub message names the kind so adopters know which
+        // milestone covers their shape.
+        if (isCommandAttribute && commandKind == CommandKindModel.NonQuery)
+        {
+            if (method.ReturnType is INamedTypeSymbol cmdReturn)
+            {
+                var name = cmdReturn.Name;
+                // Task<int> / ValueTask<int>
+                if (cmdReturn.Arity == 1
+                    && (name == "Task" || name == "ValueTask")
+                    && cmdReturn.TypeArguments.Length == 1
+                    && cmdReturn.TypeArguments[0].SpecialType == SpecialType.System_Int32)
+                {
+                    return (EmitShape.CommandNonQuery, null, null, null);
+                }
+                // Task / ValueTask (no result)
+                if (cmdReturn.Arity == 0 && (name == "Task" || name == "ValueTask"))
+                {
+                    return (EmitShape.CommandNonQuery, null, null, null);
+                }
+            }
+            return (EmitShape.Unknown, null, null, null);
+        }
+
         if (isCommandAttribute)
         {
-            _ = commandKind;
+            // Scalar / Identity Kinds fall through to Unknown in Phase A — Phase B / C
+            // wire the matching emit shapes.
             return (EmitShape.Unknown, null, null, null);
         }
 
@@ -1427,6 +1454,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the surrounding emit owns the open/while/yield/close shape.
                     EmitStreaming(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.CommandNonQuery:
+                    // v0.4 Phase A.2 — [Command(Kind = NonQuery)] emit. Open/execute/
+                    // close lifecycle around ExecuteNonQueryAsync. Task<int> shape
+                    // returns the rows-affected count; Task / ValueTask shape awaits
+                    // without a return.
+                    EmitCommandNonQuery(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
                     //   BatchAlways           -> IAsyncDbBatch path (B.2)
@@ -1497,6 +1531,56 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // v0.4 Phase A.2 — [Command(Kind = NonQuery)] emit. Same open-on-execute /
+    // close-on-finally lifecycle the rest of the emit shapes use, with the body
+    // calling ExecuteNonQueryAsync instead of ExecuteScalarAsync / ExecuteReaderAsync.
+    //
+    // Two return-shape branches:
+    //   * Task<int> / ValueTask<int>  — capture the rows-affected count and return it.
+    //   * Task / ValueTask            — await without a return statement.
+    //
+    // The method signature is rendered from m.ReturnTypeDisplay so the partial
+    // matches the user's declaration verbatim (matters because ValueTask shape
+    // is allowed alongside Task and the partial-method binding is exact).
+    private static void EmitCommandNonQuery(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+
+        // Returns-int when the unwrapped return type carries `<int>`. The simplest
+        // signal is "ReturnTypeDisplay contains '<' " — Task<int> / ValueTask<int>
+        // both produce that, while Task / ValueTask do not. Avoids re-symbol-walking
+        // a cached model.
+        var returnsInt = m.ReturnTypeDisplay.Contains('<');
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
+        if (returnsInt)
+        {
+            sb.AppendLine($"            return await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+        else
+        {
+            sb.AppendLine($"            await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
         sb.AppendLine("        }");
         sb.AppendLine("        finally");
         sb.AppendLine("        {");
