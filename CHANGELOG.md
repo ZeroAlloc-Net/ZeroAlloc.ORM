@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.3.0...v0.4.0) (2026-05-31)
+
+
+### Features
+
+* v0.4 Phase A — [Command] foundation + NonQuery emit ([#50](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/50)) ([4b9f0e0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/4b9f0e02352ed85f49db6fbc76b5c899c3972ce0))
+* v0.4 Phase B — [Command] Scalar emit ([#51](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/51)) ([3edd3cb](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/3edd3cb8ebefc3a92749060c1f278e07b2a84892))
+* v0.4 Phase C — [Command] Identity emit ([#52](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/52)) ([20a5e1d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/20a5e1d00092eb4aba58daf00f51f402f9cdf065))
+* v0.4 Phase D — [StoredProcedure] basic + multi-result-set ([#53](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/53)) ([63e080a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/63e080a9670b1cd833222ad4d24b5bf8046ceea9))
+* v0.4 Phase E — named-tuple output parameters on [StoredProcedure] ([#54](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/54)) ([c8dcb7d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c8dcb7d43a4403b20844550b45a45eb2f9244587))
+* v0.4 Phase F — final diagnostics (ZAO060 reserved + ZAO062) ([#55](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/55)) ([76a3f99](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/76a3f99df01602fb09c23eeafc562f6c3d69d152))
+* v0.4 Phase H.1-H.2 — README + backlog reconciliation ([#57](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/57)) ([1c05303](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/1c0530321d220a45eac39d73191d26deae86bb15))
+
+
+### Documentation
+
+* **cookbook:** add commands + stored-procedures recipes ([#56](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/56)) ([fc11988](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/fc11988198dafd0ada280810fc5d5acbdf4ede37))
+* **plan:** v0.4 implementation plan (commands + sprocs) ([#49](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/49)) ([7bf379a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/7bf379a1b37a0e241fded5426d5687d0b3c233dd))
+
 ## [0.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.2.0...v0.3.0) (2026-05-31)
 
 
