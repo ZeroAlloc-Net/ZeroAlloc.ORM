@@ -180,15 +180,28 @@ public static class ConventionDiscovery
         // Records with single-arg ctor were already matched upstream. Allow record /
         // non-record classes and structs equally — the shape we care about is "a
         // type with one public N-arg ctor and no per-arg-name unwrap requirement".
-        var publicCtors = type.InstanceConstructors
-            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 1)
-            .ToArray();
-        if (publicCtors.Length != 1) return null;
-        var ctor = publicCtors[0];
+        //
+        // v0.5 Phase A (post-review Fix 4) — manual single-pass walk avoids the
+        // `Where(...).ToArray()` allocation; the classifier sits in a hot path
+        // (one Resolve() call per ctor parameter the generator inspects).
+        IMethodSymbol? ctor = null;
+        var matchCount = 0;
+        foreach (var c in type.InstanceConstructors)
+        {
+            if (c.DeclaredAccessibility != Accessibility.Public || c.Parameters.Length <= 1) continue;
+            matchCount++;
+            if (matchCount > 1) return null; // second qualifying ctor — ambiguous.
+            ctor = c;
+        }
+        if (ctor is null) return null;
 
         // Each inner ctor parameter must resolve to a single-column convention.
         // Recursive composites (an inner param is itself a MultiArgCtor) are
-        // explicitly rejected here — Phase E will add ZAO022 with a deferral message.
+        // explicitly rejected here. Today the outer type then falls through to
+        // ConventionKind.Unknown, which the generator surfaces as ZAO022
+        // ("unsupported emit shape") via the existing classifier. Phase E will
+        // add a dedicated ZAO0xx with a clearer "recursive composites deferred"
+        // message; until then ZAO022 is the diagnostic adopters see.
         foreach (var p in ctor.Parameters)
         {
             var unwrapped = UnwrapForResolve(p.Type);

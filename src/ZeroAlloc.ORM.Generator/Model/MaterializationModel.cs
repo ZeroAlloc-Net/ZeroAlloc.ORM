@@ -82,6 +82,9 @@ internal sealed record ConventionInfo(
 //                   (an InnerColumn entry itself has InnerColumns) are rejected upstream
 //                   in v0.5 — ConventionDiscovery's MultiArgCtor rule refuses to classify
 //                   them. Flat one-level expansion is the v0.5 contract.
+// EquatableArray<ColumnBinding>.default is IsDefault==true with zero heap allocation;
+// non-composite leaf bindings carry this field for free (no per-binding empty-array
+// instance is materialized when InnerColumns is unused).
 internal sealed record ColumnBinding(
     string GetterMethod,
     bool IsNullable,

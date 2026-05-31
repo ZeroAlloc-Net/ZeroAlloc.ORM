@@ -9,8 +9,9 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 // SingleArgCtor / StaticFactory) as a composite shape and expand its column count
 // beyond the C# ctor arity. The classifier is exercised indirectly via the emit:
 // the generated source carries a sentinel comment naming the composite type so
-// the test can pin the classifier branch without depending on the full
-// materialization emit landing in A.2/A.3.
+// the test pins the classifier branch with a small, focused assertion. A.2/A.3
+// landed together with A.1 in the same PR; the broader CompositeEmitTests and
+// CompositeNestedTests cover the full materialization snapshots in this repo.
 public class CompositeDetectionTests
 {
     [Fact]
@@ -38,7 +39,7 @@ public class CompositeDetectionTests
             .GetText()
             .ToString();
 
-        Assert.Contains("// EmitShape: composite global::TestApp.Money (2 columns)", generated, System.StringComparison.Ordinal);
+        Assert.Contains("// EmitShape: composite global::TestApp.Money (flattened columns: 2)", generated, System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -71,5 +72,38 @@ public class CompositeDetectionTests
         // column count is 3 (int Id + Money's two inner columns). The sentinel pins
         // the flattened count.
         Assert.Contains("// EmitShape: FlatRow with nested composite (flattened columns: 3)", generated, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Task_of_List_of_composite_row_emits_ZAO022()
+    {
+        // v0.5 Phase A (post-review Fix 11) — locks the deferral of `Task<List<T>>`
+        // even when the row type is a composite-containing FlatRow. The outer shape
+        // is what's unsupported; composite materialization for the row itself works
+        // (CompositeNestedTests pins that). Without this test a future change that
+        // accidentally accepts `Task<List<T>>` for composite-bearing rows could ship
+        // undetected.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+            public sealed record OrderRow(int Id, Money Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders")]
+                public partial Task<List<OrderRow>> GetOrdersAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO022", System.StringComparison.Ordinal));
     }
 }

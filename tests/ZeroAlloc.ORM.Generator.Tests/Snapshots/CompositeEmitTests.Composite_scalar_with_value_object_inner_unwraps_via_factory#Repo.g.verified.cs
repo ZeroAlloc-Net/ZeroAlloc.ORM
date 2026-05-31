@@ -6,7 +6,7 @@ namespace TestApp;
 
 partial class Repo
 {
-    // EmitShape: composite global::TestApp.Money (2 columns)
+    // EmitShape: composite global::TestApp.Money (flattened columns: 2)
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::TestApp.Money> GetTotalAsync(int @id, global::System.Threading.CancellationToken @ct)
     {

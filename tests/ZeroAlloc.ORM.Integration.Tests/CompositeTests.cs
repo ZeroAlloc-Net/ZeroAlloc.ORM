@@ -75,6 +75,54 @@ public class CompositeTests
     }
 
     [Fact]
+    public async Task Nested_composite_in_domain_entity_round_trips()
+    {
+        // v0.5 Phase A (post-review Fix 2) — DomainEntity round-trip mirror of
+        // `Nested_composite_in_flat_row_round_trips`. The repo SELECTs columns in
+        // reverse order (Currency, Amount, Id) so a regression in the
+        // EmitNestedCompositeConstructionByOrdinalName ordinal-by-name path would
+        // surface as a runtime InvalidCastException rather than passing on luck.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount NUMERIC NOT NULL, Currency TEXT NOT NULL);
+                INSERT INTO Orders (Id, Amount, Currency) VALUES (7, 250.00, 'GBP');").ConfigureAwait(false);
+
+            var repo = new CompositeRepo(fx.Connection);
+            var entity = await repo.GetOrderEntityAsync(7, CancellationToken.None).ConfigureAwait(false);
+
+            entity.Should().NotBeNull();
+            entity!.Id.Should().Be(7);
+            entity.Total.Amount.Should().Be(250.00m);
+            entity.Total.Currency.Should().Be("GBP");
+        }
+    }
+
+    [Fact]
+    public async Task Scalar_composite_on_empty_table_throws_ZeroAllocOrmMaterializationException()
+    {
+        // v0.5 Phase A (post-review Fix 3) — EmitComposite throws on an empty
+        // result-set because the composite return is non-nullable (Task<Money>,
+        // not Task<Money?>). Nullable composites are Phase C's all-or-nothing
+        // branch; for now the throw is the contract and this test pins it.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount NUMERIC NOT NULL, Currency TEXT NOT NULL);").ConfigureAwait(false);
+
+            var repo = new CompositeRepo(fx.Connection);
+            Func<Task> act = () => repo.GetTotalAsync(1, CancellationToken.None);
+
+            await act.Should().ThrowAsync<ZeroAllocOrmMaterializationException>()
+                .WithMessage("*Composite scalar query returned no row*").ConfigureAwait(false);
+        }
+    }
+
+    [Fact]
     public async Task Scalar_composite_with_value_object_field_round_trips()
     {
         var fx = new SqliteFixture();

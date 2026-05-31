@@ -25,6 +25,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string GeneratedCodeAttribute =
         "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
 
+    // v0.5 Phase A (post-review Fix 15) — fully-qualified display format with
+    // nullable reference-type annotations preserved. Used at every site that
+    // computes a ToDisplayString on a parameter type for FlatRow / DomainEntity /
+    // composite materialization. Hoisted to a static readonly so the
+    // SymbolDisplayFormat builder isn't rebuilt per Resolve() / per ctor param.
+    private static readonly SymbolDisplayFormat TypeDisplayFormat =
+        SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var queryMethods = context.SyntaxProvider
@@ -1008,14 +1019,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // fall-through below.
         if (!inner.IsReferenceType || inner.NullableAnnotation != NullableAnnotation.Annotated)
         {
-            var compositeCandidate = UnwrapNullableValueType(inner)
-                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            // v0.5 Phase A (post-review Fix 5) — short-circuit on Nullable<T> BEFORE
+            // running UnwrapNullableValueType. The unwrap is wasted work when we'll
+            // bail anyway; Phase C will lift this gate when it adds the nullable
+            // composite branch.
             var compositeIsNullableValueType =
                 inner is INamedTypeSymbol cn
                 && cn.IsGenericType
                 && cn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T;
             if (!compositeIsNullableValueType)
             {
+                var compositeCandidate = UnwrapNullableValueType(inner)
+                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
                 var composite = TryBuildCompositeMaterialization(compositeCandidate, conventionContext);
                 if (composite is not null)
                     return (EmitShape.Composite, null, composite, null, HasReturnValue: true, SprocOutputParams: null);
@@ -1271,10 +1286,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (ctor is null) return null;
 
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
-        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
         foreach (var p in ctor.Parameters)
         {
@@ -1293,24 +1304,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // surrounding classification falls through to Unknown.
             if (resolution.Kind == ConventionKind.MultiArgCtor)
             {
-                var isCompositeNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
-                    || (p.Type is INamedTypeSymbol cp
-                        && cp.IsGenericType
-                        && cp.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
-                if (isCompositeNullable) return null; // Phase C handles nullable composites.
-
-                var innerCols = TryBuildCompositeInnerColumns(resolution, conventionContext);
-                if (innerCols is null) return null;
-                var compositeTypeDisplay = underlying
-                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                    .ToDisplayString(typeDisplayFormat);
-                columns.Add(new ColumnBinding(
-                    GetterMethod: string.Empty, // not used for composite; reads live on InnerColumns.
-                    IsNullable: false,
-                    TypeName: compositeTypeDisplay,
-                    Convention: null,
-                    ColumnName: null,
-                    InnerColumns: new EquatableArray<ColumnBinding>(innerCols.Value)));
+                var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: false);
+                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                columns.Add(compBinding);
                 continue;
             }
 
@@ -1348,7 +1344,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // AND the reference-type nullable annotation so `string?` -> `string`.
             var unwrappedDisplay = underlying
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                .ToDisplayString(typeDisplayFormat);
+                .ToDisplayString(TypeDisplayFormat);
 
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
@@ -1397,12 +1393,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         ConventionResult resolution,
         ConventionContext conventionContext)
     {
-        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
-
         var ctorParams = resolution.ExpandedColumns;
+        // Defensive: TryMultiArgCtor upstream already enforces Parameters.Length > 1,
+        // but this guard protects against future ConventionDiscovery contract drift.
         if (ctorParams.IsDefault || ctorParams.Length < 2) return null;
 
         var inner = ImmutableArray.CreateBuilder<ColumnBinding>(ctorParams.Length);
@@ -1430,7 +1423,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var convention = BuildConventionInfo(underlying, innerResolution, reader);
             var unwrappedDisplay = underlying
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                .ToDisplayString(typeDisplayFormat);
+                .ToDisplayString(TypeDisplayFormat);
 
             inner.Add(new ColumnBinding(
                 GetterMethod: reader,
@@ -1439,6 +1432,59 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 Convention: convention));
         }
         return inner.MoveToImmutable();
+    }
+
+    // v0.5 Phase A (post-review Fix 6) — shared helper for "composite ctor param
+    // nested inside a FlatRow / DomainEntity row". Handles the nullable-composite
+    // rejection (Phase C territory), the inner-column build, the optional
+    // GetOrdinal-name population for DomainEntity callers, and the outer
+    // ColumnBinding construction. Returns null when the composite is nullable
+    // (caller should bail to Phase C) or when the inner-column resolution fails.
+    //
+    // `useNamedColumns` toggles the inner reads between positional (FlatRow,
+    // ColumnName: null) and column-name-keyed (DomainEntity, ColumnName: PascalCase
+    // of each inner ctor param name).
+    private static ColumnBinding? TryBuildCompositeColumnBinding(
+        IParameterSymbol param,
+        ITypeSymbol underlying,
+        ConventionResult resolution,
+        ConventionContext conventionContext,
+        bool useNamedColumns)
+    {
+        var isCompositeNullable = param.Type.NullableAnnotation == NullableAnnotation.Annotated
+            || (param.Type is INamedTypeSymbol cp
+                && cp.IsGenericType
+                && cp.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+        if (isCompositeNullable) return null; // Phase C handles nullable composites.
+
+        var innerCols = TryBuildCompositeInnerColumns(resolution, conventionContext);
+        if (innerCols is null) return null;
+
+        var innerBindings = innerCols.Value;
+        if (useNamedColumns)
+        {
+            // For DomainEntity the inner reads use column-name lookups; populate
+            // ColumnName on each inner binding from the ctor-param name.
+            var ctorParams = resolution.ExpandedColumns;
+            var withNames = ImmutableArray.CreateBuilder<ColumnBinding>(innerBindings.Length);
+            for (var ix = 0; ix < innerBindings.Length; ix++)
+            {
+                var b = innerBindings[ix];
+                withNames.Add(b with { ColumnName = ToPascalCase(ctorParams[ix].Name) });
+            }
+            innerBindings = withNames.MoveToImmutable();
+        }
+
+        var compositeTypeDisplay = underlying
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+            .ToDisplayString(TypeDisplayFormat);
+        return new ColumnBinding(
+            GetterMethod: string.Empty, // not used for composite; reads live on InnerColumns.
+            IsNullable: false,
+            TypeName: compositeTypeDisplay,
+            Convention: null,
+            ColumnName: null,
+            InnerColumns: new EquatableArray<ColumnBinding>(innerBindings));
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
@@ -1470,10 +1516,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (publicParameterizedCtors.Length != 1) return null;
         var ctor = publicParameterizedCtors[0];
 
-        var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
 
         foreach (var p in ctor.Parameters)
@@ -1488,34 +1530,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // Nullable composite ctor params are Phase C; reject for now.
             if (resolution.Kind == ConventionKind.MultiArgCtor)
             {
-                var isCompositeNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
-                    || (p.Type is INamedTypeSymbol cp
-                        && cp.IsGenericType
-                        && cp.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
-                if (isCompositeNullable) return null;
-
-                var innerCols = TryBuildCompositeInnerColumns(resolution, conventionContext);
-                if (innerCols is null) return null;
-                // For DomainEntity the inner reads use column-name lookups; populate
-                // ColumnName on each inner binding from the ctor-param name.
-                var ctorParams = resolution.ExpandedColumns;
-                var withNames = ImmutableArray.CreateBuilder<ColumnBinding>(innerCols.Value.Length);
-                for (var ix = 0; ix < innerCols.Value.Length; ix++)
-                {
-                    var b = innerCols.Value[ix];
-                    withNames.Add(b with { ColumnName = ToPascalCase(ctorParams[ix].Name) });
-                }
-
-                var compositeTypeDisplay = underlying
-                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                    .ToDisplayString(typeDisplayFormat);
-                columns.Add(new ColumnBinding(
-                    GetterMethod: string.Empty,
-                    IsNullable: false,
-                    TypeName: compositeTypeDisplay,
-                    Convention: null,
-                    ColumnName: null,
-                    InnerColumns: new EquatableArray<ColumnBinding>(withNames.MoveToImmutable())));
+                var compBinding = TryBuildCompositeColumnBinding(p, underlying, resolution, conventionContext, useNamedColumns: true);
+                if (compBinding is null) return null; // nullable composite (Phase C) or inner-column build failure.
+                columns.Add(compBinding);
                 continue;
             }
 
@@ -1546,7 +1563,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // TypeName stores the UNWRAPPED type (see FlatRow for rationale).
             var unwrappedDisplay = underlying
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                .ToDisplayString(typeDisplayFormat);
+                .ToDisplayString(TypeDisplayFormat);
 
             columns.Add(new ColumnBinding(
                 GetterMethod: reader,
@@ -2328,10 +2345,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 case EmitShape.Composite:
                     // v0.5 Phase A — composite at scalar position. Sentinel
                     // comment marks the classifier branch; the real emit body
-                    // lands in Phase A.2.
+                    // lands in EmitComposite. Wording (`flattened columns: N`)
+                    // matches the nested FlatRow / DomainEntity sentinels (Fix 7).
+                    // The `!.` (Fix 8) reflects the EmitComposite invariant that
+                    // m.Materialization is non-null on this branch — the bail-on-null
+                    // guard inside EmitComposite asserts the same.
                     {
-                        var compCount = m.Materialization?.Columns.Length ?? 0;
-                        sb.AppendLine($"    // EmitShape: composite {m.Materialization?.TargetTypeFullName} ({compCount} columns)");
+                        var compCount = m.Materialization!.Columns.Length;
+                        sb.AppendLine($"    // EmitShape: composite {m.Materialization!.TargetTypeFullName} (flattened columns: {compCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
                     }
                     EmitComposite(sb, m, repo.ConnectionAccess);
                     break;
@@ -3068,11 +3089,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        // v0.5 Phase A (post-review Fix 1) — sentinel sits BEFORE the
+        // [GeneratedCode] attribute for parity with the v0.4 SprocWithOutputParams
+        // sentinel and the v0.5 composite-scalar sentinel.
         if (hasNestedComposite)
         {
             sb.AppendLine($"    // EmitShape: FlatRow with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
@@ -3163,6 +3187,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitComposite(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
+        // Length < 2 invariant: a 1-arg ctor would have routed through TrySingleArgCtor
+        // (different convention), not TryMultiArgCtor. Defensive guard against model drift.
         if (mat is null || mat.Kind != MaterializationKind.Composite || mat.Columns.Length < 2)
         {
             sb.AppendLine($"    // TODO: Composite without inner-column Materialization for {m.MethodName}");
@@ -3249,11 +3275,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        // v0.5 Phase A (post-review Fix 1) — sentinel BEFORE attribute (see EmitFlatRow).
         if (hasNestedComposite)
         {
             sb.AppendLine($"    // EmitShape: DomainEntity with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
