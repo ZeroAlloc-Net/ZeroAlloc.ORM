@@ -62,8 +62,8 @@ internal static class DiagnosticDescriptors
         DiagnosticSeverity.Warning);
 
     public static readonly DiagnosticDescriptor ZAO020_FromResourceNotImplemented = Make(
-        "ZAO020", "[Query(FromResource)] not yet implemented in v0.1",
-        "Method '{0}' uses [Query(FromResource = true)] but the embedded-resource lookup path is deferred to a future milestone. The Sql string is currently treated as literal inline SQL.",
+        "ZAO020", "[ORM attribute](FromResource = true) not yet implemented",
+        "Method '{0}' uses [{1}](FromResource = true) but the embedded-resource lookup path is deferred to a future milestone. The Sql string is currently treated as literal inline SQL.",
         DiagnosticSeverity.Info);
 
     // ZAO021 retired in v0.3 Phase B.5 — BatchMode.Always / BatchMode.Never values

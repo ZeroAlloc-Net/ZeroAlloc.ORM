@@ -15,7 +15,9 @@ public sealed class CommandAttribute(string sql) : Attribute
     /// <summary>
     /// When true, <see cref="Sql"/> names an embedded resource (e.g. <c>"MyApp.Sql.InsertOrder"</c>)
     /// rather than inline SQL. Resource lookup happens at generator time. Reserved for a future
-    /// milestone — v0.4 emits an informational diagnostic when set.
+    /// milestone — v0.4 emits an informational diagnostic (ZAO020) when set, and the value is
+    /// treated as literal inline SQL until the embedded-resource path ships. See
+    /// <c>docs/diagnostics/ZAO020.md</c> for adopter guidance.
     /// </summary>
     public bool FromResource { get; init; }
 

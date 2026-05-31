@@ -75,10 +75,24 @@ public class CommandNonQueryTests
 
             var repo = new CommandRepo(fx.Connection);
 
-            // Task return — no count to assert; the test passes if the await completes
-            // without throwing. Implicitly exercises the arity-0 EmitCommandNonQuery
-            // branch that omits the `return` statement.
+            // Task return — no count to surface; the test exercises the arity-0
+            // EmitCommandNonQuery branch (no `return` statement in the emit body).
+            // We still need to prove the body actually ran the UPDATE — a regression
+            // that emits a no-op body would silently pass otherwise — so we follow
+            // up with a direct SELECT against the touched row and assert the
+            // Total column reflects the UPDATE's side effect.
             await repo.TouchOrderAsync(1, CancellationToken.None).ConfigureAwait(false);
+
+            var probe = fx.Connection.CreateCommand();
+            await using (probe.ConfigureAwait(false))
+            {
+                probe.CommandText = "SELECT Total FROM Orders WHERE Id = 1";
+                var result = await probe.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
+                // Seeded value was 10.00; the [Command] UPDATE adds 1 to it.
+                // Direct Xunit Assert.Equal (not FluentAssertions Should) keeps the
+                // assertion EPS06-clean on the decimal struct.
+                Assert.Equal(11.00m, Convert.ToDecimal(result, System.Globalization.CultureInfo.InvariantCulture));
+            }
         }
     }
 

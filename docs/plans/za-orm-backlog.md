@@ -292,6 +292,23 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
   streaming-style early-close test lands — premature without the second adopter.
 - A TODO marker is already in place at the top of `StreamingTests`.
 
+### v0.4-CLN1 — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`
+
+- Source: PR #50 code review (2026-05-31, Phase A).
+- The v0.4 Phase A union step in `OrmGenerator.Initialize` joins the `[Query]` and
+  `[Command]` `ForAttributeWithMetadataName` pipelines via `Collect()` + `SelectMany`.
+  Convenient and locally simple, but the join collapses incremental-cache granularity:
+  any source edit re-runs the union + grouping for ALL methods, not just the pipeline
+  whose attribute saw the change.
+- Phase D will add a THIRD pipeline (`[StoredProcedure]`) and amplify the same loss.
+- Investigate folding all three into a single `ForAttributeWithMetadataName` with a
+  combined attribute filter, OR adopting a shared `CreateSyntaxProvider` that reads
+  any of the three attributes in one pass. Either approach must preserve the per-method
+  symbol-walking work the current `TransformMethod` does (no regressions on the larger
+  per-method cost) — only the union step is the cache-invalidation hot spot.
+- Defer to v0.4 polish after Phase D lands; chasing it during Phase A risks reshuffling
+  emit semantics for an aesthetic gain.
+
 ### v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite
 
 - Source: PR #44 fix-up (2026-05-31).

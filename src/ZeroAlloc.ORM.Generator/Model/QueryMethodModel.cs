@@ -58,12 +58,20 @@ internal sealed record QueryMethodModel(
     EquatableArray<ParameterInfo> MethodParameters,
     string? CancellationTokenParameterName,
     EquatableArray<DiagnosticInfo> Diagnostics,
-    // v0.4 Phase A — true when the source method is annotated with [Command] rather
-    // than [Query]. Drives the EmitShape.CommandNonQuery (and future Scalar / Identity)
-    // dispatch. IsQuery and IsCommand are mutually exclusive — ZAO005 fires when both
-    // are seen on the same method.
-    bool IsCommand = false,
-    CommandKindModel CommandKind = CommandKindModel.NonQuery);
+    // v0.4 Phase A — true when the source method is annotated with [Command]; false
+    // when [Query] (the Query case is implicit). Drives the EmitShape.CommandNonQuery
+    // (and future Scalar / Identity) dispatch. ZAO005 fires when a method carries
+    // both [Query] and [Command]. No default — thread the value explicitly at both
+    // TransformMethod call sites (Query pipeline passes `false, NonQuery`; Command
+    // pipeline passes `true, kind`).
+    bool IsCommand,
+    CommandKindModel CommandKind,
+    // HasReturnValue — true when the method declares a non-void return type that
+    // emit must produce a value for. For [Command] this is `Task<int> / ValueTask<int>`;
+    // for [Query] it's any non-void return. Captured authoritatively in
+    // ClassifyEmitShape so EmitCommandNonQuery (and any future emit shape that
+    // branches on return-arity) can read it without string-sniffing ReturnTypeDisplay.
+    bool HasReturnValue);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

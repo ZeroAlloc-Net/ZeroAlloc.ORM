@@ -1,43 +1,16 @@
 using System.Linq;
-using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
-// v0.4 Phase A.1 — [Command] attribute scanner pickup. Two coverage cells:
-//
-//   * Command_NonQuery_method_emits_partial_implementation — verifies that
-//     a [Command("INSERT...")] method with Task<int> return reaches an emit
-//     branch (snapshot proves the body shape, including the NonQuery
-//     ExecuteNonQueryAsync call).
-//
-//   * Method_with_query_and_command_attributes_emits_ZAO005 — verifies that
-//     the existing ZAO005 multi-attribute diagnostic extends to cover the
-//     [Query] + [Command] overlap case introduced in v0.4.
+// v0.4 Phase A.1 — [Command] attribute scanner DETECTION / DIAGNOSTIC coverage.
+// This file's scope is intentionally narrow: it verifies the diagnostic-pipeline
+// behaviour for [Command]-attributed methods (cross-attribute ZAO005, plus any
+// future detection-only assertions). Full emit-shape snapshots for [Command]
+// live in CommandNonQueryTests.cs so the snapshot and detection concerns don't
+// drift together.
 public class CommandDetectionTests
 {
-    [Fact]
-    public Task Command_NonQuery_method_emits_partial_implementation()
-    {
-        var source = """
-            using System.Data.Async;
-            using System.Threading;
-            using System.Threading.Tasks;
-            using ZeroAlloc.ORM;
-
-            namespace TestApp;
-
-            public sealed partial class Repo(IAsyncDbConnection connection)
-            {
-                [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total)")]
-                public partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
-            }
-            """;
-        return Verify(GeneratorHarness.RunGenerator(source));
-    }
-
     [Fact]
     public void Method_with_query_and_command_attributes_emits_ZAO005()
     {
@@ -59,6 +32,9 @@ public class CommandDetectionTests
         var result = GeneratorHarness.RunGenerator(source);
         var diagnostics = result.Results[0].Diagnostics;
 
-        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO005", System.StringComparison.Ordinal));
+        // Assert.Single (not Assert.Contains) so a future regression that fires
+        // ZAO005 twice — e.g. both pipelines surfacing the diagnostic before the
+        // union deduper drops one — is caught here.
+        Assert.Single(diagnostics.AsEnumerable(), d => string.Equals(d.Id, "ZAO005", System.StringComparison.Ordinal));
     }
 }
