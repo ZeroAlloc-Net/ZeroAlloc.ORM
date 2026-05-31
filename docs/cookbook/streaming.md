@@ -115,3 +115,14 @@ await foreach (var row in repo.StreamAllAsync(cts.Token).ConfigureAwait(false))
     // The iterator's finally still cleans up.
 }
 ```
+
+## See also
+
+- [`multi-result-set.md`](multi-result-set.md) — tuple-shaped multi-result
+  patterns (head + lines, count + first + all). Materialises eagerly — pick
+  streaming over multi-result-set when `Lines` could be unbounded.
+- [`commands.md`](commands.md) — `[Command]` for INSERT / UPDATE / DELETE /
+  scalar / identity (non-streaming write paths).
+- [`stored-procedures.md`](stored-procedures.md) — `[StoredProcedure]` for
+  procedure-driven calls. The same `IAsyncEnumerable<T>` shape works under
+  `[StoredProcedure]` when the procedure produces a single result set.

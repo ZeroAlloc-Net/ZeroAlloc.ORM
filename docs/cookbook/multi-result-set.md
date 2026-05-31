@@ -93,6 +93,12 @@ The generator emits compile-time diagnostics when they don't:
 
 Both fire at build time, so the wrong shape never ships.
 
+## Procedure-driven head + lines
+
+The same tuple shape works for stored procedures — wrap the multi-result
+procedure with `[StoredProcedure]` instead of `[Query]`. See Recipe 4 in
+[`stored-procedures.md`](stored-procedures.md) for the procedure-side variant.
+
 ## When NOT to use this pattern
 
 - **One result set, list-shaped** — use `Task<List<T>>` instead of
@@ -106,3 +112,6 @@ Both fire at build time, so the wrong shape never ships.
   data, the tuple shape with a non-nullable tuple field will raise a
   materialisation exception. Model the optionality with a nullable tuple
   element or split into two queries.
+- **Single-value writes / scalar aggregates** — use `[Command]` instead. See
+  [`commands.md`](commands.md) for INSERT / UPDATE / DELETE rows-affected,
+  scalar aggregates (`COUNT`, `SUM`), and identity (`RETURNING`) capture.
