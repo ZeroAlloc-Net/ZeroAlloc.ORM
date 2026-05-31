@@ -329,6 +329,28 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
   ignored on stored procedures (they encapsulate their own batching semantics)."
 - Defer to v0.4 polish or v0.5; not urgent enough to gate Phase D / Phase E.
 
+### v0.4-CLN6 — Revisit per-element span granularity for named-tuple ZAO062
+
+- Source: PR #55 review (2026-05-31, Phase F).
+- ZAO062 (named-tuple output-parameter field doesn't match any method
+  parameter) currently reports against a cache-safe `LocationInfo` derived
+  from the method declaration rather than the per-element span of the
+  offending tuple field. The cache-safe form was picked deliberately to
+  keep the diagnostic in the incremental-generator hot path without
+  pulling `SyntaxNode` references into the cached model.
+- Trade-off: adopters see the diagnostic anchored on the method signature
+  instead of the specific tuple field, which is slightly noisier when a
+  big tuple has one bad name.
+- Fix options to evaluate later: (1) lift just the tuple-element span into
+  `LocationInfo` (per-element offset within the method declaration —
+  cheap if we already walk the tuple syntax for Phase E emit); (2) keep
+  the method-level location and add the offending field name in the
+  message (lowest cost). Option 2 is already partially in place via the
+  `{0}` placeholder in the diagnostic message.
+- Defer to v0.4 polish or roll into the v0.6 diagnostics-polish milestone
+  (`v0.6-T2` full catalog audit) where every ZAO code gets a per-trigger
+  unit test pass anyway.
+
 ### v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite
 
 - Source: PR #44 fix-up (2026-05-31).
@@ -364,28 +386,41 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
 
 ## P1 — Milestone v0.4 (2 weeks): commands + sprocs
 
-### v0.4-T1 — `[Command]` attribute + emit
+Commits in chronological order, all merged via PR on `main` after `v0.3.0` shipped.
+Phase plan: [`docs/plans/2026-05-31-v0.4-implementation.md`](2026-05-31-v0.4-implementation.md).
 
-- `Kind = NonQuery` → returns `int` (rows affected).
-- `Kind = Scalar` → returns declared return type (scalar materialization).
-- `Kind = Identity` → provider-aware `RETURNING` / `SCOPE_IDENTITY()` / `LAST_INSERT_ROWID()`.
+- Phase A — `[Command]` foundation + NonQuery emit (#50)
+- Phase B — `[Command]` Scalar emit (#51)
+- Phase C — `[Command]` Identity emit (provider-aware suffixes; Sqlite end-to-end, MSSQL/Postgres prepared) (#52)
+- Phase D — `[StoredProcedure]` basic + multi-result-set + early ZAO061 (empty procedure name) (#53)
+- Phase E — Named-tuple output parameters on `[StoredProcedure]` (#54)
+- Phase F — Final diagnostics: ZAO060 (reserved) + ZAO062 (named-tuple field has no matching parameter) + ZAO005 verification (#55)
+- Phase G — Cookbook recipes (`commands.md` + `stored-procedures.md`) (#56)
+- Phase H — README v0.4 section + backlog reconciliation (this PR)
 
-### v0.4-T2 — `[StoredProcedure]` attribute + emit
+Test-count delta: 245 → 250 passing + 1 skipped placeholder (stored-procedure integration round-trip — Sqlite has no sproc support, deferred to v0.6 Postgres fixture).
 
-- `CommandType = StoredProcedure` on the emitted command.
-- Provider routing: SQL Server → procedure name as CommandText; Postgres procedures → `CALL proc()` syntax.
+v0.4 milestone scoreboard:
 
-### v0.4-T3 — Named-tuple output parameters
+- ~~v0.4-T1 — `[Command]` attribute + emit~~ — ✅ shipped 0.4.0 (#50, #51, #52)
+  - `Kind = NonQuery` → returns `int` rows-affected.
+  - `Kind = Scalar` → returns first-column-first-row through the standard materialization pipeline (primitive / value-object / enum / single-arg-ctor wrappers).
+  - `Kind = Identity` → provider-aware suffixes. Sqlite path drives `LAST_INSERT_ROWID()` end-to-end; the SQL Server (`SCOPE_IDENTITY()`) and Postgres (`RETURNING`) routing remains a v2 provider-routing follow-up — emit ships the suffix shape but adopters on those providers should verify against their dialect until the routing test fixtures land.
+- ~~v0.4-T2 — `[StoredProcedure]` attribute + emit~~ — ✅ shipped 0.4.0 (#53)
+  - `CommandType = StoredProcedure` on the emitted command, procedure name as `CommandText`.
+  - Result shapes mirror `[Query]`: scalar, single-row, list, and multi-result-set tuples (head + lines through `NextResultAsync`).
+  - Parameters bind by name, same convention as `[Query]`.
+- ~~v0.4-T3 — Named-tuple output parameters~~ — ✅ shipped 0.4.0 (#54)
+  - Tuple-return fields beyond the first map to `ParameterDirection.Output` SQL parameters by name.
+  - Output values are copied back into the returned tuple after execution.
+  - First tuple field remains the result-set materialization (scalar / row / list).
+- ~~v0.4-T4 — Sproc diagnostics~~ — ✅ shipped 0.4.0 (#53, #55)
+  - ZAO060 — reserved. The C# compiler already rejects `out`/`ref` on async-returning partials, so a dedicated source-generator diagnostic isn't needed at the emit layer right now; the code stays reserved against a future sync sproc shape (or a kept-for-symmetry future expansion).
+  - ZAO061 — empty procedure name on `[StoredProcedure("")]`. Shipped early in Phase D fix-up (#53) when the empty-name case surfaced during sproc emit testing, rather than waiting for Phase F.
+  - ZAO062 — named-tuple output-parameter field doesn't match any method parameter that could carry the output back to the SQL side. Shipped with Heuristic 1 in Phase F (#55) — the cache-safe `LocationInfo` form was used for the diagnostic location (see v0.4-CLN6).
+  - ZAO005 — multi-attribute-on-one-method verification (`[Query]` + `[Command]` + `[StoredProcedure]` are mutually exclusive). Existing diagnostic confirmed firing on the new attributes in Phase F.
 
-- Detect return type `Task<(T result, int newOrderId, ...)>` on `[StoredProcedure]`.
-- Emit `Direction = ParameterDirection.Output` on matching `@param` names.
-- Copy output values back into the tuple after execution.
-
-### v0.4-T4 — Sproc diagnostics
-
-- ZAO060: sproc uses `out`/`ref` (illegal on async).
-- ZAO061: empty procedure name.
-- ZAO062: named-tuple field doesn't match any procedure parameter.
+**v0.4 milestone complete. Release-please will propose 0.4.0 from conventional commits.**
 
 ---
 
