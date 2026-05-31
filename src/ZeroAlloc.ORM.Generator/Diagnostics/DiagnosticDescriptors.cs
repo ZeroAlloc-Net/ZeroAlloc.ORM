@@ -76,6 +76,11 @@ internal static class DiagnosticDescriptors
         "Method '{0}' has return type '{1}' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.",
         DiagnosticSeverity.Info);
 
+    public static readonly DiagnosticDescriptor ZAO032_TupleArityExceedsStatements = Make(
+        "ZAO032", "Tuple arity exceeds SQL statement count",
+        "Method '{0}' returns a {1}-element tuple but the SQL has only {2} statement(s). Add the missing SELECT(s) or reduce the tuple arity.",
+        DiagnosticSeverity.Error);
+
     public static readonly DiagnosticDescriptor ZAO040_NoConstructionStrategy = Make(
         "ZAO040", "No construction strategy resolved for type",
         "Cannot materialize type '{0}': no [Materialize], [ValueObject], static From factory, single-arg ctor, enum, or primitive convention matched. Add [Materialize(Factory=\"...\")] or define a convention method.",
