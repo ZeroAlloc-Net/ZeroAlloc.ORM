@@ -426,27 +426,118 @@ v0.4 milestone scoreboard:
 
 ## P1 — Milestone v0.5 (1 week): composites + custom factories
 
-### v0.5-T1 — Multi-column composite materialization
+Commits in chronological order, all merged via PR on `main` after `v0.4.0` shipped.
+Phase plan: [`docs/plans/2026-05-31-v0.5-implementation.md`](2026-05-31-v0.5-implementation.md).
 
-- `Money(decimal Amount, string Currency)` — two columns per composite.
-- Generator tracks expanded column count beyond C# ctor arity.
-- Nested in flat rows: `record OrderRow(int Id, Money Total)` → 3 columns.
+- Phase A — composite materialization (Money pattern; MultiArgCtor classifier + emit at scalar, FlatRow, DomainEntity nested) (#60)
+- Phase B — composite parameter binding (positional unpacking `@total_Amount` + `@total_Currency`) + early ZAO063 (sproc-batch ignored info) (#61)
+- Phase C — nullable composite handling (all-or-nothing semantics) + ZAO050 (#62)
+- Phase D — `[Materialize(Factory = "...")]` resolution + ZAO043 / ZAO044 / ZAO051 (#63)
+- Phase E — ZAO052 (recursive composite deferred) + composites cookbook + composite × value-object snapshots (#64)
+- Phase F — README v0.5 section + backlog reconciliation (this PR)
 
-### v0.5-T2 — Multi-column composite binding
+Test-count delta: 310 → 340 passing + 1 skipped (the v0.4 sproc-integration placeholder; Sqlite has no sproc support — deferred to v0.6 Postgres fixture).
 
-- Method parameter typed `Money total` → SQL params `@total_Amount` + `@total_Currency`.
-- Naming convention via positional unpacking (no name-coupling to ctor args).
+v0.5 milestone scoreboard:
 
-### v0.5-T3 — `[Materialize(Factory = "X")]` resolution
+- ~~v0.5-T1 — Multi-column composite materialization~~ — ✅ shipped 0.5.0 (#60)
+  - `Money(decimal Amount, string Currency)` — N columns per composite.
+  - Generator tracks expanded column count beyond C# ctor arity.
+  - Nested in flat rows: `record OrderRow(int Id, Money Total)` → 3 columns.
+  - Composite ctor parameters resolve through the existing convention pipeline
+    (primitive / enum / value-object / single-arg-ctor / static-factory).
+- ~~v0.5-T2 — Multi-column composite binding~~ — ✅ shipped 0.5.0 (#61)
+  - Method parameter typed `Money total` → SQL params `@total_Amount` + `@total_Currency`.
+  - Naming convention via positional unpacking (parameter name + `_` + ctor-parameter name).
+- ~~v0.5-T3 — `[Materialize(Factory = "X")]` resolution~~ — ✅ shipped 0.5.0 (#63)
+  - Explicit `static` factory lookup by name on the type, wins over MultiArgCtor convention.
+  - Factory parameter list maps to columns by name; positional fallback when SQL column
+    names aren't available (see v0.5-CLN4).
+  - Diagnostics: ZAO043 (factory not found), ZAO044 (ambiguous discovery — already
+    shipped in v0.2, verified firing on the new factory path), ZAO051 (factory
+    parameter list cannot be reconciled with available columns).
+- ~~v0.5-T4 — Nullable composite handling~~ — ✅ shipped 0.5.0 (#62)
+  - All composite columns `DBNull` → `null`.
+  - Any-but-not-all `DBNull` → `ZeroAllocOrmMaterializationException` at runtime.
+  - Compile-time warning ZAO050 fires on each nullable-composite materialization site
+    to flag the partial-null case as undetectable at compile time (by design).
 
-- Explicit factory lookup by name on the type.
-- Map factory's parameters to columns by name.
-- ZAO043 if not found.
+Phase E's cookbook + ZAO052 cleanup pass is not its own T item per the original backlog
+banding — it's the final scope-guard + adopter-docs sweep for the milestone.
 
-### v0.5-T4 — Nullable composite handling
+**v0.5 milestone complete. Release-please will propose 0.5.0 from conventional commits.**
 
-- All-null composite columns → `null`.
-- Partial-null → `ZeroAllocOrmMaterializationException` at runtime + ZAO050 compile-time warning.
+---
+
+## Post-v0.5 cleanup
+
+Items surfaced during the v0.5 milestone that are intentionally deferred rather than
+blocking the release PRs. Pick up under v0.5 polish or roll into v0.6.
+
+### v0.5-CLN1 — ZAO050 per-position firing (Heuristic 1 refinement)
+
+- Source: v0.5 Phase C review (2026-05-31, PR #62).
+- ZAO050 (nullable composite — partial-null undetectable at compile time) currently fires
+  once per nullable-composite materialization SITE rather than once per nullable-composite
+  POSITION within a composite materialization (e.g. a row containing two `Money?` fields
+  gets one warning at the method, not one warning per field).
+- This is the same trade-off ZAO062 originally had before its tightening pass — the
+  site-level firing was picked for cache-safe `LocationInfo` and to keep the diagnostic
+  out of the per-position hot loop in the incremental generator.
+- Fix options to evaluate later: (1) lift a per-position offset into `LocationInfo`
+  (analogous to the ZAO062 tightening tracked in v0.4-CLN6); (2) keep the site-level
+  location and include the offending field name(s) in the message text.
+- Defer to v0.6 diagnostics polish (`v0.6-T2` full-catalog audit covers this anyway).
+
+### v0.5-CLN2 — Nullable reference-type composite parameter binding
+
+- Source: v0.5 Phase C scoping decision (2026-05-31, PR #62).
+- A nullable composite REFERENCE TYPE used as a method parameter (e.g. `Money? total`
+  where `Money` is a `class` / `record class`, not a struct) currently routes through
+  the existing ZAO041 fallback (no resolvable unwrap strategy) rather than emitting
+  the `if (total is null) bind DBNull else unpack` shape that the Phase C plan
+  described as the natural symmetric path.
+- Decision: Phase C committed to **Option A** — keep the existing ZAO041 surface and
+  document the gap as a v0.5 follow-up. Adopters wanting nullable-composite binding
+  today should reach for an explicit overload or pass the composite through a wrapper.
+- Fix: extend `EmitParameterBindingWithIndent` (and the composite unpacking helper)
+  to recognise `Nullable<T>` of a value-type composite directly (already partly
+  handled) AND a reference-type composite null-check ahead of the unpack — emit one
+  DBNull bind per inner column on the null branch.
+- Defer to v0.6 or v0.5.1 — gated by real adopter demand. The struct-composite case
+  (which v0.5 ships) covers the canonical `Money` / `Address` shape.
+
+### v0.5-CLN3 — Recursive composite support (deferred via ZAO052)
+
+- Source: v0.5 Phase A scope guard, hardened to a diagnostic in Phase E (PR #64).
+- Today a composite ctor parameter whose type is itself a composite (`record
+  OrderLine(Money UnitPrice, Money Tax)` with `Money(decimal Amount, string Currency)`)
+  fires ZAO052 with a clear "recursive composites deferred to v0.6+" message rather
+  than silently emitting a wrong column-index walk.
+- Fix: extend the classifier + the column-index math to handle arbitrary nesting
+  depth (the FlatRow path already does this for 1 level — generalising it is a
+  straight bookkeeping change). Worth a dedicated phase since the snapshot churn
+  will touch every emit-shape variant.
+- Defer to v0.6 — paired with the Postgres / SQL Server integration fixture work
+  so the deeper integration coverage doubles as a regression net.
+
+### v0.5-CLN4 — Factory parameter-to-column name matching falls back to positional
+
+- Source: v0.5 Phase D review (2026-05-31, PR #63).
+- `[Materialize(Factory = "FromText")]` currently maps the factory's parameter list to
+  columns by NAME when SQL column names are known at compile time (e.g. an inline
+  `SELECT Amount, Currency FROM ...`) and falls back to POSITIONAL mapping otherwise
+  (e.g. `SELECT * FROM ...`, or a stored-procedure result set where the generator
+  cannot statically introspect the column list).
+- Trade-off: positional fallback is the safe default but loses the "factory parameter
+  named `Amount` maps to column named `Amount` no matter where it sits in the SELECT"
+  ergonomic. Adopters writing factories whose parameter order doesn't match column
+  order get surprising results today on the fallback path.
+- Fix: improve when SQL parsing / column-introspection lands (already gated on
+  ORM-V2-3 — SQL-parser-based analyzer). Pre-v1.0, document the fallback explicitly
+  in `docs/cookbook/composites.md` (the recipe already calls this out for the
+  Sqlite-decimal-as-text case).
+- Defer to v0.6 or later — bundle with ORM-V2-3 when that lands.
 
 ---
 
