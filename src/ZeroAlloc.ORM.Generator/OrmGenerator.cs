@@ -1879,6 +1879,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("}");
     }
 
+    // v0.4 Phase D — emit the `__cmd.CommandText = ...;` line plus, for stored
+    // procedures, the immediately-following `__cmd.CommandType = StoredProcedure;`
+    // line. Centralizes the sproc/query branch so every single-command emit shape
+    // (ScalarInt / NullableScalar / FlatRow / DomainEntity / CommandNonQuery /
+    // CommandScalar / CommandIdentity / Streaming / MultiResultSetJoined) picks up
+    // the sproc flip without duplicating the conditional.
+    //
+    // For a [Query] / [Command] method (`m.IsStoredProcedure == false`):
+    //   __cmd.CommandText = "<SQL literal>";
+    //
+    // For a [StoredProcedure] method (`m.IsStoredProcedure == true`):
+    //   __cmd.CommandText = "<procedure name>";
+    //   __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
+    //
+    // The `cmdLocal` argument allows multi-command emit (batch path) to pass
+    // e.g. `__cmd0` / `__cmd1` instead of the default `__cmd`. The `indent` is
+    // the leading whitespace per line as for the other Build* helpers.
+    private static void BuildCommandTextAssignment(StringBuilder sb, QueryMethodModel m, string cmdLocal, string indent)
+    {
+        var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
+        var textLiteral = SymbolDisplay.FormatLiteral(textValue, quote: true);
+        sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
+        if (m.IsStoredProcedure)
+        {
+            sb.Append(indent).Append(cmdLocal).AppendLine(".CommandType = global::System.Data.CommandType.StoredProcedure;");
+        }
+    }
+
     // EF-style open-on-execute lifecycle: open if needed, single-command execute,
     // close-on-finally. Slot held only for ExecuteScalarAsync — minimum possible for
     // a single statement. Globally-qualified type names so emit composes regardless
@@ -1886,7 +1914,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // with user parameter names; ConfigureAwait(false) consistently — library code.
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -1894,7 +1921,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
@@ -1915,7 +1942,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // is allowed alongside Task and the partial-method binding is exact).
     private static void EmitCommandNonQuery(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
@@ -1928,7 +1954,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         if (m.HasReturnValue)
         {
@@ -2030,7 +2056,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         var col = mat.Columns[0];
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
@@ -2039,7 +2064,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
 
@@ -2160,7 +2185,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // matches the user declaration's nullable annotation verbatim.
     private static void EmitNullableScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -2169,7 +2193,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2202,7 +2226,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -2210,7 +2233,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2281,7 +2304,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -2289,7 +2311,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2368,7 +2390,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         // Streaming uses the same parameter-list shape as the single-row paths:
         // the [EnumeratorCancellation] attribute lives on the user's source
         // declaration (ZAO007-enforced) and partial-method attribute merging
@@ -2380,7 +2401,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2529,9 +2550,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // into its falsy branch verbatim.
     private static void EmitMultiResultSetJoinedBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         sb.AppendLine($"{indent}await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"{indent}__cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", indent);
         EmitParameterBindingWithIndent(sb, m, indent);
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -2665,17 +2685,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         // The original SQL already carries `;` separators between statements — emit
-        // it verbatim. Joining via `string.Join("; ", Split(...))` would normalize
-        // whitespace, which is desirable but loses the user's original layout in
-        // multi-line raw string SQL. Verbatim keeps snapshots predictable.
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        // it verbatim via BuildCommandTextAssignment. Joining via
+        // `string.Join("; ", Split(...))` would normalize whitespace, which is
+        // desirable but loses the user's original layout in multi-line raw string
+        // SQL. Verbatim keeps snapshots predictable.
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: "            ");
