@@ -261,6 +261,41 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization) = ClassifyEmitShape(method, conventionContext);
 
+        // ZAO032 — MultiResultSet tuple arity exceeds the SQL statement count. Detection
+        // ran fine (the tuple itself is classifiable), but the SQL has fewer SELECTs
+        // than the tuple requires; the runtime would attempt to read past the last
+        // result set and fail. Surface at generation time so the adopter either adds
+        // the missing SELECT(s) or trims the tuple. Error severity skips emit via the
+        // standard hadError gate.
+        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null)
+        {
+            var tupleArity = multiResultMaterialization.Elements.Values.Length;
+            var statementCount = SqlStatementSplitter.CountStatements(sql);
+            if (tupleArity > statementCount)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO032",
+                    Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        tupleArity.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        statementCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
+            }
+            // ZAO033 — inverse of ZAO032. Extra SELECTs would be silently dropped on
+            // the floor by the materializer; surface the mismatch so the adopter
+            // either widens the tuple or trims the SQL.
+            else if (statementCount > tupleArity)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO033",
+                    Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        statementCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        tupleArity.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
+            }
+        }
+
         // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
         // diagnostics:
         //
@@ -1193,6 +1228,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO009" => DiagnosticDescriptors.ZAO009_RedundantAsync,
         "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
+        "ZAO032" => DiagnosticDescriptors.ZAO032_TupleArityExceedsStatements,
+        "ZAO033" => DiagnosticDescriptors.ZAO033_StatementsExceedTupleArity,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
         "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
