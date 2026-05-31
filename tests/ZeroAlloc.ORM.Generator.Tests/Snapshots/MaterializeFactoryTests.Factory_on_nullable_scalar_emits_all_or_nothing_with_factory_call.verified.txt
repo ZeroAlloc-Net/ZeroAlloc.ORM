@@ -1,0 +1,19 @@
+﻿{
+  Diagnostics: [
+    {
+      Location: : (17,19)-(17,31),
+      Message: Method 'GetTotalAsync' uses nullable composite type 'global::TestApp.Money' at return position. The all-or-nothing DBNull check is enforced at runtime; partial-null columns throw ZeroAllocOrmMaterializationException at materialize time (or send DBNull-for-all on bind time). If your schema guarantees these columns are populated or null together, suppress this warning via project-level <NoWarn>ZAO050</NoWarn> or #pragma warning disable ZAO050.,
+      Severity: Warning,
+      WarningLevel: 1,
+      Descriptor: {
+        Id: ZAO050,
+        Title: Nullable composite type requires runtime all-or-nothing check,
+        HelpLink: https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO050.md,
+        MessageFormat: Method '{0}' uses nullable composite type '{1}' at {2}. The all-or-nothing DBNull check is enforced at runtime; partial-null columns throw ZeroAllocOrmMaterializationException at materialize time (or send DBNull-for-all on bind time). If your schema guarantees these columns are populated or null together, suppress this warning via project-level <NoWarn>ZAO050</NoWarn> or #pragma warning disable ZAO050.,
+        Category: ZeroAlloc.ORM,
+        DefaultSeverity: Warning,
+        IsEnabledByDefault: true
+      }
+    }
+  ]
+}
