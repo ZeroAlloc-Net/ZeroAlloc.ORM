@@ -167,7 +167,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO008 — multi-statement SQL with a single-result return type.
-        if (CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
+        if (SqlStatementSplitter.CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO008",
@@ -857,76 +857,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return (name, arity) is ("Task", 0) or ("Task", 1)
             or ("ValueTask", 0) or ("ValueTask", 1)
             or ("IAsyncEnumerable", 1);
-    }
-
-    // Statement detector that recognizes single- and double-quoted SQL string
-    // literals (with `''` / `""` escapes) before counting `;`. A bare `;` ends
-    // a statement; a `;` inside a quoted literal does not.
-    // Handles SQL string literals; comments + dollar-quoted strings still TODO(v0.2).
-    private static int CountStatements(string sql)
-    {
-        if (string.IsNullOrEmpty(sql)) return 0;
-        var count = 1;
-        var inSingleQuote = false;
-        var inDoubleQuote = false;
-        for (var i = 0; i < sql.Length; i++)
-        {
-            var c = sql[i];
-            if (inSingleQuote)
-            {
-                // SQL string escape: '' inside '...' is a literal '.
-                if (c == '\'')
-                {
-                    if (i + 1 < sql.Length && sql[i + 1] == '\'')
-                    {
-                        i++; // skip the escaped quote
-                        continue;
-                    }
-                    inSingleQuote = false;
-                }
-                continue;
-            }
-            if (inDoubleQuote)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < sql.Length && sql[i + 1] == '"')
-                    {
-                        i++;
-                        continue;
-                    }
-                    inDoubleQuote = false;
-                }
-                continue;
-            }
-            switch (c)
-            {
-                case '\'':
-                    inSingleQuote = true;
-                    break;
-                case '"':
-                    inDoubleQuote = true;
-                    break;
-                case ';':
-                    // A trailing `;` (with only whitespace after) doesn't open a new
-                    // statement. Walk the remainder inline to avoid the substring
-                    // allocation of `sql[(i + 1)..].TrimStart()`.
-                    if (IsOnlyWhitespaceAfter(sql, i + 1))
-                        return count;
-                    count++;
-                    break;
-            }
-        }
-        return count;
-    }
-
-    private static bool IsOnlyWhitespaceAfter(string sql, int startIndex)
-    {
-        for (var j = startIndex; j < sql.Length; j++)
-        {
-            if (!char.IsWhiteSpace(sql[j])) return false;
-        }
-        return true;
     }
 
     private static bool IsMultiResultReturnType(ITypeSymbol returnType)
