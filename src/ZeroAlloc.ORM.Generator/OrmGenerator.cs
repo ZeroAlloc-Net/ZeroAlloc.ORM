@@ -16,6 +16,7 @@ namespace ZeroAlloc.ORM.Generator;
 public sealed class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
+    private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
     private const string GeneratorVersion = "0.1.0";
@@ -28,7 +29,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: QueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx))
+                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: false))
+            .Where(static m => m is not null)!;
+
+        // v0.4 Phase A — [Command] attribute pickup. Re-uses the same TransformMethod
+        // pathway (parameter binding, connection-access resolution, ZAO* diagnostics)
+        // and sets IsCommand = true so emit dispatch can pick the CommandNonQuery
+        // shape. Both pipelines feed into the same grouping step; methods carrying
+        // both [Query] and [Command] surface ZAO005 (extended in v0.4 from the v0.3
+        // single-Query rule).
+        //
+        // Incremental-cache trade-off: the union below collapses both pipelines via
+        // Collect() + SelectMany, which means ANY source edit re-runs the whole union
+        // + grouping step rather than re-running only the pipeline that saw the
+        // change. We accept that cost in v0.4 Phase A because (a) ForAttributeWithMetadataName
+        // is still the high-performance entry point for the per-method transforms and
+        // (b) the union output is small relative to the per-method symbol work that
+        // it caches. Phase D will add a third pipeline ([StoredProcedure]); the
+        // backlog item "v0.4-CLN — single-pipeline architecture for [Query]+[Command]
+        // +[StoredProcedure]" tracks the future investigation of folding all three
+        // into one ForAttributeWithMetadataName call to preserve per-method
+        // incremental-cache granularity.
+        var commandMethods = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: CommandAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: true))
             .Where(static m => m is not null)!;
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
@@ -36,7 +62,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // location, etc.) — we take them from g.First() instead of duplicating them
         // on each QueryMethodModel. R8 hoist: this removes the prior fallback that
         // grabbed type-properties off `repo.Methods.Values[0]` downstream.
-        var grouped = queryMethods.Collect()
+        //
+        // v0.4 Phase A: [Query] + [Command] pipelines are unioned before grouping so a
+        // single QueryRepositoryModel covers both attribute kinds on the same type.
+        // The (containingTypeFullName, methodName) tuple uniquely identifies a method;
+        // we dedupe on that key inside the group so a method that picks up both
+        // pipelines (the ZAO005 multi-attribute case) doesn't produce two emit slots.
+        var allMethods = queryMethods.Collect()
+            .Combine(commandMethods.Collect())
+            .SelectMany(static (pair, _) =>
+            {
+                var seen = new HashSet<(string, string)>();
+                var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
+                foreach (var m in pair.Left)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                foreach (var m in pair.Right)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                return union.ToImmutable();
+            });
+
+        var grouped = allMethods.Collect()
             .SelectMany(static (methods, _) =>
                 methods.GroupBy(m => m!.Method.ContainingTypeFullName, StringComparer.Ordinal)
                        .Select(g =>
@@ -98,7 +151,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         });
     }
 
-    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx)
+    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, bool isCommandAttribute)
     {
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
@@ -109,10 +162,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // per-parameter classification so the lookup cost amortizes.
         var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
 
-        var queryAttribute = ctx.Attributes.FirstOrDefault();
-        var sql = queryAttribute?
+        // The triggering attribute. For [Query] this is the QueryAttribute; for the
+        // [Command] pipeline this is the CommandAttribute. We pull the SQL out of the
+        // first ctor arg either way — both attributes share that signature.
+        var triggeringAttribute = ctx.Attributes.FirstOrDefault();
+        var sql = triggeringAttribute?
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
+
+        // v0.4 Phase A — read [Command(Kind = ...)] from the named args. Default is
+        // NonQuery to mirror the abstraction default. Only consulted when this method
+        // came in via the [Command] pipeline; [Query] sets CommandKind to NonQuery
+        // (irrelevant — IsCommand stays false).
+        var commandKind = CommandKindModel.NonQuery;
+        if (isCommandAttribute && triggeringAttribute is not null)
+        {
+            foreach (var named in triggeringAttribute.NamedArguments)
+            {
+                if (string.Equals(named.Key, "Kind", StringComparison.Ordinal)
+                    && named.Value.Value is int kindValue)
+                {
+                    commandKind = (CommandKindModel)kindValue;
+                }
+            }
+        }
 
         var (connectionAccess, connectionResolved) = ResolveConnectionAccess(containing);
 
@@ -141,14 +214,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
-        // ZAO005 — multiple [Query] attributes on one method.
-        // v0.1 only ships [Query]; [Command] and [StoredProcedure] return in v0.4 at
-        // which point this check expands to cover all three ORM attributes.
+        // ZAO005 — multiple ORM attributes on one method.
+        // v0.4 Phase A extends from the v0.1 single-Query check to cover [Query] +
+        // [Command] overlap. Phase D will add [StoredProcedure] to the count when
+        // that attribute lands. Counting both pipelines' attributes on the same
+        // method handles both the "two [Query]" case AND the "one [Query], one
+        // [Command]" case via a single >1 threshold.
+        //
+        // Both pipelines emit ZAO005 from TransformMethod (since method.GetAttributes()
+        // surfaces ALL attributes regardless of which pipeline triggered the transform).
+        // The duplicate is dropped at the union step (line ~59) where the deduper keeps
+        // the first entry per (containing-type, method-name) — pair.Left ([Query]) wins
+        // the tie. When Phase D adds [StoredProcedure], the third pipeline will fold in
+        // the same way.
         var ormAttrCount = method.GetAttributes()
-            .Count(a => string.Equals(
-                a.AttributeClass?.ToDisplayString(),
-                "ZeroAlloc.ORM.QueryAttribute",
-                StringComparison.Ordinal));
+            .Count(a =>
+            {
+                var fqn = a.AttributeClass?.ToDisplayString();
+                return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
+                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal);
+            });
         if (ormAttrCount > 1)
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -236,18 +321,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ResolveBatchStrategy below — keeping the read in one place avoids a
         // second scan over the attribute's NamedArguments.
         var batchMode = 0; // BatchMode.Auto default
-        if (queryAttribute is not null)
+        if (triggeringAttribute is not null)
         {
-            foreach (var named in queryAttribute.NamedArguments)
+            foreach (var named in triggeringAttribute.NamedArguments)
             {
                 if (string.Equals(named.Key, "FromResource", StringComparison.Ordinal)
                     && named.Value.Value is bool fromResource
                     && fromResource)
                 {
+                    // ZAO020 fires for both [Query] and [Command] from v0.4 onwards;
+                    // pass the triggering attribute name as the second arg so the
+                    // message reflects what the adopter actually wrote.
+                    var attributeName = isCommandAttribute ? "Command" : "Query";
                     diagnostics.Add(new DiagnosticInfo(
                         DescriptorId: "ZAO020",
                         Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
-                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, attributeName))));
                 }
                 else if (string.Equals(named.Key, "Batch", StringComparison.Ordinal)
                     && named.Value.Value is int batchValue)
@@ -259,7 +348,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var strategy = ResolveBatchStrategy(sql, batchMode);
 
-        var (shape, nullableReaderMethod, materialization, multiResultMaterialization) = ClassifyEmitShape(method, conventionContext);
+        var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind);
 
         // ZAO032 — MultiResultSet tuple arity exceeds the SQL statement count. Detection
         // ran fine (the tuple itself is classifiable), but the SQL has fewer SELECTs
@@ -312,7 +401,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ZAO007 covers IAsyncEnumerable<T>-without-EnumeratorCancellation separately,
         // so we suppress both ZAO022 and ZAO040 for IAsyncEnumerable to avoid the
         // double-diagnostic case.
+        //
+        // v0.4 Phase A.1: also suppress ZAO022/ZAO040 for [Command]-attributed methods
+        // — they intentionally short-circuit to Unknown in Phase A.1 so the emit
+        // dispatch surfaces them via the [Command]-aware fallback in EmitRepository.
+        // ZAO022/ZAO040 are scoped to [Query] return-shape gaps; firing them for
+        // [Command] would mislead the adopter.
         if (shape == EmitShape.Unknown
+            && !isCommandAttribute
             && IsSupportedReturnType(method.ReturnType)
             && !IsIAsyncEnumerable(method.ReturnType))
         {
@@ -451,7 +547,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MultiResultMaterialization: multiResultMaterialization,
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
-            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
+            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
+            // [Query] pipeline passes (false, NonQuery); [Command] passes (true, kind).
+            // Threading both explicitly (no defaults) keeps the call site self-documenting
+            // and forces future pipeline additions (e.g. [StoredProcedure]) to make a
+            // deliberate decision.
+            IsCommand: isCommandAttribute,
+            CommandKind: commandKind,
+            HasReturnValue: hasReturnValue);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -474,11 +577,54 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // For NullableScalar we also return the IDataReader.GetXxx method name to use
     // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
     // that no longer carries the symbol.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization) ClassifyEmitShape(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyEmitShape(
         IMethodSymbol method,
-        ConventionContext conventionContext)
+        ConventionContext conventionContext,
+        bool isCommandAttribute,
+        CommandKindModel commandKind)
     {
-        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null);
+        // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
+        //   * Task<int>, ValueTask<int>  — return rows-affected count.
+        //   * Task, ValueTask            — fire-and-await (no return value).
+        // Other return shapes (Task<string>, Task<MyClass>, etc.) on a NonQuery
+        // command fall through to Unknown so the existing emit stub (in
+        // EmitRepository's default branch) keeps the consumer's build alive while
+        // surfacing the missing-implementation as a runtime throw.
+        //
+        // Scalar (Phase B) and Identity (Phase C) kinds are NOT classified in
+        // Phase A; they fall through to Unknown and route to the [Command] stub
+        // emit path. The stub message names the kind so adopters know which
+        // milestone covers their shape.
+        if (isCommandAttribute && commandKind == CommandKindModel.NonQuery)
+        {
+            if (method.ReturnType is INamedTypeSymbol cmdReturn)
+            {
+                var name = cmdReturn.Name;
+                // Task<int> / ValueTask<int>
+                if (cmdReturn.Arity == 1
+                    && (name == "Task" || name == "ValueTask")
+                    && cmdReturn.TypeArguments.Length == 1
+                    && cmdReturn.TypeArguments[0].SpecialType == SpecialType.System_Int32)
+                {
+                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: true);
+                }
+                // Task / ValueTask (no result)
+                if (cmdReturn.Arity == 0 && (name == "Task" || name == "ValueTask"))
+                {
+                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: false);
+                }
+            }
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        if (isCommandAttribute)
+        {
+            // Scalar / Identity Kinds fall through to Unknown in Phase A — Phase B / C
+            // wire the matching emit shapes.
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
 
         // v0.3 Phase C — IAsyncEnumerable<T> streaming. Match by metadata name + arity
         // and require the element type to resolve to a row-shaped materialization
@@ -492,18 +638,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext);
             if (streamFlat is not null)
-                return (EmitShape.Streaming, null, streamFlat, null);
+                return (EmitShape.Streaming, null, streamFlat, null, HasReturnValue: true);
             var streamDomain = TryBuildDomainEntityMaterialization(streamElement, conventionContext);
             if (streamDomain is not null)
-                return (EmitShape.Streaming, null, streamDomain, null);
+                return (EmitShape.Streaming, null, streamDomain, null, HasReturnValue: true);
             // Element type not classifiable — fall through to Unknown so the existing
             // ZAO022 / ZAO040 path surfaces the gap. ZAO007 still fires upstream when
             // the user forgets [EnumeratorCancellation].
-            return (EmitShape.Unknown, null, null, null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
         // Restrict to Task<T> for now; ValueTask<T> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null);
+        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
 
         var inner = named.TypeArguments[0];
 
@@ -520,7 +666,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext);
             if (multi is not null)
-                return (EmitShape.MultiResultSet, null, null, multi);
+                return (EmitShape.MultiResultSet, null, null, multi, HasReturnValue: true);
             // Tuple shape but at least one element wasn't classifiable: fall through to
             // Unknown so ZAO022 (or a future ZAO032/033) surfaces the gap.
         }
@@ -534,7 +680,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var readerMethod = GetScalarPrimitiveReaderInfo(inner);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null, null);
+                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true);
         }
 
         // Nullable value type: Task<int?> / Task<Nullable<T>>.
@@ -545,12 +691,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var underlying = innerNamed.TypeArguments[0];
             var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null, null);
+                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true);
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
-        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null);
+        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true);
 
         // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
         // conventions. v0.2 Phase C extends column resolution from "primitive only" to
@@ -564,7 +710,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var flat = TryBuildFlatRowMaterialization(elementType, conventionContext);
             if (flat is not null)
-                return (EmitShape.FlatRow, null, flat, null);
+                return (EmitShape.FlatRow, null, flat, null, HasReturnValue: true);
 
             // v0.2 Phase E — DomainEntity: a non-record class with a single public
             // ctor whose parameters all resolve to known conventions. The detection
@@ -574,10 +720,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // positional path stays the default for records).
             var domain = TryBuildDomainEntityMaterialization(elementType, conventionContext);
             if (domain is not null)
-                return (EmitShape.DomainEntity, null, domain, null);
+                return (EmitShape.DomainEntity, null, domain, null, HasReturnValue: true);
         }
 
-        return (EmitShape.Unknown, null, null, null);
+        return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
     }
 
     // Attempt to classify `elementType` as a positional record whose constructor params
@@ -1329,6 +1475,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the surrounding emit owns the open/while/yield/close shape.
                     EmitStreaming(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.CommandNonQuery:
+                    // v0.4 Phase A.2 — [Command(Kind = NonQuery)] emit. Open/execute/
+                    // close lifecycle around ExecuteNonQueryAsync. Task<int> shape
+                    // returns the rows-affected count; Task / ValueTask shape awaits
+                    // without a return.
+                    EmitCommandNonQuery(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
                     //   BatchAlways           -> IAsyncDbBatch path (B.2)
@@ -1352,7 +1505,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     }
                     break;
                 default:
-                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
+                    if (m.IsCommand)
+                    {
+                        // v0.4 Phase A.1 — [Command] detected, scanner wired through to the
+                        // emit pipeline. Real shape emit lands in Phase A.2 (NonQuery), B
+                        // (Scalar), C (Identity). Emit a throwing stub so the consuming code
+                        // compiles but flags missing implementation at runtime. The stub's
+                        // generated source carries a comment pointing at the future-milestone
+                        // phase so adopters reading the .g.cs know which release ships their
+                        // shape.
+                        var paramList = BuildParameterList(m.MethodParameters);
+                        sb.AppendLine($"    {GeneratedCodeAttribute}");
+                        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase B (Scalar) / Phase C (Identity) for emit;");
+                        sb.AppendLine($"        //            current stub fires NotImplementedException at first call.");
+                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase B / C.\");");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
+                    }
                     break;
             }
         }
@@ -1360,6 +1532,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var hint = $"{repo.ContainingTypeName}.g.cs";
         context.AddSource(hint, SourceText.From(sb.ToString(), Encoding.UTF8));
+    }
+
+    // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
+    // Eight emit sites used to hand-write the identical open/try and finally/close blocks
+    // — the helpers below collapse the duplication while keeping the byte-identical
+    // output the snapshot harness depends on. The `indent` argument is the leading
+    // whitespace per line; `ctRef` is the formatted CT expression (e.g. `ct`, `@event`,
+    // or the literal `default`). `connectionAccess` is the bare member identifier
+    // (`connection`) — the helper prefixes the `@` itself.
+    private static void BuildConnectionPrologue(StringBuilder sb, string connectionAccess, string ctRef, string indent)
+    {
+        sb.Append(indent).Append("var __conn = @").Append(connectionAccess).AppendLine(";");
+        sb.Append(indent).AppendLine("var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.Append(indent).Append("if (__openedHere) await __conn.OpenAsync(").Append(ctRef).AppendLine(").ConfigureAwait(false);");
+        sb.Append(indent).AppendLine("try");
+        sb.Append(indent).AppendLine("{");
+    }
+
+    private static void BuildConnectionEpilogue(StringBuilder sb, string indent)
+    {
+        sb.Append(indent).AppendLine("}");
+        sb.Append(indent).AppendLine("finally");
+        sb.Append(indent).AppendLine("{");
+        sb.Append(indent).AppendLine("    if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.Append(indent).AppendLine("}");
     }
 
     // EF-style open-on-execute lifecycle: open if needed, single-command execute,
@@ -1375,21 +1572,53 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // v0.4 Phase A.2 — [Command(Kind = NonQuery)] emit. Same open-on-execute /
+    // close-on-finally lifecycle the rest of the emit shapes use, with the body
+    // calling ExecuteNonQueryAsync instead of ExecuteScalarAsync / ExecuteReaderAsync.
+    //
+    // Two return-shape branches:
+    //   * Task<int> / ValueTask<int>  — capture the rows-affected count and return it.
+    //   * Task / ValueTask            — await without a return statement.
+    //
+    // The method signature is rendered from m.ReturnTypeDisplay so the partial
+    // matches the user's declaration verbatim (matters because ValueTask shape
+    // is allowed alongside Task and the partial-method binding is exact).
+    private static void EmitCommandNonQuery(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+
+        // HasReturnValue is set authoritatively in ClassifyEmitShape — `true` for
+        // Task<int> / ValueTask<int>, `false` for Task / ValueTask. Reading the flag
+        // off the model avoids string-sniffing ReturnTypeDisplay (the prior
+        // Contains('<') heuristic was correct but brittle).
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        EmitParameterBinding(sb, m);
+        if (m.HasReturnValue)
+        {
+            sb.AppendLine($"            return await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+        else
+        {
+            sb.AppendLine($"            await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1410,11 +1639,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBinding(sb, m);
@@ -1422,11 +1647,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
         sb.AppendLine($"            return __reader.IsDBNull(0) ? null : __reader.{readerMethod}(0);");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1459,11 +1680,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBinding(sb, m);
@@ -1514,11 +1731,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"                {expr}{trailing}");
         }
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1546,11 +1759,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBinding(sb, m);
@@ -1594,11 +1803,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"                {expr}{trailing}");
         }
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1645,11 +1850,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBindingWithIndent(sb, m, "            ");
@@ -1706,11 +1907,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"                    {expr}{trailing}");
         }
         sb.AppendLine("            }");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1744,19 +1941,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         EmitBatchSetup(sb, m, statements);
         sb.AppendLine($"            await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: "            ");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1783,11 +1972,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            if (__conn.CanCreateBatch)");
         sb.AppendLine("            {");
         EmitMultiResultSetBatchBody(sb, m, mat, ct, indent: "                ");
@@ -1796,11 +1981,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            {");
         EmitMultiResultSetJoinedBody(sb, m, mat, ct, indent: "                ");
         sb.AppendLine("            }");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
@@ -1964,21 +2145,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
-        sb.AppendLine($"        var __conn = @{connectionAccess};");
-        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
-        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: "            ");
-        sb.AppendLine("        }");
-        sb.AppendLine("        finally");
-        sb.AppendLine("        {");
-        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
-        sb.AppendLine("        }");
+        BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
 
