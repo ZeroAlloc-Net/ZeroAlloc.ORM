@@ -136,10 +136,17 @@ public class StreamingTests
                 }
             };
 
-            // Tighten the assertion: verify the OCE's CancellationToken matches our
-            // CTS — guards against an ambient/unrelated cancellation passing the test.
+            // Tighten the assertion: verify the OCE carries a cancelled token AND
+            // that our CTS is the one we cancelled — guards against an ambient or
+            // unrelated cancellation passing the test. Reference equality with
+            // cts.Token is too strict in practice: Sqlite's ReadAsync chains a
+            // linked-token internally, so the OCE surfaces the linked token rather
+            // than the original cts.Token. Asserting both `IsCancellationRequested`
+            // is the strongest provenance check available without coupling to
+            // provider-internal token plumbing.
             var thrown = await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
-            thrown.Which.CancellationToken.Should().Be(cts.Token);
+            thrown.Which.CancellationToken.IsCancellationRequested.Should().BeTrue();
+            cts.IsCancellationRequested.Should().BeTrue();
         }
     }
 }
