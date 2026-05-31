@@ -35,6 +35,16 @@ internal enum EmitShape
     // and enums all funnel through a single shape. Nullable variants (Task<T?>)
     // emit a DBNull/null guard before the cast.
     CommandScalar,
+    // v0.4 Phase C — [Command(Kind = Identity)] methods. Structurally identical to
+    // CommandScalar's non-nullable branch — open/execute/close around ExecuteScalarAsync
+    // and a Convert.ToXxx + optional VO factory wrap. The differences are:
+    //   * Identity is never nullable (the SQL contract requires the RETURNING /
+    //     SCOPE_IDENTITY() clause to produce a non-null value); the null guard
+    //     always throws InvalidOperationException with an Identity-specific message.
+    //   * Classification only accepts int / long / Guid (or a VO wrapping one of
+    //     those) — narrower than Scalar's full primitive/enum range, matching the
+    //     identity-key idiom across providers.
+    CommandIdentity,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

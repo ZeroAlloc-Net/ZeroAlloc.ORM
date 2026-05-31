@@ -252,7 +252,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO008 — multi-statement SQL with a single-result return type.
-        if (SqlStatementSplitter.CountStatements(sql) > 1 && !IsMultiResultReturnType(method.ReturnType))
+        // v0.4 Phase C — exempt [Command] methods. Multi-statement SQL is
+        // legitimate for Identity (e.g. `INSERT ...; SELECT SCOPE_IDENTITY()`
+        // on SQL Server, `INSERT ...; SELECT last_insert_rowid()` on Sqlite)
+        // and harmless for Scalar / NonQuery — the underlying ADO.NET driver
+        // executes the joined statements as a unit and ExecuteScalarAsync /
+        // ExecuteNonQueryAsync just consume the relevant result. ZAO008 only
+        // applies to [Query] methods where a `;` paired with a single-row /
+        // single-scalar return type means the second statement is silently
+        // discarded — surface as an error there but not on commands.
+        if (!isCommandAttribute
+            && SqlStatementSplitter.CountStatements(sql) > 1
+            && !IsMultiResultReturnType(method.ReturnType))
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO008",
@@ -350,18 +361,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind);
 
-        // ZAO002 — [Command(Kind = Scalar)] requires a scalar-shaped return type
-        // (Task<T> / ValueTask<T> reducing to a primitive, value-object, or enum).
-        // When the return type is a container (List<T>, IAsyncEnumerable<T>, tuple,
-        // etc.) classification falls through to Unknown; raise the compile-time
-        // diagnostic here so the adopter sees the failure at build time instead of
-        // hitting the runtime NotImplementedException stub. The existing ZAO002
-        // path at the top of TransformMethod covers the "return type isn't even
-        // Task<T>" case via IsSupportedReturnType; THIS branch covers the more
-        // subtle "Task<T> but T isn't a scalar shape on Kind=Scalar" case.
+        // ZAO002 — [Command(Kind = Scalar | Identity)] requires a value-returning
+        // shape. Scalar accepts any primitive / VO / enum (including the nullable
+        // Task<T?> variant); Identity is narrower (non-nullable int / long / Guid,
+        // optionally wrapped in a value-object). When the return type doesn't
+        // classify, raise the compile-time diagnostic here so the adopter sees the
+        // failure at build time instead of hitting the runtime stub. The existing
+        // ZAO002 path at the top of TransformMethod covers the "return type isn't
+        // even Task<T>" case via IsSupportedReturnType; THIS branch covers the
+        // more subtle "Task<T> but T isn't a supported shape on this Kind" case.
         if (shape == EmitShape.Unknown
             && isCommandAttribute
-            && commandKind == CommandKindModel.Scalar
+            && (commandKind == CommandKindModel.Scalar || commandKind == CommandKindModel.Identity)
             && IsSupportedReturnType(method.ReturnType))
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -646,12 +657,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return ClassifyCommandScalar(method, conventionContext);
         }
 
+        // v0.4 Phase C — [Command(Kind = Identity)] dispatch. Extracted to
+        // ClassifyCommandIdentity for symmetry with the Scalar branch. Identity
+        // narrows the accepted return types (int / long / Guid + value-objects
+        // wrapping those) and rejects nullable shapes — see the helper's doc.
+        if (isCommandAttribute && commandKind == CommandKindModel.Identity)
+        {
+            return ClassifyCommandIdentity(method, conventionContext);
+        }
+
         if (isCommandAttribute)
         {
-            // Identity Kind falls through to Unknown — Phase C wires the matching emit
-            // shape. The Phase A fallback in EmitRepository surfaces this via a
-            // NotImplementedException naming the kind so adopters know which milestone
-            // covers their shape.
+            // Defensive — all three CommandKind values have explicit dispatch
+            // above. A future kind addition that doesn't update this switch
+            // would fall through here; surfacing as Unknown lets ZAO002 fire
+            // upstream if the return type was otherwise valid, or the v0.1
+            // TODO comment kicks in for the truly unclassifiable case.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
@@ -839,6 +860,124 @@ public sealed class OrmGenerator : IIncrementalGenerator
             Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(scalarBinding)));
 
         return (EmitShape.CommandScalar, null, scalarMaterialization, null, HasReturnValue: true);
+    }
+
+    // v0.4 Phase C — [Command(Kind = Identity)] dispatch. Identity is the
+    // "INSERT ... RETURNING Id" / "INSERT ...; SELECT SCOPE_IDENTITY()" shape:
+    // ExecuteScalarAsync with a non-null integer / Guid result that becomes the
+    // method's return value (optionally wrapped in a value-object).
+    //
+    // Accepted return shapes (Task<T> / ValueTask<T> only):
+    //   * Task<int>      — primitive cast via Convert.ToInt32.
+    //   * Task<long>     — primitive cast via Convert.ToInt64.
+    //   * Task<Guid>     — direct cast (no Convert.ToGuid in BCL).
+    //   * Task<TVO>      — value-object wrapping one of int / long / Guid via
+    //                       ConventionDiscovery (ValueObject / SingleArgCtor /
+    //                       StaticFactory).
+    //
+    // REJECTED — fall through to Unknown and ZAO002 fires upstream:
+    //   * Nullable shapes (Task<int?>, Task<TVO?>, etc.) — Identity has no
+    //     nullable variant per design. The SQL contract requires the RETURNING /
+    //     SCOPE_IDENTITY() clause to produce a non-null value.
+    //   * Primitives outside the int / long / Guid trio (decimal, string, etc.)
+    //     — these don't represent identity keys; route them through Kind=Scalar.
+    //   * Container shapes (List<T>, tuples, IAsyncEnumerable<T>) — Identity is
+    //     a single-value shape.
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyCommandIdentity(
+        IMethodSymbol method,
+        ConventionContext conventionContext)
+    {
+        if (method.ReturnType is not INamedTypeSymbol identityReturn)
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        if (identityReturn.Arity != 1
+            || (identityReturn.Name != "Task" && identityReturn.Name != "ValueTask")
+            || identityReturn.TypeArguments.Length != 1)
+        {
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        var identityInner = identityReturn.TypeArguments[0];
+
+        // Identity rejects nullable variants — both `T?` reference annotation
+        // and `Nullable<T>` value-type wrapper. Fall through to Unknown so
+        // ZAO002 fires upstream.
+        if (identityInner.NullableAnnotation == NullableAnnotation.Annotated
+            || (identityInner is INamedTypeSymbol idn
+                && idn.IsGenericType
+                && idn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T))
+        {
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        var identityUnwrapped = identityInner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+        var identityDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+            .WithMiscellaneousOptions(
+                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
+                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        var identityTypeDisplay = identityUnwrapped.ToDisplayString(identityDisplayFormat);
+
+        // ConventionDiscovery handles the four supported families; we filter
+        // the result so only int / long / Guid (and VOs/factories wrapping one
+        // of those) classify as Identity. Other primitives and enums route to
+        // Scalar (Phase B) — not Identity — even if they'd compile cleanly.
+        var identityResolution = ConventionDiscovery.Resolve(identityUnwrapped, conventionContext);
+        string? identityReader = identityResolution.Kind switch
+        {
+            ConventionKind.Primitive => IsIdentityPrimitive(identityUnwrapped)
+                ? PrimitiveCatalog.GetScalarReaderMethod(identityUnwrapped)
+                : null,
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveIdentityUnderlyingReaderForFactory(identityResolution),
+            _ => null,
+        };
+        if (identityReader is null)
+        {
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+        }
+
+        var identityConvention = BuildConventionInfo(identityUnwrapped, identityResolution, identityReader);
+
+        var identityBinding = new ColumnBinding(
+            GetterMethod: identityReader,
+            IsNullable: false,
+            TypeName: identityTypeDisplay,
+            Convention: identityConvention);
+        var identityMaterialization = new MaterializationModel(
+            Kind: MaterializationKind.ScalarPrimitive,
+            TargetTypeFullName: identityUnwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(identityBinding)));
+
+        return (EmitShape.CommandIdentity, null, identityMaterialization, null, HasReturnValue: true);
+    }
+
+    // Identity-key primitives. The standard auto-increment / RETURNING shape
+    // surfaces as int (most providers, narrow tables), long (bigint columns),
+    // or Guid (uuid columns / NEWID/NEWSEQUENTIALID on SQL Server). Other
+    // primitives — decimal Id, string Id, etc. — are technically possible
+    // but rare enough that we steer adopters toward Kind=Scalar where the
+    // shape isn't surprising.
+    private static bool IsIdentityPrimitive(ITypeSymbol type)
+        => type.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
+           || string.Equals(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+               "global::System.Guid", StringComparison.Ordinal);
+
+    // VO / SingleArgCtor / StaticFactory variants: require the wrapped /
+    // factory-arg type to be one of the identity primitives (int / long / Guid).
+    // Returns the underlying reader method or null if the wrapped type is
+    // outside the identity set. Mirrors ResolveUnderlyingReaderForFactory's
+    // factory-parameter inspection but layered with the identity-primitive
+    // filter so a `record OrderId(decimal Value)` would be rejected.
+    private static string? ResolveIdentityUnderlyingReaderForFactory(ConventionResult resolution)
+    {
+        ITypeSymbol? underlying = resolution.Factory switch
+        {
+            IMethodSymbol m when m.Parameters.Length == 1 => m.Parameters[0].Type,
+            _ => null,
+        };
+        if (underlying is null || !IsIdentityPrimitive(underlying))
+            return null;
+        return PrimitiveCatalog.GetScalarReaderMethod(underlying);
     }
 
     // Attempt to classify `elementType` as a positional record whose constructor params
@@ -1606,6 +1745,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // captured on m.Materialization.
                     EmitCommandScalar(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.CommandIdentity:
+                    // v0.4 Phase C.1 — [Command(Kind = Identity)] emit. Same
+                    // open/execute/close lifecycle around ExecuteScalarAsync as
+                    // CommandScalar; the materialization helper is shared
+                    // (EmitScalarMaterialization). Identity rejects nullable
+                    // returns at classification time, and the null-guard message
+                    // here references the RETURNING / SCOPE_IDENTITY() contract
+                    // rather than offering a Task<T?> escape hatch.
+                    EmitCommandIdentity(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.MultiResultSet:
                     // v0.3 Phase B — per-strategy dispatch:
                     //   BatchAlways           -> IAsyncDbBatch path (B.2)
@@ -1629,26 +1778,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     }
                     break;
                 default:
-                    if (m.IsCommand)
-                    {
-                        // v0.4 Phase A.1 — [Command] detected, scanner wired through to the
-                        // emit pipeline. NonQuery (Phase A.2) and Scalar (Phase B.1) are
-                        // shipped; Identity (Phase C) is still pending. Emit a throwing
-                        // stub so the consuming code compiles but flags missing
-                        // implementation at runtime. The stub's generated source carries
-                        // a comment pointing at the future-milestone phase so adopters
-                        // reading the .g.cs know which release ships their shape.
-                        var paramList = BuildParameterList(m.MethodParameters);
-                        sb.AppendLine($"    {GeneratedCodeAttribute}");
-                        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
-                        sb.AppendLine($"        // generator: see ZeroAlloc.ORM v0.4 plan Phase C (Identity) for emit;");
-                        sb.AppendLine($"        //            current stub fires NotImplementedException at first call.");
-                        sb.AppendLine($"        => throw new global::System.NotImplementedException(\"[Command] Kind={m.CommandKind} emit lands in v0.4 Phase C.\");");
-                    }
-                    else
-                    {
-                        sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
-                    }
+                    // v0.4 Phase C.1 — all three CommandKind values (NonQuery /
+                    // Scalar / Identity) now have real emit shapes. Any [Command]
+                    // method reaching the default branch implies ClassifyEmitShape
+                    // returned EmitShape.Unknown because the return type wasn't
+                    // classifiable; ZAO002 already fires upstream (the IsCommand-
+                    // specific block below the shape table) and the hadError gate
+                    // skips emit at the repo level — so this branch is reachable
+                    // only for non-Command Unknown shapes, kept as a TODO marker
+                    // for the v0.1 "shape not yet implemented" path.
+                    sb.AppendLine($"    // TODO: emit body for {m.MethodName} (uses {repo.ConnectionAccess}) -- v0.1 Task 4.x");
                     break;
             }
         }
@@ -1772,14 +1911,64 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // instead of `__reader.GetXxx(N)`.
     private static void EmitCommandScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
+        // Scalar's null-guard message names the `Task<T?>` escape hatch because
+        // the nullable variant exists. EmitScalarMaterialization handles both
+        // nullable and non-nullable branches based on the column binding.
+        EmitScalarMaterialization(sb, m, connectionAccess,
+            shapeLabelForError: "Scalar",
+            nullGuardMessage: "Scalar command returned no value; use Task<T?> if null is legal.");
+    }
+
+    // v0.4 Phase C.1 — [Command(Kind = Identity)] emit. Structurally identical to
+    // EmitCommandScalar's non-nullable branch: open/execute/close around
+    // ExecuteScalarAsync followed by a Convert.ToXxx + optional VO factory wrap.
+    // The two differences relative to Scalar:
+    //   * Identity is never nullable — ClassifyCommandIdentity rejects Task<T?>
+    //     so the IsNullable=true path of EmitScalarMaterialization is unreachable
+    //     here; the helper still routes the non-nullable shape uniformly.
+    //   * The null-guard message references "Identity" + the RETURNING /
+    //     SCOPE_IDENTITY() contract rather than offering a `Task<T?>` escape.
+    // Sharing the helper keeps the two emit paths in lock-step — any future
+    // tweak to the connection-lifecycle, parameter binding, or materialization
+    // funnel applies to both shapes without drift.
+    private static void EmitCommandIdentity(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        EmitScalarMaterialization(sb, m, connectionAccess,
+            shapeLabelForError: "CommandIdentity",
+            nullGuardMessage: "Identity command returned no value; the SQL must include a RETURNING / SCOPE_IDENTITY() clause that produces a non-null value.");
+    }
+
+    // Shared materialization helper for the two ExecuteScalarAsync-based command
+    // shapes (Scalar and Identity). Renders:
+    //   1. The partial signature + connection prologue.
+    //   2. `await using var __cmd = ...` + CommandText + parameter binding.
+    //   3. `var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);`
+    //   4. Null guard — `if (__result is null or DBNull) return null;` for the
+    //      nullable Scalar branch, `if (__result is null) throw ...` otherwise.
+    //   5. Convert.ToXxx / factory-wrap return expression via
+    //      BuildScalarConvertExpression.
+    //   6. Connection epilogue.
+    //
+    // `shapeLabelForError` appears only in the defensive comment when the
+    // model carries no Materialization (classification bug). `nullGuardMessage`
+    // is the literal string embedded in the InvalidOperationException — Scalar
+    // points users at `Task<T?>` for the nullable escape, Identity points at
+    // the RETURNING / SCOPE_IDENTITY() contract since Identity has no nullable
+    // variant.
+    private static void EmitScalarMaterialization(
+        StringBuilder sb,
+        QueryMethodModel m,
+        string connectionAccess,
+        string shapeLabelForError,
+        string nullGuardMessage)
+    {
         var mat = m.Materialization;
         if (mat is null || mat.Columns.Length != 1)
         {
-            // Defensive — classification should never assign CommandScalar without
-            // a single-column model. Emit a comment so the missing wiring is
-            // visible in the generated source; the surrounding partial still needs
-            // a body though, so we route through the stub form.
-            sb.AppendLine($"    // TODO: CommandScalar without single-column Materialization for {m.MethodName}");
+            // Defensive — classification should never assign Scalar/Identity
+            // without a single-column model. Emit a comment so the missing
+            // wiring is visible in the generated source.
+            sb.AppendLine($"    // TODO: {shapeLabelForError} without single-column Materialization for {m.MethodName}");
             return;
         }
 
@@ -1811,7 +2000,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         else
         {
             sb.AppendLine("            if (__result is null)");
-            sb.AppendLine("                throw new global::System.InvalidOperationException(\"Scalar command returned no value; use Task<T?> if null is legal.\");");
+            sb.AppendLine($"                throw new global::System.InvalidOperationException(\"{nullGuardMessage}\");");
         }
 
         // Build the materialization expression. Provider-returned scalar types
