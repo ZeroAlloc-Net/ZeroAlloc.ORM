@@ -210,4 +210,22 @@ internal static class DiagnosticDescriptors
         "ZAO063", "[Param(Name = ...)] override is not supported on composite parameters",
         "Parameter '{0}' on method '{1}' has [Param(Name = \"{2}\")] but is a composite type. Composite parameters generate suffixes positionally ('@{{param}}_{{ctorArgName}}'); the Name override is ignored. Remove the Name override or rename the C# parameter.",
         DiagnosticSeverity.Error);
+
+    // v0.5 Phase E.1 — fires when a composite type's ctor contains a parameter
+    // that itself resolves to another MultiArgCtor (composite-of-composite).
+    // Recursive composites are deferred to v0.6+: the v0.5 positional unpack
+    // convention is one-level only, and a nested composite would need a
+    // different SQL-side naming scheme (`@total_address_street`?) plus
+    // multi-level emit machinery. Surfacing this as a dedicated diagnostic
+    // (rather than the generic ZAO022) gives adopters an actionable hint
+    // (flatten OR use [Materialize(Factory)]).
+    //
+    // MessageArgs:
+    //   {0} = method name
+    //   {1} = outer composite type display
+    //   {2} = inner ctor parameter name that is itself a composite
+    public static readonly DiagnosticDescriptor ZAO052_RecursiveCompositeDeferred = Make(
+        "ZAO052", "Recursive composite types are not supported in v0.5",
+        "Method '{0}' uses composite type '{1}' which contains a nested composite ctor parameter ('{2}'). Recursive composites (composite-of-composite) are deferred to v0.6+. Flatten the nested composite into the outer ctor or use [Materialize(Factory)] to handle the materialization explicitly.",
+        DiagnosticSeverity.Error);
 }
