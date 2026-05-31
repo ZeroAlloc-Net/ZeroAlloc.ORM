@@ -111,6 +111,20 @@ internal static class DiagnosticDescriptors
         "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
         DiagnosticSeverity.Error);
 
+    // ZAO060 — RESERVED.
+    // Originally scheduled for "[StoredProcedure] async method has out/ref
+    // parameter". The C# compiler already forbids `out`/`ref` parameters on
+    // `async` methods (CS1988), so any user-facing emit here would be dead code
+    // today. The ID is reserved so a future release can swap in a friendlier
+    // diagnostic (for example, pointing adopters at the named-tuple output
+    // pattern when they try `out`/`ref` on a non-async sproc wrapper that the
+    // compiler accepts but we cannot bind). Registered in `LookupDescriptor`
+    // for catalog completeness; never reported by any emit path.
+    public static readonly DiagnosticDescriptor ZAO060_OutOrRefOnAsync = Make(
+        "ZAO060", "[StoredProcedure] async method has out/ref parameter (reserved)",
+        "Method '{0}' has an out/ref parameter on an async method. C# already forbids this (CS1988); ZAO060 reserves this slot for a future friendlier diagnostic that points at named-tuple output parameters.",
+        DiagnosticSeverity.Error);
+
     // v0.4 Phase D fix-up — shipped early (originally scheduled for Phase F.2).
     // Without this guard, `[StoredProcedure("")]` silently emits CommandText = ""
     // and the failure surfaces as a provider-specific runtime error
@@ -121,4 +135,16 @@ internal static class DiagnosticDescriptors
         "ZAO061", "[StoredProcedure] name is empty",
         "Method '{0}' has [StoredProcedure(\"\")] but the procedure name must be non-empty and non-whitespace.",
         DiagnosticSeverity.Error);
+
+    // v0.4 Phase F.3 — emitted from sproc classification when a named-tuple
+    // return mixes parameter-matched fields (signalling the output-params
+    // pattern is in use) with one or more non-matching fields. The non-matching
+    // field is treated as a result column, which may be intentional (multi-
+    // result + output) or a typo silently demoting an intended output to a
+    // result column. Warning severity gives adopters a hint without forcing a
+    // rename when the shape is genuinely desired.
+    public static readonly DiagnosticDescriptor ZAO062_TupleFieldNotMatchingParameter = Make(
+        "ZAO062", "Named-tuple field does not match any parameter",
+        "Method '{0}' tuple field '{1}' does not match any parameter — treated as a result column. If '{1}' was intended as an output parameter, ensure the tuple field name matches a parameter name (case-insensitive).",
+        DiagnosticSeverity.Warning);
 }

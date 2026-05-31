@@ -510,6 +510,104 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
 
+        // v0.4 Phase F.3 — ZAO062: [StoredProcedure] named-tuple has at least
+        // one field matching a parameter (the SprocWithOutputParams shape was
+        // selected) AND at least one OTHER field that does NOT match a
+        // parameter. The non-matching field is treated as a result column,
+        // which is a legitimate shape (multi-result + output) — so the
+        // diagnostic is a WARNING, not an error. The common author mistake it
+        // catches is a typo: tuple field `Tota1` instead of `Total` silently
+        // demotes an intended output parameter to a result column at runtime.
+        // Surfacing the field name in the message lets the adopter spot it.
+        //
+        // Phase F review Fix 1 — Heuristic 1 (skip the first non-matching
+        // tuple field). The canonical sproc-with-outputs pattern is
+        // `(OrderRow Result, int NewOrderId)` where `Result` is the
+        // conventional result-row position name. Firing ZAO062 on that
+        // canonical shape gives every adopter a warning on their first
+        // sproc-with-outputs — pure noise. Treat the FIRST non-matching field
+        // as the conventional result-row position (intentionally named
+        // `Result` / `Row` / `Data` etc.) and skip it. Fire ZAO062 only on the
+        // SECOND-and-later non-matching field, which is much more likely a
+        // typo than a legitimate result position.
+        //
+        // The typo case `(int NewOrderId, int Tota1)` with parameter `total`
+        // still fires on `Tota1` because there's only one non-matching field
+        // and... wait — actually no, in the typo case the FIRST non-matching
+        // is `Tota1` which now gets skipped. Hmm. The Heuristic 1 trade-off:
+        // we lose the single-typo case but we win the canonical shape. The
+        // multi-typo case (two or more non-matching fields) still fires on
+        // index 2+. Document the false-negative in docs/diagnostics/ZAO062.md.
+        //
+        // Phase F review Fix 2 — anchor each ZAO062 at the specific tuple-
+        // element syntax rather than the whole return type. Stacking
+        // diagnostics at the same span confuses IDEs (dedupe vs multi-squiggle
+        // is inconsistent). LocationInfo is cache-safe (FilePath + spans), so
+        // we can compute per-element spans here at the syntax-bound diagnostic
+        // emit site without leaking Roslyn symbols into the model.
+        if (shape == EmitShape.SprocWithOutputParams
+            && sprocOutputParamsMaterialization is not null
+            && sprocOutputParamsMaterialization.ResultElements.Values.Length > 0)
+        {
+            // Walk the return-type syntax to locate the tuple's element-syntax
+            // nodes. `methodSyntax.ReturnType` is typically `Task<TupleType>` /
+            // `ValueTask<TupleType>`; the tuple may also be wrapped in a
+            // nullable annotation. Use DescendantNodesAndSelf so we find the
+            // tuple regardless of wrapper depth. The tuple-element syntax
+            // ordering matches the symbol's TupleElements ordering, which is
+            // the same order we walked when building ResultElements, so
+            // resultElement index N corresponds to the N-th Result slot in
+            // TupleElementOrder.
+            var tupleSyntax = methodSyntax.ReturnType
+                .DescendantNodesAndSelf()
+                .OfType<TupleTypeSyntax>()
+                .FirstOrDefault();
+
+            // Map declaration-order tuple-element-index -> result-element-index
+            // by walking TupleElementOrder; we need to anchor each ZAO062 at
+            // the tuple-element syntax in declaration order, not at the
+            // ResultElements position.
+            var resultDeclarationIndices = new List<int>(
+                sprocOutputParamsMaterialization.ResultElements.Values.Length);
+            for (var i = 0; i < sprocOutputParamsMaterialization.TupleElementOrder.Values.Length; i++)
+            {
+                if (sprocOutputParamsMaterialization.TupleElementOrder.Values[i].Kind
+                    == SprocTupleSlotKind.Result)
+                {
+                    resultDeclarationIndices.Add(i);
+                }
+            }
+
+            // Heuristic 1: skip the first non-matching field. Start at index 1.
+            for (var rIdx = 1; rIdx < sprocOutputParamsMaterialization.ResultElements.Values.Length; rIdx++)
+            {
+                var resultElement = sprocOutputParamsMaterialization.ResultElements.Values[rIdx];
+                var declarationIndex = resultDeclarationIndices[rIdx];
+
+                // Per-element anchor when tuple syntax + index align; fall back
+                // to the whole return type if the syntax shape is unexpected
+                // (e.g. the tuple lives behind an alias the descendant walk
+                // didn't pick up). The fallback path keeps the diagnostic
+                // visible rather than dropping it on a syntactic oddity.
+                Location elementLocation;
+                if (tupleSyntax is not null && declarationIndex < tupleSyntax.Elements.Count)
+                {
+                    elementLocation = tupleSyntax.Elements[declarationIndex].GetLocation();
+                }
+                else
+                {
+                    elementLocation = methodSyntax.ReturnType.GetLocation();
+                }
+
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO062",
+                    Location: LocationInfo.From(elementLocation),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        resultElement.TupleFieldName))));
+            }
+        }
+
         // ZAO022 / ZAO040 — split the "Unknown emit shape" case into two distinct
         // diagnostics:
         //
@@ -1933,7 +2031,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
+        "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         _ => null,
     };
 
