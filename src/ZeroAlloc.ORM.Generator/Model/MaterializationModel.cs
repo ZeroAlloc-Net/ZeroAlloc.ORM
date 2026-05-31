@@ -93,6 +93,16 @@ internal sealed record ConventionInfo(
 // EquatableArray<ColumnBinding>.default is IsDefault==true with zero heap allocation;
 // non-composite leaf bindings carry this field for free (no per-binding empty-array
 // instance is materialized when InnerColumns is unused).
+//   FactoryMethodName -- v0.5 Phase D: non-null when this composite column
+//                        carries a `[Materialize(Factory = "X")]` annotation
+//                        — the inner reads still flow through InnerColumns, but
+//                        the construction expression is `TypeName.FactoryMethodName(...)`
+//                        instead of `new TypeName(...)`. Only meaningful on
+//                        composite bindings (InnerColumns non-empty); ignored
+//                        on leaf bindings. The factory's parameter list drives
+//                        the inner-column shape (one ColumnBinding per factory
+//                        param) so adopters can map decimal-as-text storage by
+//                        declaring the factory's first param as `string`.
 internal sealed record ColumnBinding(
     string GetterMethod,
     bool IsNullable,
@@ -100,7 +110,8 @@ internal sealed record ColumnBinding(
     ConventionInfo? Convention = null,
     string? ColumnName = null,
     EquatableArray<ColumnBinding> InnerColumns = default,
-    string? CtorArgName = null);
+    string? CtorArgName = null,
+    string? FactoryMethodName = null);
 
 // Materialization plan for a single [Query] method's return row.
 //
@@ -117,11 +128,20 @@ internal sealed record ColumnBinding(
 //                         leave this flag false.
 //
 // Cache-safe: record + primitives + EquatableArray<ColumnBinding>.
+// FactoryMethodName -- v0.5 Phase D: non-null when the materialization target
+//                      carries a `[Materialize(Factory = "X")]` annotation (on
+//                      the type itself OR via a method-level `[return: Materialize(Factory = "X")]`).
+//                      Drives EmitComposite to call `TargetTypeFullName.FactoryMethodName(...)`
+//                      instead of `new TargetTypeFullName(...)`. Only meaningful
+//                      on Kind == Composite today; FlatRow / DomainEntity at the
+//                      outer position route factory dispatch through the
+//                      inner ColumnBinding.FactoryMethodName field instead.
 internal sealed record MaterializationModel(
     MaterializationKind Kind,
     string TargetTypeFullName,
     EquatableArray<ColumnBinding> Columns,
-    bool IsNullable = false);
+    bool IsNullable = false,
+    string? FactoryMethodName = null);
 
 // Method parameter info used to render the partial method signature.
 // Includes the CancellationToken parameter so we can preserve the user's original
