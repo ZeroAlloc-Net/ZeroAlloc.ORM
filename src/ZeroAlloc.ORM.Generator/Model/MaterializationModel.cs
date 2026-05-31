@@ -97,12 +97,22 @@ internal sealed record ColumnBinding(
 //
 //   TargetTypeFullName -- globally-qualified target type to construct (positional record).
 //   Columns            -- ordinal-positioned ctor-param bindings.
+//   IsNullable         -- v0.5 Phase C: the materialization target is itself nullable
+//                         (e.g. Task<Money?> at scalar position). Only meaningful on
+//                         Composite materializations today — Phase C's all-or-nothing
+//                         DBNull contract reads one IsDBNull per inner column,
+//                         returns null when ALL are DBNull, and throws when ANY (but
+//                         not ALL) are DBNull. Non-composite materializations (FlatRow
+//                         / DomainEntity) carry their own nullable handling on the
+//                         outer Task<T?> shape (return null on empty result) and
+//                         leave this flag false.
 //
 // Cache-safe: record + primitives + EquatableArray<ColumnBinding>.
 internal sealed record MaterializationModel(
     MaterializationKind Kind,
     string TargetTypeFullName,
-    EquatableArray<ColumnBinding> Columns);
+    EquatableArray<ColumnBinding> Columns,
+    bool IsNullable = false);
 
 // Method parameter info used to render the partial method signature.
 // Includes the CancellationToken parameter so we can preserve the user's original
