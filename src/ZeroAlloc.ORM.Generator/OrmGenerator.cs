@@ -1292,6 +1292,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         case BatchEmitStrategy.JoinedStatementsOnly:
                             EmitMultiResultSetJoined(sb, m, repo.ConnectionAccess);
                             break;
+                        case BatchEmitStrategy.BatchWithFallback:
+                            EmitMultiResultSetBatchWithFallback(sb, m, repo.ConnectionAccess);
+                            break;
                         default:
                             EmitMultiResultSetStub(sb, m);
                             break;
@@ -1592,6 +1595,180 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+    }
+
+    // v0.3 Phase B.4 — runtime branch on __conn.CanCreateBatch. Single method body
+    // that picks between the batch path (when the provider supports IAsyncDbBatch)
+    // and the ;-joined fallback (when it doesn't). Both branches return the same
+    // tuple shape so the partial method signature stays well-typed.
+    //
+    // The opening (connection, openedHere, try/finally) is shared at the method
+    // level; only the inner execution + materialization differs between the two
+    // branches.
+    private static void EmitMultiResultSetBatchWithFallback(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.MultiResultMaterialization;
+        if (mat is null)
+        {
+            EmitMultiResultSetStub(sb, m);
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        var __conn = @{connectionAccess};");
+        sb.AppendLine("        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;");
+        sb.AppendLine($"        if (__openedHere) await __conn.OpenAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__conn.CanCreateBatch)");
+        sb.AppendLine("            {");
+        EmitMultiResultSetBatchBody(sb, m, mat, ct, indent: "                ");
+        sb.AppendLine("            }");
+        sb.AppendLine("            else");
+        sb.AppendLine("            {");
+        EmitMultiResultSetJoinedBody(sb, m, mat, ct, indent: "                ");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+    }
+
+    // Batch-body emit (no method header or try/finally) so EmitMultiResultSetBatch
+    // (BatchAlways, owning try/finally) and EmitMultiResultSetBatchWithFallback
+    // (Auto, sharing try/finally) can re-use the same body shape.
+    private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
+    {
+        var statements = SqlStatementSplitter.Split(m.Sql);
+        EmitBatchSetupWithIndent(sb, m, statements, indent);
+        sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        EmitMultiResultElements(sb, mat, ct, indent: indent);
+    }
+
+    // Joined-body emit (no method header or try/finally), symmetric with
+    // EmitMultiResultSetBatchBody so BatchWithFallback can drop the joined path
+    // into its falsy branch verbatim.
+    private static void EmitMultiResultSetJoinedBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
+    {
+        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        sb.AppendLine($"{indent}await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine($"{indent}__cmd.CommandText = {sqlLiteral};");
+        EmitParameterBindingWithIndent(sb, m, indent);
+        sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        EmitMultiResultElements(sb, mat, ct, indent: indent);
+    }
+
+    // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
+    // top-level BatchAlways path still calls the no-indent version through its
+    // own try/finally body.
+    private static void EmitBatchSetupWithIndent(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements, string indent)
+    {
+        sb.AppendLine($"{indent}await using var __batch = __conn.CreateBatch();");
+        for (var i = 0; i < statements.Length; i++)
+        {
+            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
+            var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.AppendLine();
+            sb.AppendLine($"{indent}var {cmdLocal} = __batch.CreateBatchCommand();");
+            sb.AppendLine($"{indent}{cmdLocal}.CommandText = {stmtLiteral};");
+            EmitBatchCommandParameterBindingWithIndent(sb, m, cmdLocal, i, indent);
+            sb.AppendLine($"{indent}__batch.BatchCommands.Add({cmdLocal});");
+        }
+        sb.AppendLine();
+    }
+
+    // Indented variant of EmitBatchCommandParameterBinding for the nested branch.
+    private static void EmitBatchCommandParameterBindingWithIndent(StringBuilder sb, QueryMethodModel m, string cmdLocal, int cmdIndex, string indent)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (p.IsCancellationToken) continue;
+            var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
+            sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv)
+            {
+                if (conv.Kind == (int)ConventionKind.Enum)
+                {
+                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    valueExpr = $"({castType})@{p.Name}";
+                }
+                else if (conv.Kind == (int)ConventionKind.EnumAsString)
+                {
+                    valueExpr = $"@{p.Name}.ToString()";
+                }
+                else if (conv.ValuePropertyName is { } propName)
+                {
+                    valueExpr = $"@{p.Name}.{propName}";
+                }
+            }
+
+            if (p.IsNullable)
+            {
+                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+            }
+            sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
+        }
+    }
+
+    // Single-command parameter binding (indented variant) for the joined branch of
+    // BatchWithFallback. The default-indent EmitParameterBinding stays unchanged
+    // for the single-command emit paths (ScalarInt / NullableScalar / FlatRow /
+    // DomainEntity / JoinedStatementsOnly) so v0.1/v0.2 snapshots remain stable.
+    private static void EmitParameterBindingWithIndent(StringBuilder sb, QueryMethodModel m, string indent)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (p.IsCancellationToken) continue;
+            var local = "__p_" + p.Name;
+            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"{indent}var {local} = __cmd.CreateParameter();");
+            sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv)
+            {
+                if (conv.Kind == (int)ConventionKind.Enum)
+                {
+                    var castType = EnumUnderlyingCastTypeFromReader(conv.UnderlyingReader);
+                    valueExpr = $"({castType})@{p.Name}";
+                }
+                else if (conv.Kind == (int)ConventionKind.EnumAsString)
+                {
+                    valueExpr = $"@{p.Name}.ToString()";
+                }
+                else if (conv.ValuePropertyName is { } propName)
+                {
+                    valueExpr = $"@{p.Name}.{propName}";
+                }
+            }
+
+            if (p.IsNullable)
+            {
+                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+            }
+            sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
+        }
     }
 
     // v0.3 Phase B.3 — ;-joined fallback for MultiResultSet. Used for

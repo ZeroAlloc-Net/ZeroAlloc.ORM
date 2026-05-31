@@ -5,15 +5,13 @@ using static VerifyXunit.Verifier;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
-// v0.3 Phase B.1 — detection snapshot for the MultiResultSet emit shape. Originally
-// landed against a NotImplementedException stub before B.2-B.4 wired the real emit;
-// the snapshot was refreshed when B.4 landed BatchWithFallback. Today this test
-// effectively asserts the same Auto-batch emit shape as MultiResultSetAutoTests
-// but is kept as a stable historic checkpoint anchoring the model's detection.
-public class MultiResultSetDetectionTests
+// v0.3 Phase B.4 — BatchWithFallback runtime branch snapshot. Uses the default
+// [Query] form (BatchMode.Auto) so the resolver picks BatchWithFallback and the
+// emit produces a single body that branches on __conn.CanCreateBatch at runtime.
+public class MultiResultSetAutoTests
 {
     [Fact]
-    public Task Tuple_with_record_head_and_list_lines_classified_as_MultiResultSet()
+    public Task Tuple_with_record_and_list_emits_runtime_CanCreateBatch_branch()
     {
         var source =
             "using System.Collections.Generic;\n" +
