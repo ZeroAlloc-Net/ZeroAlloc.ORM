@@ -45,6 +45,25 @@ internal enum EmitShape
     //     those) — narrower than Scalar's full primitive/enum range, matching the
     //     identity-key idiom across providers.
     CommandIdentity,
+    // v0.4 Phase E — [StoredProcedure] methods returning a named tuple whose
+    // field names match (case-insensitive) at least one C# parameter on the
+    // method. The matching tuple positions emit Direction = ParameterDirection.Output
+    // on the bound DbParameter and read the parameter value back into the
+    // returned tuple after the command runs. Non-matching tuple positions
+    // (if any) are classified via the existing MultiResultElement rules
+    // (Scalar / Row / List) so a single-result-row + output-param shape and a
+    // multi-result-set + output-param shape both flow through the same emit.
+    //
+    // Detection rule:
+    //   * At least one tuple element's name matches a C# parameter name
+    //     (StringComparer.OrdinalIgnoreCase) -> SprocWithOutputParams.
+    //   * Zero matches -> fall through to MultiResultSet (existing Phase D path).
+    //
+    // Output-only sub-case (Task E.3): every tuple element matches a C# parameter.
+    // The emit detects this via SprocOutputParamsMaterializationModel.ResultElements
+    // being empty and switches from ExecuteReaderAsync to ExecuteNonQueryAsync;
+    // a single shape value keeps the classifier surface narrow.
+    SprocWithOutputParams,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side
@@ -96,7 +115,14 @@ internal sealed record QueryMethodModel(
     // shapes (MultiResultSet, joined-statements variant) thread the flag uniformly.
     // [Query] / [Command] both pass `false` and an empty ProcedureName.
     bool IsStoredProcedure,
-    string ProcedureName);
+    string ProcedureName,
+    // v0.4 Phase E — materialization plan for [StoredProcedure] tuple returns
+    // with output parameters. Set when Shape == EmitShape.SprocWithOutputParams;
+    // null for every other emit shape (and for sprocs without matching tuple
+    // fields, which fall through to the MultiResultSet shape with the existing
+    // multiResultMaterialization carrying the plan). See
+    // SprocOutputParamsMaterializationModel for the per-element structure.
+    SprocOutputParamsMaterializationModel? SprocOutputParamsMaterialization);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
