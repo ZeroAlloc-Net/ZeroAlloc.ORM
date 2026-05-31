@@ -87,7 +87,16 @@ internal sealed record QueryMethodModel(
     // for [Query] it's any non-void return. Captured authoritatively in
     // ClassifyEmitShape so EmitCommandNonQuery (and any future emit shape that
     // branches on return-arity) can read it without string-sniffing ReturnTypeDisplay.
-    bool HasReturnValue);
+    bool HasReturnValue,
+    // v0.4 Phase D — true when the source method is annotated with [StoredProcedure];
+    // false for [Query] and [Command]. Flips the emit's `__cmd.CommandText` assignment
+    // from "the SQL string" to "the ProcedureName" plus an explicit
+    // `__cmd.CommandType = CommandType.StoredProcedure;` line. Single-result-set
+    // shapes (FlatRow / DomainEntity / Scalar / NullableScalar) and multi-result-set
+    // shapes (MultiResultSet, joined-statements variant) thread the flag uniformly.
+    // [Query] / [Command] both pass `false` and an empty ProcedureName.
+    bool IsStoredProcedure,
+    string ProcedureName);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

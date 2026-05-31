@@ -12,11 +12,24 @@ using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator;
 
+// v0.4 Phase D — discriminator for the three attribute pipelines feeding
+// TransformMethod. Replaces the Phase A `isCommandAttribute` bool. The enum keeps
+// the dispatch surface explicit (every call site picks one of three named values)
+// and removes the boolean-pair ambiguity that two bools (`isCommandAttribute`,
+// `isStoredProcedureAttribute`) would invite.
+internal enum AttributePipelineKind
+{
+    Query,
+    Command,
+    StoredProcedure,
+}
+
 [Generator(LanguageNames.CSharp)]
 public sealed class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
+    private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
     private const string GeneratorVersion = "0.1.0";
@@ -29,7 +42,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: QueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: false))
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Query))
             .Where(static m => m is not null)!;
 
         // v0.4 Phase A — [Command] attribute pickup. Re-uses the same TransformMethod
@@ -39,22 +52,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // both [Query] and [Command] surface ZAO005 (extended in v0.4 from the v0.3
         // single-Query rule).
         //
-        // Incremental-cache trade-off: the union below collapses both pipelines via
+        // Incremental-cache trade-off: the union below collapses all pipelines via
         // Collect() + SelectMany, which means ANY source edit re-runs the whole union
         // + grouping step rather than re-running only the pipeline that saw the
-        // change. We accept that cost in v0.4 Phase A because (a) ForAttributeWithMetadataName
+        // change. We accept that cost in v0.4 because (a) ForAttributeWithMetadataName
         // is still the high-performance entry point for the per-method transforms and
         // (b) the union output is small relative to the per-method symbol work that
-        // it caches. Phase D will add a third pipeline ([StoredProcedure]); the
-        // backlog item "v0.4-CLN — single-pipeline architecture for [Query]+[Command]
-        // +[StoredProcedure]" tracks the future investigation of folding all three
-        // into one ForAttributeWithMetadataName call to preserve per-method
-        // incremental-cache granularity.
+        // it caches. The backlog item "v0.4-CLN — single-pipeline architecture for
+        // [Query]+[Command]+[StoredProcedure]" tracks the future investigation of
+        // folding all three into one ForAttributeWithMetadataName call to preserve
+        // per-method incremental-cache granularity.
         var commandMethods = context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: CommandAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: true))
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Command))
+            .Where(static m => m is not null)!;
+
+        // v0.4 Phase D — [StoredProcedure] attribute pickup. Third pipeline; identical
+        // structural pattern to [Command]. Sets IsStoredProcedure = true so emit
+        // dispatch can swap CommandText for ProcedureName + set CommandType =
+        // StoredProcedure. ZAO005 surfaces a method that carries any pair of
+        // [Query] / [Command] / [StoredProcedure] (or all three) via the
+        // ormAttrCount > 1 check in TransformMethod, with the union dedup below
+        // dropping duplicate entries so the diagnostic fires exactly once per method.
+        var storedProcedureMethods = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: StoredProcedureAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.StoredProcedure))
             .Where(static m => m is not null)!;
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
@@ -63,15 +89,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // on each QueryMethodModel. R8 hoist: this removes the prior fallback that
         // grabbed type-properties off `repo.Methods.Values[0]` downstream.
         //
-        // v0.4 Phase A: [Query] + [Command] pipelines are unioned before grouping so a
-        // single QueryRepositoryModel covers both attribute kinds on the same type.
-        // The (containingTypeFullName, methodName) tuple uniquely identifies a method;
-        // we dedupe on that key inside the group so a method that picks up both
-        // pipelines (the ZAO005 multi-attribute case) doesn't produce two emit slots.
+        // v0.4 Phase D: [Query] + [Command] + [StoredProcedure] pipelines are unioned
+        // before grouping so a single QueryRepositoryModel covers all three attribute
+        // kinds on the same type. The (containingTypeFullName, methodName) tuple
+        // uniquely identifies a method; we dedupe on that key inside the union so a
+        // method that picks up multiple pipelines (the ZAO005 multi-attribute case)
+        // doesn't produce two/three emit slots. Ordering matters for the dedup
+        // tie-break: pair.Left ([Query]) wins over [Command], which wins over
+        // [StoredProcedure] — but since ZAO005 fires from EVERY pipeline that
+        // transforms the method, the diagnostic surfaces regardless of which entry
+        // the dedup keeps, while emit gets a single deterministic slot.
         var allMethods = queryMethods.Collect()
             .Combine(commandMethods.Collect())
-            .SelectMany(static (pair, _) =>
+            .Combine(storedProcedureMethods.Collect())
+            .SelectMany(static (combined, _) =>
             {
+                var pair = combined.Left;
+                var sprocs = combined.Right;
                 var seen = new HashSet<(string, string)>();
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
@@ -81,6 +115,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (seen.Add(key)) union.Add(m);
                 }
                 foreach (var m in pair.Right)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                foreach (var m in sprocs)
                 {
                     if (m is null) continue;
                     var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
@@ -151,8 +191,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         });
     }
 
-    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, bool isCommandAttribute)
+    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, AttributePipelineKind pipelineKind)
     {
+        // Convenience bools — every downstream branch reads these instead of
+        // re-pattern-matching the enum. The original Phase A code carried
+        // `isCommandAttribute`; Phase D adds `isStoredProcedureAttribute` and
+        // keeps the existing variable name for diff minimization.
+        var isCommandAttribute = pipelineKind == AttributePipelineKind.Command;
+        var isStoredProcedureAttribute = pipelineKind == AttributePipelineKind.StoredProcedure;
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
         if (ctx.TargetNode is not MethodDeclarationSyntax methodSyntax) return null;
@@ -163,12 +209,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
 
         // The triggering attribute. For [Query] this is the QueryAttribute; for the
-        // [Command] pipeline this is the CommandAttribute. We pull the SQL out of the
-        // first ctor arg either way — both attributes share that signature.
+        // [Command] pipeline this is the CommandAttribute; for [StoredProcedure]
+        // (Phase D) it's StoredProcedureAttribute. All three share a single
+        // string-typed ctor arg — Query/Command call it "Sql", StoredProcedure calls
+        // it "ProcedureName" — so we pull the raw value into `firstStringArg` and
+        // then dispatch to the right model field. For sprocs, m.Sql stays empty
+        // (multi-result-set classification doesn't read it for the sproc path,
+        // and ZAO008/ZAO032/ZAO033 SQL-statement-counting checks are suppressed
+        // for sprocs since the procedure body lives server-side).
         var triggeringAttribute = ctx.Attributes.FirstOrDefault();
-        var sql = triggeringAttribute?
+        var firstStringArg = triggeringAttribute?
             .ConstructorArguments
             .FirstOrDefault().Value as string ?? string.Empty;
+        var sql = isStoredProcedureAttribute ? string.Empty : firstStringArg;
+        var procedureName = isStoredProcedureAttribute ? firstStringArg : string.Empty;
 
         // v0.4 Phase A — read [Command(Kind = ...)] from the named args. Default is
         // NonQuery to mirror the abstraction default. Only consulted when this method
@@ -215,24 +269,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO005 — multiple ORM attributes on one method.
-        // v0.4 Phase A extends from the v0.1 single-Query check to cover [Query] +
-        // [Command] overlap. Phase D will add [StoredProcedure] to the count when
-        // that attribute lands. Counting both pipelines' attributes on the same
-        // method handles both the "two [Query]" case AND the "one [Query], one
-        // [Command]" case via a single >1 threshold.
+        // v0.4 Phase D extends from the v0.4-A two-attribute check to a three-way
+        // exclusivity rule: counts QueryAttribute + CommandAttribute +
+        // StoredProcedureAttribute. Counting all three pipelines' attributes on the
+        // same method covers every pair (Query+Command, Query+StoredProcedure,
+        // Command+StoredProcedure) and the all-three case via a single >1 threshold.
         //
-        // Both pipelines emit ZAO005 from TransformMethod (since method.GetAttributes()
+        // Every pipeline emits ZAO005 from TransformMethod (since method.GetAttributes()
         // surfaces ALL attributes regardless of which pipeline triggered the transform).
-        // The duplicate is dropped at the union step (line ~59) where the deduper keeps
-        // the first entry per (containing-type, method-name) — pair.Left ([Query]) wins
-        // the tie. When Phase D adds [StoredProcedure], the third pipeline will fold in
-        // the same way.
+        // The duplicates are dropped at the union step (above) where the deduper keeps
+        // the first entry per (containing-type, method-name) — pair.Left.Left ([Query])
+        // wins the tie, then [Command], then [StoredProcedure].
         var ormAttrCount = method.GetAttributes()
             .Count(a =>
             {
                 var fqn = a.AttributeClass?.ToDisplayString();
                 return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
-                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal);
+                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal)
+                    || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal);
             });
         if (ormAttrCount > 1)
         {
@@ -587,7 +641,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // deliberate decision.
             IsCommand: isCommandAttribute,
             CommandKind: commandKind,
-            HasReturnValue: hasReturnValue);
+            HasReturnValue: hasReturnValue,
+            // v0.4 Phase D — Stored-procedure pipeline thread-through. The
+            // emit shapes consult these to flip CommandText -> ProcedureName
+            // and emit `CommandType = StoredProcedure`. [Query]/[Command]
+            // pipelines pass (false, ""). The ProcedureName is the literal
+            // first ctor arg of the [StoredProcedure] attribute, used
+            // verbatim as the CommandText.
+            IsStoredProcedure: isStoredProcedureAttribute,
+            ProcedureName: procedureName);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
