@@ -1278,6 +1278,39 @@ public class CompileSmokeTests
         Assert.Empty(bugClass);
     }
 
+    // v0.5 Phase C.2 — nullable composite parameter (`Money? total`) compiles
+    // cleanly. The emit branches on `@total is null`; the non-null branch
+    // unwraps via `.Value` (Nullable<T> struct path). Catches CS0123
+    // (Nullable<T> has no `Amount` property without `.Value`) and the
+    // standard mismatch codes.
+    [Fact]
+    public void Nullable_composite_parameter_binding_emit_compiles_cleanly()
+    {
+        var source = """
+            #pragma warning disable ZAO050
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
+                public partial Task<int> UpdateAsync(int id, Money? total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
     // v0.5 Phase C.1 — nullable composite nested in DomainEntity (class with
     // single ctor). Uses GetOrdinal-keyed reads inside the hoisted-local
     // block plus the hoisted ordinal locals to avoid v0.3-CLN1's

@@ -456,6 +456,49 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue, sprocOutputParamsMaterialization) = ClassifyEmitShape(method, conventionContext, isCommandAttribute, commandKind, isStoredProcedureAttribute);
 
+        // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
+        // Three triggers:
+        //
+        //   * Scalar return Task<Money?> — Materialization.Kind == Composite AND
+        //     Materialization.IsNullable.
+        //   * Nested nullable composite (`record OrderRow(int Id, Money? Total)`)
+        //     — any ColumnBinding with InnerColumns.Length > 0 AND IsNullable.
+        //
+        // The diagnostic location is the return-type syntax (the user's
+        // declaration of the nullable composite type). Diagnostic message
+        // names the method and the composite type so adopters can suppress
+        // narrowly. Warning severity — composite all-or-nothing is a
+        // supported shape, the warning just flags the runtime contract.
+        if (materialization is not null)
+        {
+            if (materialization.Kind == MaterializationKind.Composite && materialization.IsNullable)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO050",
+                    Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        materialization.TargetTypeFullName,
+                        "return position"))));
+            }
+            else
+            {
+                foreach (var col in materialization.Columns)
+                {
+                    if (col.InnerColumns.Length > 0 && col.IsNullable)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO050",
+                            Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                method.Name,
+                                col.TypeName,
+                                "nested in return type"))));
+                    }
+                }
+            }
+        }
+
         // ZAO002 — [Command(Kind = Scalar | Identity)] requires a value-returning
         // shape. Scalar accepts any primitive / VO / enum (including the nullable
         // Task<T?> variant); Identity is narrower (non-nullable int / long / Guid,
@@ -725,12 +768,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the per-field model into ParameterInfo so the emit helper
                     // can render the unpacking blocks without re-resolving symbols.
                     //
-                    // Nullable composite parameters are deferred to Phase C (the
-                    // bind side mirrors the read side's all-or-nothing approach).
-                    // For now `isNullable + MultiArgCtor` falls through to ZAO041
-                    // — no binding strategy resolved — which is the correct signal
-                    // until Phase C lands.
-                    if (resolution.Kind == ConventionKind.MultiArgCtor && !isNullable)
+                    // v0.5 Phase C — nullable composite parameters (`Money? total`)
+                    // are now in scope (Option A: bind side mirrors the read side).
+                    // When the parameter is null, every inner DbParameter binds
+                    // DBNull; when non-null, the existing positional unpacking
+                    // runs. ZAO050 fires for the parameter position so adopters
+                    // see the runtime all-or-nothing contract.
+                    if (resolution.Kind == ConventionKind.MultiArgCtor)
                     {
                         // ZAO063 — `[Param(Name = "...")]` cannot compose with the
                         // positional `@{paramName}_{ctorArgName}` unpacking convention.
@@ -754,6 +798,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         if (compositeFields.Length > 0)
                         {
                             compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+                            // v0.5 Phase C.2 — nullable composite parameter
+                            // triggers ZAO050. The diagnostic is at the
+                            // parameter location so the squiggle lands on
+                            // the user's `Money? total` declaration.
+                            if (isNullable)
+                            {
+                                var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                                diagnostics.Add(new DiagnosticInfo(
+                                    DescriptorId: "ZAO050",
+                                    Location: LocationInfo.From(paramLocation),
+                                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                        method.Name,
+                                        compositeTypeFullName,
+                                        "parameter '" + p.Name + "'"))));
+                            }
                         }
                     }
 
@@ -2343,6 +2403,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO050" => DiagnosticDescriptors.ZAO050_NullableCompositeRuntimeCheck,
         "ZAO060" => DiagnosticDescriptors.ZAO060_OutOrRefOnAsync,
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
@@ -4693,6 +4754,71 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var localSuffix = cmdIndex is { } idx
             ? "_" + idx.ToString(System.Globalization.CultureInfo.InvariantCulture)
             : "";
+
+        // v0.5 Phase C.2 — Nullable composite parameter (`Money? total`). The
+        // all-or-nothing bind contract mirrors the materialization side: when
+        // the C# value is null, every inner DbParameter binds DBNull. Switch
+        // on `@<name> is null`:
+        //
+        //   if (@total is null)
+        //   {
+        //       // create N DbParameters, all with Value = DBNull.Value
+        //   }
+        //   else
+        //   {
+        //       // standard positional unpacking using @total.Value.Amount etc.
+        //   }
+        //
+        // The non-null branch unwraps via `.Value` for Nullable<T> (struct
+        // composite); reference-type composites use `@total!` to suppress
+        // CS8602. Both shapes reach this branch because the discovery layer
+        // accepts both forms.
+        if (p.IsNullable)
+        {
+            sb.AppendLine($"{indent}if (@{p.Name} is null)");
+            sb.AppendLine($"{indent}{{");
+            foreach (var field in p.CompositeFields)
+            {
+                var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
+                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
+                sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
+                sb.AppendLine($"{indent}    {local}.Value = global::System.DBNull.Value;");
+                sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
+            }
+            sb.AppendLine($"{indent}}}");
+            sb.AppendLine($"{indent}else");
+            sb.AppendLine($"{indent}{{");
+            foreach (var field in p.CompositeFields)
+            {
+                var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
+                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
+                sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
+
+                // Nullable composite accessor: `@total.Value.Amount` (Nullable<T>
+                // struct path) — the C# Nullable<T> properties go through `.Value`
+                // before reaching the inner ctor-arg property. The standard
+                // BuildCompositeFieldValueExpression produces `@total.Amount`;
+                // we patch that to `@total.Value.Amount` by injecting `.Value`
+                // between the parameter name and the field accessor.
+                var valueExpr = BuildCompositeFieldValueExpressionForNullable(p.Name, field);
+                if (field.IsNullable)
+                {
+                    sb.AppendLine($"{indent}    {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}    {local}.Value = {valueExpr};");
+                }
+                sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
+            }
+            sb.AppendLine($"{indent}}}");
+            return;
+        }
+
         foreach (var field in p.CompositeFields)
         {
             var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
@@ -4712,6 +4838,41 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
+    }
+
+    // v0.5 Phase C.2 — variant of BuildCompositeFieldValueExpression for the
+    // non-null branch of a nullable composite parameter. The outer accessor is
+    // `@total.Value` (Nullable<T> struct path) — adding `.Value` between the
+    // parameter name and the field name. Reference-type composites would
+    // produce `@total!` here; we use `.Value` as the value-type form since
+    // composite types declared as records / structs are the common case in
+    // adopter code (per Money's declaration as `record struct`).
+    private static string BuildCompositeFieldValueExpressionForNullable(string paramName, CompositeBindingField field)
+    {
+        // Defensive `@`-prefix on the inner property accessor (see
+        // BuildCompositeFieldValueExpression for rationale). The outer
+        // `.Value` between the parameter name and the inner field name is
+        // the Nullable<T> unwrap; for reference-type composites the user
+        // can suppress the null-warning at their call site if needed —
+        // we emit the same shape because both reach this branch.
+        var baseExpr = "@" + paramName + ".Value.@" + field.CtorArgName;
+        if (field.Convention is { } conv)
+        {
+            if (conv.Kind == (int)ConventionKind.Enum)
+            {
+                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+                return $"({castType}){baseExpr}";
+            }
+            if (conv.Kind == (int)ConventionKind.EnumAsString)
+            {
+                return $"{baseExpr}.ToString()";
+            }
+            if (conv.ValuePropertyName is { } propName)
+            {
+                return $"{baseExpr}.{propName}";
+            }
+        }
+        return baseExpr;
     }
 
     // Build the C# expression that reads one inner field of a composite

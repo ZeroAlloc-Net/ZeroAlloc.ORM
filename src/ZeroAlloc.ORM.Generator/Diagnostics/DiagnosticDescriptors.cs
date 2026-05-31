@@ -111,6 +111,25 @@ internal static class DiagnosticDescriptors
         "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
         DiagnosticSeverity.Error);
 
+    // v0.5 Phase C — fires for every method position that uses a nullable
+    // composite type (return: Task<Money?>, parameter: `Money? total`, or a
+    // nullable composite ctor param nested in a FlatRow / DomainEntity). The
+    // all-or-nothing DBNull contract for nullable composites is enforced at
+    // RUNTIME — the generator can't statically prove the underlying schema
+    // declares its composite columns NOT NULL together — so ZAO050 surfaces
+    // the runtime concern at build time. If your schema guarantees the
+    // columns are always NULL or always populated together, suppress with
+    // `#pragma warning disable ZAO050`.
+    //
+    // Warning (not Error) severity: nullable composites are a supported emit
+    // shape with well-defined runtime semantics (return null on all-DBNull,
+    // throw ZeroAllocOrmMaterializationException on mixed-null). The warning
+    // exists to make adopters consciously opt into the runtime contract.
+    public static readonly DiagnosticDescriptor ZAO050_NullableCompositeRuntimeCheck = Make(
+        "ZAO050", "Nullable composite type requires runtime all-or-nothing check",
+        "Method '{0}' uses nullable composite type '{1}' at {2}. The all-or-nothing DBNull check is enforced at runtime; partial-null columns throw ZeroAllocOrmMaterializationException at materialize time (or send DBNull-for-all on bind time). If your schema guarantees these columns are populated or null together, suppress this warning with #pragma warning disable ZAO050.",
+        DiagnosticSeverity.Warning);
+
     // ZAO060 — RESERVED.
     // Originally scheduled for "[StoredProcedure] async method has out/ref
     // parameter". The C# compiler already forbids `out`/`ref` parameters on

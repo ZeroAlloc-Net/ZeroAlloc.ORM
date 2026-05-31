@@ -31,7 +31,11 @@ public class NullableCompositeTests
     [Fact]
     public Task Nullable_composite_scalar_emits_all_or_nothing_check()
     {
+        // The source-level `#pragma warning disable ZAO050` suppresses the
+        // ZAO050 diagnostic in this snapshot so it captures only the emit
+        // shape; ZAO050 detection is covered separately in ZAO050Tests.
         var source = """
+            #pragma warning disable ZAO050
             using System.Data.Async;
             using System.Threading;
             using System.Threading.Tasks;
@@ -54,6 +58,7 @@ public class NullableCompositeTests
     public Task Nullable_composite_nested_in_flat_row_emits_hoisted_local()
     {
         var source = """
+            #pragma warning disable ZAO050
             using System.Data.Async;
             using System.Threading;
             using System.Threading.Tasks;
@@ -77,6 +82,7 @@ public class NullableCompositeTests
     public Task Nullable_composite_nested_in_domain_entity_emits_hoisted_local()
     {
         var source = """
+            #pragma warning disable ZAO050
             using System.Data.Async;
             using System.Threading;
             using System.Threading.Tasks;
@@ -97,6 +103,33 @@ public class NullableCompositeTests
             {
                 [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
                 public partial Task<OrderEntity?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public Task Nullable_composite_parameter_emits_DBNull_branch()
+    {
+        // v0.5 Phase C.2 (Option A) — `Money? total` parameter unpacks into
+        // an `if (@total is null) { all DBNull } else { @total.Value.X }`
+        // pattern. Pins the wire-level shape so a regression in the
+        // nullable-composite bind branch surfaces as snapshot churn.
+        var source = """
+            #pragma warning disable ZAO050
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
+                public partial Task<int> UpdateAsync(int id, Money? total, CancellationToken ct);
             }
             """;
         return Verify(GeneratorHarness.RunGenerator(source));
