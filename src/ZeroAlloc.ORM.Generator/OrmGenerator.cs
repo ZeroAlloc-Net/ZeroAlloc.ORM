@@ -222,12 +222,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     method.ReturnType.ToDisplayString()))));
         }
 
-        // ZAO020 / ZAO021 — informational notes for [Query] options that the
-        // generator accepts at the type level but does not yet honor at emit time.
-        // The values still flow through but are silently ignored by codegen; the
-        // info diagnostics keep adopters from believing they're getting behavior
-        // that isn't there. Both fire only when the attribute author explicitly
-        // set the non-default value.
+        // ZAO020 — informational note for [Query(FromResource = true)] which the
+        // generator accepts but does not yet honour at emit time. The value flows
+        // through but is silently ignored by codegen; the info diagnostic keeps
+        // adopters from believing they're getting behavior that isn't there.
+        // Fires only when the attribute author explicitly set FromResource=true.
+        //
+        // Note: ZAO021 (BatchMode non-Auto deferred) was retired in v0.3 Phase B.5
+        // since BatchMode.Always / BatchMode.Never are now honoured by the
+        // MultiResultSet emit. See AnalyzerReleases.Unshipped.md.
         //
         // The Batch named-argument is also read once here and fed into
         // ResolveBatchStrategy below — keeping the read in one place avoids a
@@ -250,23 +253,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && named.Value.Value is int batchValue)
                 {
                     batchMode = batchValue;
-                    if (batchValue != 0) // BatchMode.Auto == 0
-                    {
-                        // Map the enum integer back to its name for the diagnostic message.
-                        // BatchMode lives in ZeroAlloc.ORM; we mirror the enum order here
-                        // to avoid a hard reference from the generator (netstandard2.0) to
-                        // the abstractions assembly (net10.0).
-                        var batchName = batchValue switch
-                        {
-                            1 => "BatchMode.Always",
-                            2 => "BatchMode.Never",
-                            _ => "BatchMode." + batchValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        };
-                        diagnostics.Add(new DiagnosticInfo(
-                            DescriptorId: "ZAO021",
-                            Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
-                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, batchName))));
-                    }
                 }
             }
         }
@@ -1183,7 +1169,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO008" => DiagnosticDescriptors.ZAO008_SingleResultWithSemicolons,
         "ZAO009" => DiagnosticDescriptors.ZAO009_RedundantAsync,
         "ZAO020" => DiagnosticDescriptors.ZAO020_FromResourceNotImplemented,
-        "ZAO021" => DiagnosticDescriptors.ZAO021_BatchNotImplemented,
         "ZAO022" => DiagnosticDescriptors.ZAO022_UnknownReturnShape,
         "ZAO040" => DiagnosticDescriptors.ZAO040_NoConstructionStrategy,
         "ZAO041" => DiagnosticDescriptors.ZAO041_NoUnwrapStrategy,
