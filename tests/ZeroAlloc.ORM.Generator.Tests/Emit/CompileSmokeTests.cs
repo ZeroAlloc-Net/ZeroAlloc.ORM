@@ -846,6 +846,39 @@ public class CompileSmokeTests
     }
 
     [Fact]
+    public void StoredProcedure_multi_result_tuple_emit_compiles_cleanly()
+    {
+        // v0.4 Phase D.3 — multi-result-set [StoredProcedure] returning a tuple.
+        // BatchMode.Never (the sproc default) routes through the joined-statements
+        // single-command path which already walks NextResultAsync per element.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+            public sealed record OrderLineRow(int OrderId, int Sku, int Quantity);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_GetOrderWithLines")]
+                public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetOrderWithLinesAsync(
+                    int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
     public void StoredProcedure_flatrow_emit_compiles_cleanly()
     {
         var source = """

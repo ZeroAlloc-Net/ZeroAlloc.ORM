@@ -443,7 +443,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // result set and fail. Surface at generation time so the adopter either adds
         // the missing SELECT(s) or trims the tuple. Error severity skips emit via the
         // standard hadError gate.
-        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null)
+        //
+        // v0.4 Phase D.3 — suppress for [StoredProcedure]. Sprocs carry empty SQL
+        // (statementCount == 0) because the procedure body lives server-side; the
+        // tuple arity vs statement-count comparison is meaningless here. The
+        // adopter's contract is "the sproc produces N result sets matching the
+        // tuple arity"; we can't verify that at compile time without parsing the
+        // sproc body. Defer arity validation to runtime (the materializer's
+        // NextResultAsync call will throw a clear error if a result set is missing).
+        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null && !isStoredProcedureAttribute)
         {
             var tupleArity = multiResultMaterialization.Elements.Values.Length;
             var statementCount = SqlStatementSplitter.CountStatements(sql);
@@ -1818,6 +1826,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     //   JoinedStatementsOnly  -> ;-joined single-command fallback (B.3)
                     //   BatchWithFallback     -> runtime branch on CanCreateBatch (B.4)
                     //   anything else         -> stub (shouldn't reach here, defensive)
+                    //
+                    // v0.4 Phase D.3 — stored procedures carry empty SQL so
+                    // ResolveBatchStrategy returns SingleCommand; route those to the
+                    // joined-single-command path (EmitMultiResultSetJoined). That path
+                    // already opens one DbCommand, executes ExecuteReaderAsync, and
+                    // walks NextResultAsync per element — exactly what a multi-result
+                    // sproc needs. BuildCommandTextAssignment (Phase D.2) flips the
+                    // CommandText / CommandType lines for the sproc inside that emit
+                    // path; no further sproc-specific code needed here.
+                    if (m.IsStoredProcedure)
+                    {
+                        EmitMultiResultSetJoined(sb, m, repo.ConnectionAccess);
+                        break;
+                    }
                     switch (m.Strategy)
                     {
                         case BatchEmitStrategy.BatchAlways:
