@@ -1,6 +1,6 @@
 {
-  ".": "0.2.0",
+  ".": "0.3.0",
   "src/ZeroAlloc.ORM.Abstractions": "0.2.0",
-  "src/ZeroAlloc.ORM.Generator": "0.2.0",
-  "src/ZeroAlloc.TypeConversions": "0.2.0"
+  "src/ZeroAlloc.ORM.Generator": "0.3.0",
+  "src/ZeroAlloc.TypeConversions": "0.3.0"
 }

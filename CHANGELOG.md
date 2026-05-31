@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.2.0...v0.3.0) (2026-05-31)
+
+
+### Features
+
+* **generator:** Phase B MultiResultSet emit (5 commits) ([#41](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/41)) ([f6fcf5b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f6fcf5b8f826c781b082b4b13e55209a8934ef0c))
+* v0.3 Phase C — IAsyncEnumerable&lt;T&gt; streaming emit ([#42](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/42)) ([1476a21](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/1476a21888e98299193b232fe719db6eed0681a2))
+* v0.3 Phase D — ZAO032/033 multi-result-set arity diagnostics ([#43](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/43)) ([4fa9fe1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/4fa9fe1c709da78f1ea58d678c6021e4370ee186))
+* v0.3 Phase E + F.1-F.2 — multi-result tests, cookbook, README, backlog ([#44](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/44)) ([cfbff1d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/cfbff1dbe84946a946faaf334d12301ffb1e04d5))
+
+
+### Bug Fixes
+
+* **release-please:** force 0.3.0 across all four packages for v0.3 release ([#46](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/46)) ([e350bb0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e350bb063300a1b01687ad42acc4d5df2f78de1a))
+* **release-please:** sync manifest with shipped NuGet versions ([#45](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/45)) ([1ea0f34](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/1ea0f34525de1ed8bfc7aa9a37d64303e1af4dd3))
+
+
+### Documentation
+
+* **backlog:** file v0.3-CLN3 — IAsyncDbConnection.CanCreateBatch not forwarded for Sqlite ([6691fd3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/6691fd3fb78abc7fc36d61bb33276deaca78927c))
+* **plan:** v0.3 implementation plan (multi-result + streaming) ([#38](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/38)) ([fa27787](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/fa27787a8927deedf6e5b568a0e8cdc27cd7d9cf))
+
 ## [0.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.1.0...v0.2.0) (2026-05-30)
 
 
