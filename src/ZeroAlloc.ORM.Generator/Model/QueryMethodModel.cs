@@ -27,6 +27,7 @@ internal sealed record QueryMethodModel(
     string ContainingTypeFullName,
     string Sql,
     EmitShape Shape,
+    BatchEmitStrategy Strategy,
     string ReturnTypeDisplay,
     string? NullableScalarReaderMethod,
     MaterializationModel? Materialization,
