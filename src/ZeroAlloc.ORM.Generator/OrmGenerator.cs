@@ -668,12 +668,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         if (isCommandAttribute)
         {
-            // Defensive — all three CommandKind values have explicit dispatch
-            // above. A future kind addition that doesn't update this switch
-            // would fall through here; surfacing as Unknown lets ZAO002 fire
-            // upstream if the return type was otherwise valid, or the v0.1
-            // TODO comment kicks in for the truly unclassifiable case.
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
+            // Defensive — all three CommandKind values (NonQuery / Scalar /
+            // Identity) have explicit dispatch above. Reaching this point means
+            // a new CommandKindModel value was added without an accompanying
+            // dispatch update; failing loudly here keeps the generator's shape
+            // table honest instead of silently routing to Unknown → ZAO002.
+            throw new global::System.InvalidOperationException(
+                $"Unhandled CommandKindModel value '{commandKind}' — generator dispatch is incomplete.");
         }
 
         if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
@@ -795,72 +796,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyCommandScalar(
         IMethodSymbol method,
         ConventionContext conventionContext)
-    {
-        if (method.ReturnType is not INamedTypeSymbol scalarReturn)
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
-        // Task<T> / ValueTask<T> with arity 1.
-        if (scalarReturn.Arity != 1
-            || (scalarReturn.Name != "Task" && scalarReturn.Name != "ValueTask")
-            || scalarReturn.TypeArguments.Length != 1)
-        {
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
-        }
-
-        var scalarInner = scalarReturn.TypeArguments[0];
-
-        // Detect nullable wrapper — `T?` reference annotation or `Nullable<T>`.
-        var scalarIsNullable = scalarInner.NullableAnnotation == NullableAnnotation.Annotated
-            || (scalarInner is INamedTypeSymbol sn
-                && sn.IsGenericType
-                && sn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
-        var scalarUnwrapped = UnwrapNullableValueType(scalarInner)
-            .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-
-        // Type display carries the UNWRAPPED (non-nullable) type — the column
-        // binding stores the cast-target type and tracks the nullable bit
-        // separately on IsNullable. Downstream emitters (scalar / row) that
-        // need `(T?)null` append the `?` based on IsNullable.
-        var scalarDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
-            .WithMiscellaneousOptions(
-                SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
-                | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
-        var scalarTypeDisplay = scalarUnwrapped.ToDisplayString(scalarDisplayFormat);
-
-        // ConventionDiscovery handles the four supported families uniformly.
-        var scalarResolution = ConventionDiscovery.Resolve(scalarUnwrapped, conventionContext);
-        string? scalarReader = scalarResolution.Kind switch
-        {
-            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(scalarUnwrapped),
-            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                => ResolveUnderlyingReaderForFactory(scalarResolution),
-            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(scalarUnwrapped),
-            ConventionKind.EnumAsString => "GetString",
-            _ => null,
-        };
-        if (scalarReader is null)
-        {
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
-        }
-
-        var scalarConvention = BuildConventionInfo(scalarUnwrapped, scalarResolution, scalarReader);
-
-        // The MaterializationModel carries one ColumnBinding describing the
-        // scalar's type + factory wiring; EmitCommandScalar reads it to build
-        // the cast / factory expression. TargetTypeFullName carries the
-        // unwrapped (non-nullable) type's fully-qualified name — the emit
-        // appends the nullable annotation independently when needed.
-        var scalarBinding = new ColumnBinding(
-            GetterMethod: scalarReader,
-            IsNullable: scalarIsNullable,
-            TypeName: scalarTypeDisplay,
-            Convention: scalarConvention);
-        var scalarMaterialization = new MaterializationModel(
-            Kind: MaterializationKind.ScalarPrimitive,
-            TargetTypeFullName: scalarUnwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(scalarBinding)));
-
-        return (EmitShape.CommandScalar, null, scalarMaterialization, null, HasReturnValue: true);
-    }
+        => ClassifyScalarLikeReturn(
+            method,
+            conventionContext,
+            allowNullable: true,
+            // Scalar accepts the full ConventionDiscovery family set: every
+            // primitive in the catalog, plus value-objects, enums, and
+            // string-backed enums. Container / unsupported types fall through
+            // to a null reader → Unknown.
+            resolveReader: static (unwrapped, resolution) => resolution.Kind switch
+            {
+                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(unwrapped),
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(resolution),
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(unwrapped),
+                ConventionKind.EnumAsString => "GetString",
+                _ => null,
+            },
+            shape: EmitShape.CommandScalar);
 
     // v0.4 Phase C — [Command(Kind = Identity)] dispatch. Identity is the
     // "INSERT ... RETURNING Id" / "INSERT ...; SELECT SCOPE_IDENTITY()" shape:
@@ -886,69 +839,110 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyCommandIdentity(
         IMethodSymbol method,
         ConventionContext conventionContext)
+        => ClassifyScalarLikeReturn(
+            method,
+            conventionContext,
+            // Identity rejects nullable variants — both `T?` reference
+            // annotation and `Nullable<T>` value-type wrapper. The SQL contract
+            // (RETURNING / SCOPE_IDENTITY()) guarantees a non-null value.
+            allowNullable: false,
+            // Identity narrows the primitive set to int / long / Guid and
+            // rejects Enum / EnumAsString outright — identity keys are
+            // structurally an integer or UUID. Value-object / factory paths
+            // route through ResolveIdentityUnderlyingReaderForFactory which
+            // applies the same primitive-acceptance filter to the wrapped type.
+            resolveReader: static (unwrapped, resolution) => resolution.Kind switch
+            {
+                ConventionKind.Primitive => IsIdentityPrimitive(unwrapped)
+                    ? PrimitiveCatalog.GetScalarReaderMethod(unwrapped)
+                    : null,
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveIdentityUnderlyingReaderForFactory(resolution),
+                _ => null,
+            },
+            shape: EmitShape.CommandIdentity);
+
+    // Shared classification path for the two scalar-like [Command] shapes
+    // (Scalar in Phase B, Identity in Phase C). Both reduce to a single
+    // ExecuteScalarAsync read whose result becomes the method's return value;
+    // they differ only in (a) whether `T?` is accepted on the return and
+    // (b) which ConventionDiscovery resolutions are honored.
+    //
+    // `resolveReader` returns the IDataReader.GetXxx method name to use for the
+    // unwrapped type, or null to reject this kind+type combination (caller
+    // falls through to Unknown and ZAO002 fires upstream).
+    //
+    // Critical: the MaterializationModel shape produced here is consumed
+    // byte-identically by EmitCommandScalar / EmitCommandIdentity — any change
+    // to the binding fields or ordering will surface as a snapshot drift.
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue) ClassifyScalarLikeReturn(
+        IMethodSymbol method,
+        ConventionContext conventionContext,
+        bool allowNullable,
+        global::System.Func<ITypeSymbol, ConventionResult, string?> resolveReader,
+        EmitShape shape)
     {
-        if (method.ReturnType is not INamedTypeSymbol identityReturn)
+        if (method.ReturnType is not INamedTypeSymbol taskReturn)
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
-        if (identityReturn.Arity != 1
-            || (identityReturn.Name != "Task" && identityReturn.Name != "ValueTask")
-            || identityReturn.TypeArguments.Length != 1)
+        // Task<T> / ValueTask<T> with arity 1.
+        if (taskReturn.Arity != 1
+            || (taskReturn.Name != "Task" && taskReturn.Name != "ValueTask")
+            || taskReturn.TypeArguments.Length != 1)
         {
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
-        var identityInner = identityReturn.TypeArguments[0];
+        var inner = taskReturn.TypeArguments[0];
 
-        // Identity rejects nullable variants — both `T?` reference annotation
-        // and `Nullable<T>` value-type wrapper. Fall through to Unknown so
-        // ZAO002 fires upstream.
-        if (identityInner.NullableAnnotation == NullableAnnotation.Annotated
-            || (identityInner is INamedTypeSymbol idn
-                && idn.IsGenericType
-                && idn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T))
+        // Detect nullable wrapper — `T?` reference annotation or `Nullable<T>`.
+        var isNullable = inner.NullableAnnotation == NullableAnnotation.Annotated
+            || (inner is INamedTypeSymbol n
+                && n.IsGenericType
+                && n.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+        if (isNullable && !allowNullable)
         {
+            // Identity hits this branch — fall through so ZAO002 fires upstream.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
-        var identityUnwrapped = identityInner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        var unwrapped = UnwrapNullableValueType(inner)
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
 
-        var identityDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
+        // Type display carries the UNWRAPPED (non-nullable) type — the column
+        // binding stores the cast-target type and tracks the nullable bit
+        // separately on IsNullable. Downstream emitters (scalar / row) that
+        // need `(T?)null` append the `?` based on IsNullable.
+        var displayFormat = SymbolDisplayFormat.FullyQualifiedFormat
             .WithMiscellaneousOptions(
                 SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
                 | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
-        var identityTypeDisplay = identityUnwrapped.ToDisplayString(identityDisplayFormat);
+        var typeDisplay = unwrapped.ToDisplayString(displayFormat);
 
-        // ConventionDiscovery handles the four supported families; we filter
-        // the result so only int / long / Guid (and VOs/factories wrapping one
-        // of those) classify as Identity. Other primitives and enums route to
-        // Scalar (Phase B) — not Identity — even if they'd compile cleanly.
-        var identityResolution = ConventionDiscovery.Resolve(identityUnwrapped, conventionContext);
-        string? identityReader = identityResolution.Kind switch
-        {
-            ConventionKind.Primitive => IsIdentityPrimitive(identityUnwrapped)
-                ? PrimitiveCatalog.GetScalarReaderMethod(identityUnwrapped)
-                : null,
-            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                => ResolveIdentityUnderlyingReaderForFactory(identityResolution),
-            _ => null,
-        };
-        if (identityReader is null)
+        var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
+        string? reader = resolveReader(unwrapped, resolution);
+        if (reader is null)
         {
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false);
         }
 
-        var identityConvention = BuildConventionInfo(identityUnwrapped, identityResolution, identityReader);
+        var convention = BuildConventionInfo(unwrapped, resolution, reader);
 
-        var identityBinding = new ColumnBinding(
-            GetterMethod: identityReader,
-            IsNullable: false,
-            TypeName: identityTypeDisplay,
-            Convention: identityConvention);
-        var identityMaterialization = new MaterializationModel(
+        // The MaterializationModel carries one ColumnBinding describing the
+        // scalar's type + factory wiring; the per-shape emitter reads it to
+        // build the cast / factory expression. TargetTypeFullName carries the
+        // unwrapped (non-nullable) type's fully-qualified name — the emit
+        // appends the nullable annotation independently when needed.
+        var binding = new ColumnBinding(
+            GetterMethod: reader,
+            IsNullable: isNullable,
+            TypeName: typeDisplay,
+            Convention: convention);
+        var materialization = new MaterializationModel(
             Kind: MaterializationKind.ScalarPrimitive,
-            TargetTypeFullName: identityUnwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(identityBinding)));
+            TargetTypeFullName: unwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(binding)));
 
-        return (EmitShape.CommandIdentity, null, identityMaterialization, null, HasReturnValue: true);
+        return (shape, null, materialization, null, HasReturnValue: true);
     }
 
     // Identity-key primitives. The standard auto-increment / RETURNING shape
@@ -959,8 +953,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // shape isn't surprising.
     private static bool IsIdentityPrimitive(ITypeSymbol type)
         => type.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
-           || string.Equals(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-               "global::System.Guid", StringComparison.Ordinal);
+           || (type.MetadataName == "Guid"
+               && type.ContainingNamespace?.Name == "System"
+               && type.ContainingNamespace?.ContainingNamespace?.IsGlobalNamespace == true);
 
     // VO / SingleArgCtor / StaticFactory variants: require the wrapped /
     // factory-arg type to be one of the identity primitives (int / long / Guid).

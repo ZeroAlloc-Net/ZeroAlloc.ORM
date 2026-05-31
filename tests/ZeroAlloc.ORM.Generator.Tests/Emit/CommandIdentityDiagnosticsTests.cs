@@ -42,6 +42,39 @@ public class CommandIdentityDiagnosticsTests
     }
 
     [Fact]
+    public void Identity_with_value_object_wrapping_non_identity_primitive_emits_ZAO002()
+    {
+        // Identity narrows the accepted primitive set to int / long / Guid. A
+        // value-object wrapping a non-whitelisted primitive (here: decimal)
+        // must fall through to ZAO002 — this exercises the primitive-acceptance
+        // filter inside ResolveIdentityUnderlyingReaderForFactory, which the
+        // List<int> / int? cases above don't cover.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record FooId(decimal Value);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO Foos (...) VALUES (...) RETURNING Id", Kind = CommandKind.Identity)]
+                public partial Task<FooId> InsertFooAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.Contains(diagnostics, d =>
+            string.Equals(d.Id, "ZAO002", System.StringComparison.Ordinal)
+            && d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)
+                .Contains("InsertFooAsync", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Identity_with_nullable_int_return_type_emits_ZAO002()
     {
         // Identity is NEVER nullable — the design contract says the SQL must
