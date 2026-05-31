@@ -292,6 +292,23 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
   streaming-style early-close test lands — premature without the second adopter.
 - A TODO marker is already in place at the top of `StreamingTests`.
 
+### v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite
+
+- Source: PR #44 fix-up (2026-05-31).
+- `Microsoft.Data.Sqlite` ≥9.x exposes `CanCreateBatch = true` on `SqliteConnection`,
+  but `AdoNet.Async.Adapters.AsAsync()` wrapper reports `CanCreateBatch = false`.
+- Consequence: `MultiResultSetTests` Auto + Never variants both exercise the
+  `;`-joined fallback branch — no integration test in the Sqlite suite actually
+  drives the `IAsyncDbBatch` path. Batch-branch emit is still proven via the
+  generator snapshot test `MultiResultSetAutoTests.Tuple_with_record_and_list_emits_runtime_CanCreateBatch_branch`.
+- Fix options:
+  1. If the adapter SHOULD forward `CanCreateBatch` from the underlying connection,
+     file as an upstream bug in AdoNet.Async and bump once fixed.
+  2. If the adapter intentionally gates this on its own batch-shape support, add a
+     Postgres / SQL Server integration fixture (already on the v0.5 / v0.6 roadmap)
+     that exercises the batch branch in CI.
+- File-header comment in `MultiResultSetTests.cs` records this state honestly.
+
 ---
 
 ## P1 — Milestone v0.4 (2 weeks): commands + sprocs
