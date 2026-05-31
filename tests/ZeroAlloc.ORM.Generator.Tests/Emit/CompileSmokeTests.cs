@@ -1147,4 +1147,69 @@ public class CompileSmokeTests
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    [Fact]
+    public void Composite_parameter_binding_emit_compiles_cleanly()
+    {
+        // v0.5 Phase B.2 — composite parameter unpacks into N DbParameter
+        // blocks named `@total_Amount` / `@total_Currency`. The emitted
+        // accessor `@total.Amount` relies on the positional-record
+        // auto-generated property symmetry; the smoke test catches
+        // accessor/local-name regressions that would surface as CS1061
+        // (`Money` has no `Amount` member) or CS0103.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = 1", Kind = CommandKind.NonQuery)]
+                public partial Task<int> UpdateAsync(Money total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Composite_parameter_alongside_primitive_emit_compiles_cleanly()
+    {
+        // v0.5 Phase B.2 — pins the mixed-binding case: a primitive parameter
+        // (`int id`) and a composite parameter (`Money total`) on the same
+        // method must produce well-formed `__p_id` + `__p_total_Amount` /
+        // `__p_total_Currency` locals without local-name collisions or
+        // missing accessors.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public readonly record struct Money(decimal Amount, string Currency);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
+                public partial Task<int> UpdateAsync(int id, Money total, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
 }

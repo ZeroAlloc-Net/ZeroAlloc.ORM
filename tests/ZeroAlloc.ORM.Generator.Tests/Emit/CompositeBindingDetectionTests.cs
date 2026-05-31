@@ -31,7 +31,7 @@ public class CompositeBindingDetectionTests
 
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
-                [Command(Kind = CommandKind.NonQuery, Sql = "UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = 1")]
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = 1", Kind = CommandKind.NonQuery)]
                 public partial Task<int> UpdateTotalAsync(Money total, CancellationToken ct);
             }
             """;
@@ -67,7 +67,7 @@ public class CompositeBindingDetectionTests
 
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
-                [Command(Kind = CommandKind.NonQuery, Sql = "UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id")]
+                [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
                 public partial Task<int> UpdateAsync(int id, Money total, CancellationToken ct);
             }
             """;
@@ -116,7 +116,7 @@ public class CompositeBindingDetectionTests
 
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
-                [Command(Kind = CommandKind.NonQuery, Sql = "UPDATE Orders SET Amount = @outer_Amount, Currency = @outer_Currency WHERE Id = 1")]
+                [Command("UPDATE Orders SET Amount = @outer_Amount, Currency = @outer_Currency WHERE Id = 1", Kind = CommandKind.NonQuery)]
                 public partial Task<int> UpdateAsync(MoneyWithOrderId outer, CancellationToken ct);
             }
             """;
