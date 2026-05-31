@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.4.0...v0.5.0) (2026-05-31)
+
+
+### Features
+
+* v0.5 Phase A — composite materialization (Money pattern) ([#60](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/60)) ([315e715](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/315e7159eab30f47ba2a61e1473d6c3f36145edd))
+* v0.5 Phase C — nullable composite materialization + binding + ZAO050 ([#62](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/62)) ([6336e92](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/6336e926fbc842f9f9466ca7b0443261cde7cf28))
+
+
+### Documentation
+
+* **plan:** v0.5 implementation plan (composites + Materialize factory) ([#58](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/58)) ([55c52c4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/55c52c4c3b32df8edae8a662a1bb16afb18bb372))
+
 ## [0.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.3.0...v0.4.0) (2026-05-31)
 
 
