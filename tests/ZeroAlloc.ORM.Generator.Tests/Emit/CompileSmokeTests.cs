@@ -1349,4 +1349,78 @@ public class CompileSmokeTests
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    // v0.5 Phase D — `[Materialize(Factory)]` factory dispatch at scalar position
+    // emits the static factory invocation in place of `new T(...)`. The smoke
+    // test reuses the canonical Sqlite Money.FromStorage(string, string) shape:
+    // the underlying ctor takes `decimal`, the factory takes `string`, the emit
+    // produces `Money.FromStorage(GetString(0), GetString(1))`.
+    [Fact]
+    public void Materialize_factory_scalar_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "FromStorage")]
+            public readonly record struct Money(decimal Amount, string Currency)
+            {
+                public static Money FromStorage(string amountText, string currency)
+                    => new Money(decimal.Parse(amountText, global::System.Globalization.CultureInfo.InvariantCulture), currency);
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
+
+    // v0.5 Phase D — nested factory dispatch in a FlatRow. The outer row's
+    // ctor still uses `new OrderRow(...)`; the inner composite swaps to
+    // `Money.FromStorage(...)`.
+    [Fact]
+    public void Materialize_factory_nested_in_flat_row_emit_compiles_cleanly()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "FromStorage")]
+            public readonly record struct Money(decimal Amount, string Currency)
+            {
+                public static Money FromStorage(string amountText, string currency)
+                    => new Money(decimal.Parse(amountText, global::System.Globalization.CultureInfo.InvariantCulture), currency);
+            }
+
+            public sealed record OrderRow(int Id, Money Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        var bugClass = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
+            .ToArray();
+        Assert.Empty(bugClass);
+    }
 }
