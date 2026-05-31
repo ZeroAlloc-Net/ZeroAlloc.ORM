@@ -711,17 +711,92 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // value). Primitives produce a null ConventionInfo so the existing
                 // `@id` emit path is byte-identical to v0.1.
                 ConventionInfo? paramConvention = null;
+                EquatableArray<CompositeBindingField> compositeFields = default;
+                string? compositeTypeFullName = null;
                 if (!isCt)
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
                     var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+                    // v0.5 Phase B — composite parameter (`Money(decimal Amount,
+                    // string Currency)` etc.). The MultiArgCtor convention reaches
+                    // its own binding branch — N DbParameters, one per ctor arg,
+                    // named `@{paramName}_{ctorArgName}`. Detection here threads
+                    // the per-field model into ParameterInfo so the emit helper
+                    // can render the unpacking blocks without re-resolving symbols.
+                    //
+                    // Nullable composite parameters are deferred to Phase C (the
+                    // bind side mirrors the read side's all-or-nothing approach).
+                    // For now `isNullable + MultiArgCtor` falls through to ZAO041
+                    // — no binding strategy resolved — which is the correct signal
+                    // until Phase C lands.
+                    if (resolution.Kind == ConventionKind.MultiArgCtor && !isNullable)
+                    {
+                        var innerBuilder = ImmutableArray.CreateBuilder<CompositeBindingField>(resolution.ExpandedColumns.Length);
+                        var fieldsOk = true;
+                        foreach (var innerParam in resolution.ExpandedColumns)
+                        {
+                            var innerUnderlying = UnwrapNullableValueType(innerParam.Type);
+                            var innerResolution = ConventionDiscovery.Resolve(innerUnderlying, conventionContext);
+
+                            // Recursive composites are rejected upstream by
+                            // ConventionDiscovery.TryMultiArgCtor (the inner type
+                            // would itself classify as MultiArgCtor and bail).
+                            // Unknown inner kind here means the composite isn't
+                            // fully bindable — fall through to ZAO041.
+                            if (innerResolution.Kind == ConventionKind.Unknown
+                                || innerResolution.Kind == ConventionKind.MultiArgCtor)
+                            {
+                                fieldsOk = false;
+                                break;
+                            }
+
+                            var innerReader = innerResolution.Kind switch
+                            {
+                                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                                    => ResolveUnderlyingReaderForFactory(innerResolution),
+                                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(innerUnderlying),
+                                ConventionKind.EnumAsString => "GetString",
+                                _ => null,
+                            };
+                            var innerConvention = BuildConventionInfo(innerUnderlying, innerResolution, innerReader);
+
+                            var innerIsNullable = innerParam.Type.NullableAnnotation == NullableAnnotation.Annotated
+                                || (innerParam.Type is INamedTypeSymbol ipn
+                                    && ipn.IsGenericType
+                                    && ipn.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+                            var innerTypeDisplay = innerUnderlying
+                                .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                                .ToDisplayString(TypeDisplayFormat);
+
+                            innerBuilder.Add(new CompositeBindingField(
+                                CtorArgName: innerParam.Name,
+                                IsNullable: innerIsNullable,
+                                TypeName: innerTypeDisplay,
+                                Convention: innerConvention));
+                        }
+
+                        if (fieldsOk)
+                        {
+                            compositeFields = new EquatableArray<CompositeBindingField>(innerBuilder.MoveToImmutable());
+                            compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                        }
+                    }
 
                     // ZAO041 — no binding strategy resolved for parameter. Fires when the
                     // parameter type doesn't match any convention (no Value, no primitive,
                     // no enum, no static From factory, no single-arg ctor). Keyed at the
                     // parameter symbol's first declaration so the user's squiggle lands on
                     // their parameter, not on the type definition.
-                    if (resolution.Kind == ConventionKind.Unknown)
+                    //
+                    // v0.5 Phase B — MultiArgCtor with a successfully-built CompositeFields
+                    // list is a known strategy now; the silent-on-MultiArgCtor branch lives
+                    // in the `&& compositeTypeFullName is null` clause below. A MultiArgCtor
+                    // whose inner fields didn't resolve (or a nullable composite) still
+                    // fires ZAO041 because the binding can't proceed.
+                    if (resolution.Kind == ConventionKind.Unknown
+                        || (resolution.Kind == ConventionKind.MultiArgCtor && compositeTypeFullName is null))
                     {
                         var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
                         diagnostics.Add(new DiagnosticInfo(
@@ -755,7 +830,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     isCt,
                     paramNameOverride,
                     isNullable,
-                    paramConvention);
+                    paramConvention,
+                    compositeFields,
+                    compositeTypeFullName);
             })
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
@@ -3648,6 +3725,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken) continue;
+
+            // v0.5 Phase B — composite parameter unpacks into N DbParameter
+            // blocks, one per inner ctor argument. The sentinel comment pins
+            // the classifier branch (B.1) and the actual unpack emit follows.
+            // EquatableArray<T>.Length returns 0 for the default state, so the
+            // bare `Length > 0` check is sufficient to distinguish a populated
+            // composite from a primitive/VO binding.
+            if (p.CompositeFields.Length > 0)
+            {
+                sb.AppendLine($"{indent}// CompositeBinding: {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+                EmitCompositeParameterBinding(sb, p, "__cmd", indent);
+                continue;
+            }
+
             var local = "__p_" + p.Name;
             var paramName = p.ParamNameOverride ?? ("@" + p.Name);
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -3765,6 +3856,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken) continue;
+
+            // v0.5 Phase B — composite parameter unpacks per-batch-statement.
+            // The cmdIndex suffix keeps locals distinct across batch statements
+            // so `@total_Amount` in two statements gets two unique
+            // `__p_total_Amount_0` / `__p_total_Amount_1` locals.
+            if (p.CompositeFields.Length > 0)
+            {
+                sb.AppendLine($"            // CompositeBinding: {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+                EmitCompositeParameterBindingForBatch(sb, p, cmdLocal, cmdIndex, "            ");
+                continue;
+            }
+
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? ("@" + p.Name);
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -4026,6 +4129,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken) continue;
+
+            // v0.5 Phase B — composite parameter unpacks into N DbParameter
+            // blocks (see EmitCompositeParameterBinding). The sentinel comment
+            // matches the EmitParameterBindingWithIndent path so detection
+            // tests work uniformly across single-command and batch emits.
+            if (p.CompositeFields.Length > 0)
+            {
+                sb.AppendLine($"            // CompositeBinding: {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+                EmitCompositeParameterBinding(sb, p, "__cmd", "            ");
+                continue;
+            }
+
             var local = "__p_" + p.Name;
             var paramName = p.ParamNameOverride ?? ("@" + p.Name);
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -4096,6 +4211,128 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return SyntaxFacts.GetKeywordKind(cancellationTokenName) != SyntaxKind.None
             ? "@" + cancellationTokenName
             : cancellationTokenName;
+    }
+
+    // v0.5 Phase B — composite parameter unpacking. For a `Money(decimal Amount,
+    // string Currency)` parameter named `total`, this emits two DbParameter
+    // blocks:
+    //
+    //   var __p_total_Amount = __cmd.CreateParameter();
+    //   __p_total_Amount.ParameterName = "@total_Amount";
+    //   __p_total_Amount.Value = @total.Amount;
+    //   __cmd.Parameters.Add(__p_total_Amount);
+    //
+    //   var __p_total_Currency = __cmd.CreateParameter();
+    //   __p_total_Currency.ParameterName = "@total_Currency";
+    //   __p_total_Currency.Value = @total.Currency;
+    //   __cmd.Parameters.Add(__p_total_Currency);
+    //
+    // The accessor `@total.{CtorArgName}` exploits the fact that positional
+    // records auto-generate properties whose names match the ctor parameter
+    // names. Convention-bearing inner fields (a VO field like `OrderId
+    // Currency`) unwrap through their `.Value` accessor at bind time —
+    // recursive convention layering, matching the Phase A read side.
+    //
+    // ParamNameOverride is intentionally NOT consulted here — Phase B picks
+    // a positional convention (`@{paramName}_{ctorArgName}`) and the override
+    // (which targets a single DbParameter name) doesn't compose with N-way
+    // unpacking. A future [Param(Name=...)] on the composite itself could
+    // re-route the suffixes, but that's not in v0.5 scope.
+    private static void EmitCompositeParameterBinding(
+        StringBuilder sb,
+        ParameterInfo p,
+        string cmdLocal,
+        string indent)
+    {
+        foreach (var field in p.CompositeFields)
+        {
+            var local = "__p_" + p.Name + "_" + field.CtorArgName;
+            var paramName = "@" + p.Name + "_" + field.CtorArgName;
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
+            sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+
+            var valueExpr = BuildCompositeFieldValueExpression(p.Name, field);
+            if (field.IsNullable)
+            {
+                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+            }
+            sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
+        }
+    }
+
+    // v0.5 Phase B — batch-command variant of EmitCompositeParameterBinding.
+    // Identical shape except locals carry the cmdIndex suffix so two batch
+    // statements binding the same composite parameter produce distinct locals
+    // (`__p_total_Amount_0` / `__p_total_Amount_1`). The DbParameter name on
+    // the wire is the same (`@total_Amount`) — batches re-bind each statement's
+    // parameter set independently.
+    private static void EmitCompositeParameterBindingForBatch(
+        StringBuilder sb,
+        ParameterInfo p,
+        string cmdLocal,
+        int cmdIndex,
+        string indent)
+    {
+        var indexSuffix = cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var field in p.CompositeFields)
+        {
+            var local = "__p_" + p.Name + "_" + field.CtorArgName + "_" + indexSuffix;
+            var paramName = "@" + p.Name + "_" + field.CtorArgName;
+            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
+            sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+
+            var valueExpr = BuildCompositeFieldValueExpression(p.Name, field);
+            if (field.IsNullable)
+            {
+                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+            }
+            sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
+        }
+    }
+
+    // Build the C# expression that reads one inner field of a composite
+    // parameter at bind time. Mirrors the Phase D parameter-convention logic
+    // (Value / cast / ToString) at one extra level of indirection — the outer
+    // accessor is `@{paramName}.{CtorArgName}` and the inner convention
+    // unwraps that further:
+    //
+    //   Primitive       -> @total.Amount
+    //   ValueObject     -> @total.Currency.Value
+    //   Enum (int)      -> (int)@total.Status
+    //   EnumAsString    -> @total.Status.ToString()
+    //
+    // For nullable inner fields the caller wraps the result with the DBNull
+    // sentinel — same shape as the v0.4 NullableParameter emit.
+    private static string BuildCompositeFieldValueExpression(string paramName, CompositeBindingField field)
+    {
+        var baseExpr = "@" + paramName + "." + field.CtorArgName;
+        if (field.Convention is { } conv)
+        {
+            if (conv.Kind == (int)ConventionKind.Enum)
+            {
+                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+                return $"({castType}){baseExpr}";
+            }
+            if (conv.Kind == (int)ConventionKind.EnumAsString)
+            {
+                return $"{baseExpr}.ToString()";
+            }
+            if (conv.ValuePropertyName is { } propName)
+            {
+                return $"{baseExpr}.{propName}";
+            }
+        }
+        return baseExpr;
     }
 
     // Render the partial method's parameter list, preserving the user's declared order
