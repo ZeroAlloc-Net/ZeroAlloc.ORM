@@ -294,20 +294,40 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
 
 ### v0.4-CLN1 — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`
 
-- Source: PR #50 code review (2026-05-31, Phase A).
+- Source: PR #50 code review (2026-05-31, Phase A); extended by PR #53 code review (2026-05-31, Phase D).
 - The v0.4 Phase A union step in `OrmGenerator.Initialize` joins the `[Query]` and
   `[Command]` `ForAttributeWithMetadataName` pipelines via `Collect()` + `SelectMany`.
   Convenient and locally simple, but the join collapses incremental-cache granularity:
   any source edit re-runs the union + grouping for ALL methods, not just the pipeline
   whose attribute saw the change.
-- Phase D will add a THIRD pipeline (`[StoredProcedure]`) and amplify the same loss.
+- Phase D added a THIRD pipeline (`[StoredProcedure]`) and amplified the same loss.
 - Investigate folding all three into a single `ForAttributeWithMetadataName` with a
   combined attribute filter, OR adopting a shared `CreateSyntaxProvider` that reads
   any of the three attributes in one pass. Either approach must preserve the per-method
   symbol-walking work the current `TransformMethod` does (no regressions on the larger
   per-method cost) — only the union step is the cache-invalidation hot spot.
+- Bundled scope (PR #53 follow-up): collapse the in-line `isCommandAttribute` /
+  `isStoredProcedureAttribute` convenience bools (`OrmGenerator.cs:191-201`) into
+  pure `pipelineKind` switch usage at every call site. The bools were kept short-term
+  for diff minimization during Phase D; the architecture pass is the right time to
+  retire them.
 - Defer to v0.4 polish after Phase D lands; chasing it during Phase A risks reshuffling
   emit semantics for an aesthetic gain.
+
+### v0.4-CLN5 — Diagnose non-default `Batch` on `[StoredProcedure]`
+
+- Source: PR #53 code review (2026-05-31, Phase D fix-up).
+- `StoredProcedureAttribute.Batch` is accepted (kept for surface symmetry with
+  `[Query]`) but currently ignored — sprocs always route through the joined/single-
+  command path regardless of `BatchMode.Always` / `BatchMode.Auto`. Adopters writing
+  `[StoredProcedure("usp_X", Batch = BatchMode.Always)]` get silent acceptance and
+  no behavior change, which is materially confusing.
+- Fix: add an Info-severity diagnostic (tentative ZAO063 — reserve a number in the
+  next phase that touches the descriptor catalog) that fires when `Batch` is set
+  to anything other than the `BatchMode.Never` default on a `[StoredProcedure]`
+  method. Message: "Method '{0}' has [StoredProcedure(Batch = {1})] but Batch is
+  ignored on stored procedures (they encapsulate their own batching semantics)."
+- Defer to v0.4 polish or v0.5; not urgent enough to gate Phase D / Phase E.
 
 ### v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite
 

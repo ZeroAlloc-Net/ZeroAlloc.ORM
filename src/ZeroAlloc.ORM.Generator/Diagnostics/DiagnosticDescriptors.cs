@@ -110,4 +110,15 @@ internal static class DiagnosticDescriptors
         "ZAO044", "Ambiguous convention discovery",
         "Type '{0}' matches multiple convention rules with equal priority and no clear precedence. Add an explicit [Materialize(Strategy=...)] to disambiguate.",
         DiagnosticSeverity.Error);
+
+    // v0.4 Phase D fix-up — shipped early (originally scheduled for Phase F.2).
+    // Without this guard, `[StoredProcedure("")]` silently emits CommandText = ""
+    // and the failure surfaces as a provider-specific runtime error
+    // ("Could not find stored procedure ''" on SQL Server, similar on others).
+    // Surfacing at compile time with a clear message is materially better than
+    // any runtime story we can ship.
+    public static readonly DiagnosticDescriptor ZAO061_EmptyProcedureName = Make(
+        "ZAO061", "[StoredProcedure] name is empty",
+        "Method '{0}' has [StoredProcedure(\"\")] but the procedure name must be non-empty and non-whitespace.",
+        DiagnosticSeverity.Error);
 }

@@ -17,6 +17,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
+    private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
     private const string GeneratorVersion = "0.1.0";
@@ -29,7 +30,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: QueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: false))
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Query))
             .Where(static m => m is not null)!;
 
         // v0.4 Phase A — [Command] attribute pickup. Re-uses the same TransformMethod
@@ -39,22 +40,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // both [Query] and [Command] surface ZAO005 (extended in v0.4 from the v0.3
         // single-Query rule).
         //
-        // Incremental-cache trade-off: the union below collapses both pipelines via
+        // Incremental-cache trade-off: the union below collapses all pipelines via
         // Collect() + SelectMany, which means ANY source edit re-runs the whole union
         // + grouping step rather than re-running only the pipeline that saw the
-        // change. We accept that cost in v0.4 Phase A because (a) ForAttributeWithMetadataName
+        // change. We accept that cost in v0.4 because (a) ForAttributeWithMetadataName
         // is still the high-performance entry point for the per-method transforms and
         // (b) the union output is small relative to the per-method symbol work that
-        // it caches. Phase D will add a third pipeline ([StoredProcedure]); the
-        // backlog item "v0.4-CLN — single-pipeline architecture for [Query]+[Command]
-        // +[StoredProcedure]" tracks the future investigation of folding all three
-        // into one ForAttributeWithMetadataName call to preserve per-method
-        // incremental-cache granularity.
+        // it caches. The backlog item "v0.4-CLN — single-pipeline architecture for
+        // [Query]+[Command]+[StoredProcedure]" tracks the future investigation of
+        // folding all three into one ForAttributeWithMetadataName call to preserve
+        // per-method incremental-cache granularity.
         var commandMethods = context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: CommandAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => TransformMethod(ctx, isCommandAttribute: true))
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Command))
+            .Where(static m => m is not null)!;
+
+        // v0.4 Phase D — [StoredProcedure] attribute pickup. Third pipeline; identical
+        // structural pattern to [Command]. Sets IsStoredProcedure = true so emit
+        // dispatch can swap CommandText for ProcedureName + set CommandType =
+        // StoredProcedure. ZAO005 surfaces a method that carries any pair of
+        // [Query] / [Command] / [StoredProcedure] (or all three) via the
+        // ormAttrCount > 1 check in TransformMethod, with the union dedup below
+        // dropping duplicate entries so the diagnostic fires exactly once per method.
+        var storedProcedureMethods = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: StoredProcedureAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.StoredProcedure))
             .Where(static m => m is not null)!;
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
@@ -63,15 +77,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // on each QueryMethodModel. R8 hoist: this removes the prior fallback that
         // grabbed type-properties off `repo.Methods.Values[0]` downstream.
         //
-        // v0.4 Phase A: [Query] + [Command] pipelines are unioned before grouping so a
-        // single QueryRepositoryModel covers both attribute kinds on the same type.
-        // The (containingTypeFullName, methodName) tuple uniquely identifies a method;
-        // we dedupe on that key inside the group so a method that picks up both
-        // pipelines (the ZAO005 multi-attribute case) doesn't produce two emit slots.
+        // v0.4 Phase D: [Query] + [Command] + [StoredProcedure] pipelines are unioned
+        // before grouping so a single QueryRepositoryModel covers all three attribute
+        // kinds on the same type. The (containingTypeFullName, methodName) tuple
+        // uniquely identifies a method; we dedupe on that key inside the union so a
+        // method that picks up multiple pipelines (the ZAO005 multi-attribute case)
+        // doesn't produce two/three emit slots. Ordering matters for the dedup
+        // tie-break: pair.Left ([Query]) wins over [Command], which wins over
+        // [StoredProcedure] — but since ZAO005 fires from EVERY pipeline that
+        // transforms the method, the diagnostic surfaces regardless of which entry
+        // the dedup keeps, while emit gets a single deterministic slot.
         var allMethods = queryMethods.Collect()
             .Combine(commandMethods.Collect())
-            .SelectMany(static (pair, _) =>
+            .Combine(storedProcedureMethods.Collect())
+            .SelectMany(static (combined, _) =>
             {
+                var pair = combined.Left;
+                var sprocs = combined.Right;
                 var seen = new HashSet<(string, string)>();
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
@@ -81,6 +103,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (seen.Add(key)) union.Add(m);
                 }
                 foreach (var m in pair.Right)
+                {
+                    if (m is null) continue;
+                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
+                    if (seen.Add(key)) union.Add(m);
+                }
+                foreach (var m in sprocs)
                 {
                     if (m is null) continue;
                     var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
@@ -151,8 +179,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         });
     }
 
-    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, bool isCommandAttribute)
+    private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, AttributePipelineKind pipelineKind)
     {
+        // Convenience bools — every downstream branch reads these instead of
+        // re-pattern-matching the enum. The original Phase A code carried
+        // `isCommandAttribute`; Phase D adds `isStoredProcedureAttribute` and
+        // keeps the existing variable name for diff minimization.
+        var isCommandAttribute = pipelineKind == AttributePipelineKind.Command;
+        var isStoredProcedureAttribute = pipelineKind == AttributePipelineKind.StoredProcedure;
         if (ctx.TargetSymbol is not IMethodSymbol method) return null;
         if (method.ContainingType is not INamedTypeSymbol containing) return null;
         if (ctx.TargetNode is not MethodDeclarationSyntax methodSyntax) return null;
@@ -163,12 +197,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
 
         // The triggering attribute. For [Query] this is the QueryAttribute; for the
-        // [Command] pipeline this is the CommandAttribute. We pull the SQL out of the
-        // first ctor arg either way — both attributes share that signature.
+        // [Command] pipeline this is the CommandAttribute; for [StoredProcedure]
+        // (Phase D) it's StoredProcedureAttribute. All three share a single
+        // string-typed ctor arg — Query/Command call it "Sql", StoredProcedure calls
+        // it "ProcedureName" — so we pull the raw value into `firstStringArg` and
+        // then dispatch to the right model field. For sprocs, m.Sql stays empty
+        // (multi-result-set classification doesn't read it for the sproc path,
+        // and ZAO008/ZAO032/ZAO033 SQL-statement-counting checks are suppressed
+        // for sprocs since the procedure body lives server-side).
         var triggeringAttribute = ctx.Attributes.FirstOrDefault();
-        var sql = triggeringAttribute?
-            .ConstructorArguments
-            .FirstOrDefault().Value as string ?? string.Empty;
+        // All three triggering attributes today declare a `string` first ctor arg
+        // ([Query(Sql)], [Command(Sql)], [StoredProcedure(ProcedureName)]). The branch
+        // where Value isn't a string is structurally unreachable as long as the
+        // Abstractions surface stays string-typed. The defensive `is string` pattern
+        // (replacing the older `as string ?? string.Empty`) ensures that if a future
+        // overload ever changed the ctor signature, the failure is loud (the empty
+        // fallback would silently emit an empty CommandText, which on the sproc
+        // pipeline becomes a confusing runtime "stored procedure '' not found" error).
+        var rawCtorArg = triggeringAttribute?.ConstructorArguments.FirstOrDefault().Value;
+        var firstStringArg = rawCtorArg is string s
+            ? s
+            : rawCtorArg is null
+                ? string.Empty
+                : throw new global::System.InvalidOperationException(
+                    $"ORM triggering attribute ctor arg expected to be string, was {rawCtorArg.GetType().Name}.");
+        var sql = isStoredProcedureAttribute ? string.Empty : firstStringArg;
+        var procedureName = isStoredProcedureAttribute ? firstStringArg : string.Empty;
 
         // v0.4 Phase A — read [Command(Kind = ...)] from the named args. Default is
         // NonQuery to mirror the abstraction default. Only consulted when this method
@@ -205,6 +259,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
+        // ZAO061 — [StoredProcedure("")] / [StoredProcedure(null)] / whitespace-only.
+        // Originally scheduled for Phase F; brought forward in the Phase D fix-up so
+        // adopters never hit the silent-empty-CommandText runtime failure (which
+        // surfaces as a provider-specific "could not find stored procedure ''"
+        // message and is materially harder to diagnose than a compile-time error).
+        // Error severity so the existing hadError gate suppresses emit.
+        if (isStoredProcedureAttribute && string.IsNullOrWhiteSpace(procedureName))
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO061",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
+        }
+
         // ZAO001 — method must be partial.
         if (!methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
         {
@@ -215,24 +283,24 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         // ZAO005 — multiple ORM attributes on one method.
-        // v0.4 Phase A extends from the v0.1 single-Query check to cover [Query] +
-        // [Command] overlap. Phase D will add [StoredProcedure] to the count when
-        // that attribute lands. Counting both pipelines' attributes on the same
-        // method handles both the "two [Query]" case AND the "one [Query], one
-        // [Command]" case via a single >1 threshold.
+        // v0.4 Phase D extends from the v0.4-A two-attribute check to a three-way
+        // exclusivity rule: counts QueryAttribute + CommandAttribute +
+        // StoredProcedureAttribute. Counting all three pipelines' attributes on the
+        // same method covers every pair (Query+Command, Query+StoredProcedure,
+        // Command+StoredProcedure) and the all-three case via a single >1 threshold.
         //
-        // Both pipelines emit ZAO005 from TransformMethod (since method.GetAttributes()
+        // Every pipeline emits ZAO005 from TransformMethod (since method.GetAttributes()
         // surfaces ALL attributes regardless of which pipeline triggered the transform).
-        // The duplicate is dropped at the union step (line ~59) where the deduper keeps
-        // the first entry per (containing-type, method-name) — pair.Left ([Query]) wins
-        // the tie. When Phase D adds [StoredProcedure], the third pipeline will fold in
-        // the same way.
+        // The duplicates are dropped at the union step (above) where the deduper keeps
+        // the first entry per (containing-type, method-name) — pair.Left.Left ([Query])
+        // wins the tie, then [Command], then [StoredProcedure].
         var ormAttrCount = method.GetAttributes()
             .Count(a =>
             {
                 var fqn = a.AttributeClass?.ToDisplayString();
                 return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
-                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal);
+                    || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal)
+                    || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal);
             });
         if (ormAttrCount > 1)
         {
@@ -261,7 +329,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // applies to [Query] methods where a `;` paired with a single-row /
         // single-scalar return type means the second statement is silently
         // discarded — surface as an error there but not on commands.
+        // v0.4 Phase D fix-up — explicit !isStoredProcedureAttribute suppression
+        // matches the declarative pattern used by ZAO032/ZAO033 below. Sprocs already
+        // pass through silently because m.Sql is empty for the sproc pipeline and
+        // CountStatements("") returns 0, so the && chain short-circuits. Adding the
+        // explicit gate makes the intent visible at the call site without changing
+        // behaviour (the boolean expression evaluates identically either way).
         if (!isCommandAttribute
+            && !isStoredProcedureAttribute
             && SqlStatementSplitter.CountStatements(sql) > 1
             && !IsMultiResultReturnType(method.ReturnType))
         {
@@ -340,10 +415,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && named.Value.Value is bool fromResource
                     && fromResource)
                 {
-                    // ZAO020 fires for both [Query] and [Command] from v0.4 onwards;
-                    // pass the triggering attribute name as the second arg so the
-                    // message reflects what the adopter actually wrote.
-                    var attributeName = isCommandAttribute ? "Command" : "Query";
+                    // ZAO020 fires for [Query], [Command], and [StoredProcedure] from
+                    // v0.4 onwards; pass the triggering attribute name as the second
+                    // arg so the message reflects what the adopter actually wrote.
+                    // The StoredProcedure branch is unreachable today (the sproc
+                    // attribute has no FromResource named arg), but the three-way
+                    // switch keeps the mapping robust against future surface changes.
+                    var attributeName = pipelineKind switch
+                    {
+                        AttributePipelineKind.Command => "Command",
+                        AttributePipelineKind.StoredProcedure => "StoredProcedure",
+                        _ => "Query",
+                    };
                     diagnostics.Add(new DiagnosticInfo(
                         DescriptorId: "ZAO020",
                         Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
@@ -389,7 +472,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // result set and fail. Surface at generation time so the adopter either adds
         // the missing SELECT(s) or trims the tuple. Error severity skips emit via the
         // standard hadError gate.
-        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null)
+        //
+        // v0.4 Phase D.3 — suppress for [StoredProcedure]. Sprocs carry empty SQL
+        // (statementCount == 0) because the procedure body lives server-side; the
+        // tuple arity vs statement-count comparison is meaningless here. The
+        // adopter's contract is "the sproc produces N result sets matching the
+        // tuple arity"; we can't verify that at compile time without parsing the
+        // sproc body. Defer arity validation to runtime (the materializer's
+        // NextResultAsync call will throw a clear error if a result set is missing).
+        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null && !isStoredProcedureAttribute)
         {
             var tupleArity = multiResultMaterialization.Elements.Values.Length;
             var statementCount = SqlStatementSplitter.CountStatements(sql);
@@ -587,7 +678,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // deliberate decision.
             IsCommand: isCommandAttribute,
             CommandKind: commandKind,
-            HasReturnValue: hasReturnValue);
+            HasReturnValue: hasReturnValue,
+            // v0.4 Phase D — Stored-procedure pipeline thread-through. The
+            // emit shapes consult these to flip CommandText -> ProcedureName
+            // and emit `CommandType = StoredProcedure`. [Query]/[Command]
+            // pipelines pass (false, ""). The ProcedureName is the literal
+            // first ctor arg of the [StoredProcedure] attribute, used
+            // verbatim as the CommandText.
+            IsStoredProcedure: isStoredProcedureAttribute,
+            ProcedureName: procedureName);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1631,6 +1730,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO042" => DiagnosticDescriptors.ZAO042_StoreAsStringNonEnum,
         "ZAO043" => DiagnosticDescriptors.ZAO043_MaterializeFactoryMissing,
         "ZAO044" => DiagnosticDescriptors.ZAO044_AmbiguousDiscovery,
+        "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
         _ => null,
     };
 
@@ -1756,6 +1856,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     //   JoinedStatementsOnly  -> ;-joined single-command fallback (B.3)
                     //   BatchWithFallback     -> runtime branch on CanCreateBatch (B.4)
                     //   anything else         -> stub (shouldn't reach here, defensive)
+                    //
+                    // v0.4 Phase D.3 — stored procedures carry empty SQL so
+                    // ResolveBatchStrategy returns SingleCommand; route those to the
+                    // joined-single-command path (EmitMultiResultSetJoined). That path
+                    // already opens one DbCommand, executes ExecuteReaderAsync, and
+                    // walks NextResultAsync per element — exactly what a multi-result
+                    // sproc needs. BuildCommandTextAssignment (Phase D.2) flips the
+                    // CommandText / CommandType lines for the sproc inside that emit
+                    // path; no further sproc-specific code needed here.
+                    if (m.IsStoredProcedure)
+                    {
+                        EmitMultiResultSetJoined(sb, m, repo.ConnectionAccess);
+                        break;
+                    }
                     switch (m.Strategy)
                     {
                         case BatchEmitStrategy.BatchAlways:
@@ -1817,6 +1931,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("}");
     }
 
+    // v0.4 Phase D — emit the `__cmd.CommandText = ...;` line plus, for stored
+    // procedures, the immediately-following `__cmd.CommandType = StoredProcedure;`
+    // line. Centralizes the sproc/query branch so every single-command emit shape
+    // (ScalarInt / NullableScalar / FlatRow / DomainEntity / CommandNonQuery /
+    // CommandScalar / CommandIdentity / Streaming / MultiResultSetJoined) picks up
+    // the sproc flip without duplicating the conditional.
+    //
+    // For a [Query] / [Command] method (`m.IsStoredProcedure == false`):
+    //   __cmd.CommandText = "<SQL literal>";
+    //
+    // For a [StoredProcedure] method (`m.IsStoredProcedure == true`):
+    //   __cmd.CommandText = "<procedure name>";
+    //   __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
+    //
+    // The `cmdLocal` argument lets future multi-command shapes pass a non-default
+    // local; today all callers pass `__cmd`. The `indent` is the leading whitespace
+    // per line as for the other Build* helpers.
+    private static void BuildCommandTextAssignment(StringBuilder sb, QueryMethodModel m, string cmdLocal, string indent)
+    {
+        var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
+        var textLiteral = SymbolDisplay.FormatLiteral(textValue, quote: true);
+        sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
+        if (m.IsStoredProcedure)
+        {
+            sb.Append(indent).Append(cmdLocal).AppendLine(".CommandType = global::System.Data.CommandType.StoredProcedure;");
+        }
+    }
+
     // EF-style open-on-execute lifecycle: open if needed, single-command execute,
     // close-on-finally. Slot held only for ExecuteScalarAsync — minimum possible for
     // a single statement. Globally-qualified type names so emit composes regardless
@@ -1824,7 +1966,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // with user parameter names; ConfigureAwait(false) consistently — library code.
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -1832,7 +1973,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
@@ -1853,7 +1994,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // is allowed alongside Task and the partial-method binding is exact).
     private static void EmitCommandNonQuery(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
@@ -1866,7 +2006,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         if (m.HasReturnValue)
         {
@@ -1968,7 +2108,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
 
         var col = mat.Columns[0];
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
@@ -1977,7 +2116,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
 
@@ -2098,7 +2237,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // matches the user declaration's nullable annotation verbatim.
     private static void EmitNullableScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var readerMethod = m.NullableScalarReaderMethod ?? "GetValue";
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -2107,7 +2245,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2140,7 +2278,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -2148,7 +2285,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2219,7 +2356,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
@@ -2227,7 +2363,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2306,7 +2442,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return;
         }
 
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         // Streaming uses the same parameter-list shape as the single-row paths:
         // the [EnumeratorCancellation] attribute lives on the user's source
         // declaration (ZAO007-enforced) and partial-method attribute merging
@@ -2318,7 +2453,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -2467,9 +2602,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // into its falsy branch verbatim.
     private static void EmitMultiResultSetJoinedBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
         sb.AppendLine($"{indent}await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"{indent}__cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", indent);
         EmitParameterBindingWithIndent(sb, m, indent);
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -2603,17 +2737,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         // The original SQL already carries `;` separators between statements — emit
-        // it verbatim. Joining via `string.Join("; ", Split(...))` would normalize
-        // whitespace, which is desirable but loses the user's original layout in
-        // multi-line raw string SQL. Verbatim keeps snapshots predictable.
-        var sqlLiteral = SymbolDisplay.FormatLiteral(m.Sql, quote: true);
+        // it verbatim via BuildCommandTextAssignment. Joining via
+        // `string.Join("; ", Split(...))` would normalize whitespace, which is
+        // desirable but loses the user's original layout in multi-line raw string
+        // SQL. Verbatim keeps snapshots predictable.
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
-        sb.AppendLine($"            __cmd.CommandText = {sqlLiteral};");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: "            ");
