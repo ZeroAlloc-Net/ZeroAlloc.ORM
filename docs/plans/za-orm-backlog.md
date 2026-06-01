@@ -608,35 +608,94 @@ blocking the release PRs. Pick up under v0.6 polish or roll into v0.7.
 
 ---
 
-## P2 — Milestone v0.7 (1 week): benchmarks + collision + polish
+## P2 — Milestone v0.7 (1 week): benchmarks + collision + polish + API freeze
 
-### v0.7-T1 — Benchmark suite
+Commits in chronological order, all merged via PR on `main` after `v0.6.0` shipped.
+Phase plan: [`docs/plans/2026-06-01-v0.7-implementation.md`](2026-06-01-v0.7-implementation.md) (#74).
 
-- `tests/ZeroAlloc.ORM.Benchmarks/` with BDN.
-- Comparisons: hand-written ADO.NET (baseline), Dapper.AOT, ZeroAlloc.ORM.
-- Workloads: single-row read, multi-row read, head+lines (multi-result), insert.
-- Run on Sqlite in-memory AND Postgres via Testcontainers.
+- Phase A — BenchmarkDotNet suite: 4 workloads × 3 baselines (hand-written ADO.NET / Dapper.AOT / ZA.ORM) × 2 backends (Sqlite + Postgres) (#76)
+- Phase B — ZA.Rest collision smoke test (`tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/`) + `.github/workflows/collision-smoke.yml`; discovery: `QueryAttribute` name collision resolved via file-scoped `using` aliases. **The v1.0 release gate.** (#77)
+- Phase C — README polish: packages table with AOT column, four-snippet Quick Start, dedicated NativeAOT compatibility section (#78)
+- Phase D — API review + `Microsoft.CodeAnalysis.PublicApiAnalyzers` wired across `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, `ZeroAlloc.TypeConversions`; **v1.0 surface lock at 103 entries / 16 public types** in `PublicAPI.Shipped.txt` (#81)
+- Phase E — README v0.7 section + backlog reconciliation (this PR)
 
-### v0.7-T2 — ZA.Rest collision smoke test
+Test-count delta: 368 → 368 passing + 1 skipped (no net change). Phase A adds the
+benchmark project but BDN harness isn't part of the unit-test count; Phase B adds an
+AOT publish gate (`collision-smoke.yml`), not unit tests; Phase D adds analyzer-based
+build-time guards rather than tests. The 1 skipped placeholder remains the v0.4 sproc
+archaeology row (the Postgres sproc suite is the real runtime coverage).
 
-- `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/`.
-- One project references both `ZeroAlloc.Rest.Generator` and `ZeroAlloc.ORM.Generator`, uses both, AOT-publishes.
-- `.github/workflows/collision-smoke.yml` runs this on every PR.
-- **Gates v1.0 release.**
+v0.7 milestone scoreboard:
 
-### v0.7-T3 — README + Quick Start
+- ~~v0.7-T1 — Benchmark suite~~ — ✅ shipped 0.7.0 (#76)
+  - `tests/ZeroAlloc.ORM.Benchmarks/` ships with BDN.
+  - Comparisons: hand-written ADO.NET (baseline), Dapper.AOT, ZeroAlloc.ORM.
+  - Workloads: single-row read, multi-row read, head + lines (multi-result), insert.
+  - Backends: Sqlite in-memory and Postgres via Testcontainers.
+  - Carry-forward: v0.7-CLN1 — re-capture real BDN numbers once SDK 10.0.300 is
+    locally available; the artifacts under `docs/benchmarks/` are placeholders today.
+- ~~v0.7-T2 — ZA.Rest collision smoke test~~ — ✅ shipped 0.7.0 (#77)
+  - `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` references both
+    `ZeroAlloc.Rest.Generator` and `ZeroAlloc.ORM.Generator`, uses both attribute
+    surfaces, AOT-publishes.
+  - `.github/workflows/collision-smoke.yml` runs on every PR.
+  - Discovery: both libraries ship a `QueryAttribute` — resolved at the consumer
+    seam via file-scoped `using` aliases (`using ORMQuery = ZeroAlloc.ORM.Abstractions.QueryAttribute;`).
+  - **The v1.0 release gate.** Breaking this workflow blocks the v1.0 cut.
+- ~~v0.7-T3 — README + Quick Start polish~~ — ✅ shipped 0.7.0 (#78)
+  - Packages table now carries an AOT compatibility column (every package ✅).
+  - Quick Start covers four canonical shapes: single-row read, streaming, insert
+    returning identity, stored procedure with output parameters.
+  - Dedicated "NativeAOT compatibility" section calling out the AOT smoke +
+    collision smoke CI gates and pointing at the benchmark suite for numbers.
+- ~~v0.7-T4 — API review pass + surface lock~~ — ✅ shipped 0.7.0 (#81)
+  - `Microsoft.CodeAnalysis.PublicApiAnalyzers` wired across `ZeroAlloc.ORM`,
+    `ZeroAlloc.ORM.Abstractions`, `ZeroAlloc.TypeConversions`.
+  - `PublicAPI.Shipped.txt` baselined at **103 entries across 16 public types**.
+  - Any accidental addition / change / removal of a public member now breaks
+    `dotnet build`. Additive v1.x evolution must go through `PublicAPI.Unshipped.txt`
+    with explicit reviewer sign-off.
+  - The surface lock holds until v1.0 ships.
 
-- Mirror AdoNet.Async's README structure.
-- Packages table with AOT compatibility column.
-- Quick Start covers the 4 most common annotation shapes.
-- "NativeAOT compatibility" section.
+**v0.7 milestone complete. Release-please will propose 0.7.0 from conventional commits.**
 
-### v0.7-T4 — API review pass
+---
 
-- Walk every public type in `Abstractions` + `ORM`.
-- Confirm no accidental publics (use `internal` aggressively).
-- Confirm naming consistency.
-- Snapshot the public API surface for v1.0 lock.
+## Post-v0.7 cleanup
+
+Items surfaced during the v0.7 milestone that are intentionally deferred rather than
+blocking the release PRs. Pick up under v0.7 polish or roll into v1.0.
+
+### v0.7-CLN1 — Capture real BenchmarkDotNet numbers once SDK 10.0.300 is locally available
+
+- Source: v0.7 Phase A (PR #76).
+- The BDN harness, project skeleton, workloads, baselines, and runner wiring all
+  ship in v0.7.0. The artifacts under `docs/benchmarks/` are placeholder values
+  pending a clean local run against the pinned SDK and pinned NuGet versions.
+- Fix: re-run the suite locally once SDK 10.0.300 is available, regenerate the
+  artifacts under `docs/benchmarks/`, and update the README's "Performance"
+  pointer to call out the captured-date so adopters know the numbers are real.
+- Defer to v1.0 release prep or as a standalone docs PR — gating v0.7.0 on
+  perfect numbers would have stretched the release window past the target.
+
+### Carry-forward items still open after v0.7
+
+These items were originally tagged against earlier milestones and remain open
+heading into v1.0 polish:
+
+- **v0.3-CLN2** — Lift keeper-connection / shared-cache helper into SqliteFixture.
+- **v0.4-CLN1** — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`.
+- **v0.4-CLN5** — Diagnose non-default `Batch` on `[StoredProcedure]` (informational diagnostic).
+- **v0.4-CLN6** — Revisit per-element span granularity for named-tuple ZAO062.
+- **v0.5-CLN1** — ZAO050 per-position firing refinement.
+- **v0.5-CLN2** — Nullable reference-type composite parameter binding.
+- **v0.5-CLN3** — Recursive composite support (ZAO052 still flags them today).
+- **v0.5-CLN4** — Factory parameter-to-column matching falls back to positional.
+- **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream fixes nullable annotations.
+
+Each item carries the original "fix options" and "defer to" notes from its
+milestone-of-origin entry above. None block the v1.0 release gates — they are
+quality-of-life polish that adopters will start feeling once v1.0 ships.
 
 ---
 
