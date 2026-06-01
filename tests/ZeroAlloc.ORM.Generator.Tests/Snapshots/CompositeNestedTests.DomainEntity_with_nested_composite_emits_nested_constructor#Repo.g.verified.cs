@@ -24,11 +24,14 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
+            var __Id_ord = __reader.GetOrdinal("Id");
+            var __Amount_ord = __reader.GetOrdinal("Amount");
+            var __Currency_ord = __reader.GetOrdinal("Currency");
             return new global::TestApp.OrderEntity(
-                __reader.GetInt32(__reader.GetOrdinal("Id")),
+                __reader.GetInt32(__Id_ord),
                 new global::TestApp.Money(
-                    __reader.GetDecimal(__reader.GetOrdinal("Amount")),
-                    __reader.GetString(__reader.GetOrdinal("Currency"))));
+                    __reader.GetDecimal(__Amount_ord),
+                    __reader.GetString(__Currency_ord)));
         }
         finally
         {

@@ -4767,6 +4767,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         else
         {
+            // v0.3-CLN1 — hoist GetOrdinal(<name>) into a per-column local so the
+            // IsDBNull(...) + GetXxx(...) reads share one lookup instead of two.
+            // For non-nullable leaves the runtime saving is small (one call vs
+            // one call), but uniform hoisting keeps the emit shape consistent
+            // with the nullable-composite path (EmitFlatRowWithHoistedLocals)
+            // and avoids the double call on nullable leaf columns.
+            var hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, mat.Columns, "            ");
             sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
             var cols = mat.Columns;
             for (var i = 0; i < cols.Length; i++)
@@ -4775,18 +4782,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var trailing = i == cols.Length - 1 ? ");" : ",";
                 // v0.5 Phase A — composite ctor parameter in a DomainEntity. The inner
                 // ColumnBindings carry their own column names (PascalCased inner ctor
-                // param names) so each inner read still uses GetOrdinal; the outer
-                // construction wraps in `new TComposite(...)`.
+                // param names) so each inner read reuses the per-inner-column hoisted
+                // ordinal local; the outer construction wraps in `new TComposite(...)`.
                 if (col.InnerColumns.Length > 0)
                 {
-                    EmitNestedCompositeConstructionByOrdinalName(sb, col, "                ", trailing);
+                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(sb, col, hoistedOrdinals[i]!, "                ", trailing);
                     continue;
                 }
-                // Column name comes from the ctor parameter (PascalCased). The literal
-                // is passed verbatim into GetOrdinal; SQL's case-insensitive default
-                // matching keeps `customerId` and `CustomerId` interchangeable on
-                // SQLite / PostgreSQL / SQL Server.
-                var expr = BuildOrdinalNameReadExpression(col);
+                // Column name comes from the ctor parameter (PascalCased). The hoisted
+                // ordinal local feeds both the IsDBNull guard (for nullable leaves) and
+                // the GetXxx read so GetOrdinal runs once per column per row.
+                var expr = BuildReadExpressionWithOrdinalLocal(col, hoistedOrdinals[i]![0]);
                 sb.AppendLine($"                {expr}{trailing}");
             }
         }
@@ -4851,6 +4857,93 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
     }
 
+    // v0.3-CLN1 — same as EmitNestedCompositeConstructionByOrdinalName but each inner
+    // ColumnBinding reuses a pre-hoisted ordinal local (one `var __<name>_ord = ...`
+    // emitted by the outer EmitOrdinalHoistsForColumns pass) instead of calling
+    // GetOrdinal(<name>) inline. Required for the nullable-leaf path (IsDBNull + Get
+    // would otherwise call GetOrdinal twice) and harmless for non-nullable leaves.
+    private static void EmitNestedCompositeConstructionByOrdinalNameWithHoisted(
+        StringBuilder sb,
+        ColumnBinding composite,
+        string[] innerOrdinalLocals,
+        string indent,
+        string trailing)
+    {
+        if (composite.FactoryMethodName is { } factoryName)
+        {
+            sb.AppendLine($"{indent}// FactoryDispatch: {composite.TypeName}.{factoryName}");
+            sb.AppendLine($"{indent}{composite.TypeName}.{factoryName}(");
+        }
+        else
+        {
+            sb.AppendLine($"{indent}new {composite.TypeName}(");
+        }
+        var inner = composite.InnerColumns;
+        for (var j = 0; j < inner.Length; j++)
+        {
+            var b = inner[j];
+            var innerTrailing = j == inner.Length - 1 ? ")" + trailing : ",";
+            var readExpr = BuildReadExpressionWithOrdinalLocal(b, innerOrdinalLocals[j]);
+            sb.AppendLine($"{indent}    {readExpr}{innerTrailing}");
+        }
+    }
+
+    // v0.3-CLN1 — does any column in the list carry a ColumnName? Used by the
+    // multi-result emit paths (Row / List) to decide whether to emit the hoist
+    // block: positional shapes (FlatRow) skip hoisting since integer literals
+    // are already free.
+    private static bool HasAnyColumnName(EquatableArray<ColumnBinding> columns)
+    {
+        foreach (var col in columns)
+        {
+            if (col.ColumnName is not null) return true;
+        }
+        return false;
+    }
+
+    // v0.3-CLN1 — emit one `var __<col>_ord = __reader.GetOrdinal("Col");` per
+    // column-name-resolved column (flattening composite inner columns into their
+    // own per-inner-column local). Returns a parallel jagged-array shape:
+    //   result[i] = [singleOrdinalName] for a leaf column
+    //   result[i] = [innerOrd0, innerOrd1, ...] for a composite column
+    // Callers can index by outer column position and reuse the locals in the
+    // IsDBNull guard + GetXxx read instead of inlining a second GetOrdinal call.
+    private static string[]?[] EmitOrdinalHoistsForColumns(
+        StringBuilder sb,
+        EquatableArray<ColumnBinding> columns,
+        string indent)
+    {
+        var hoists = new string[]?[columns.Length];
+        for (var i = 0; i < columns.Length; i++)
+        {
+            var col = columns[i];
+            if (col.InnerColumns.Length > 0)
+            {
+                var inner = col.InnerColumns;
+                var innerLocals = new string[inner.Length];
+                for (var j = 0; j < inner.Length; j++)
+                {
+                    var b = inner[j];
+                    var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var local = "__" + baseName + "_ord";
+                    var literal = SymbolDisplay.FormatLiteral(b.ColumnName ?? string.Empty, quote: true);
+                    sb.AppendLine($"{indent}var {local} = __reader.GetOrdinal({literal});");
+                    innerLocals[j] = local;
+                }
+                hoists[i] = innerLocals;
+            }
+            else
+            {
+                var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var local = "__" + baseName + "_ord";
+                var literal = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
+                sb.AppendLine($"{indent}var {local} = __reader.GetOrdinal({literal});");
+                hoists[i] = new[] { local };
+            }
+        }
+        return hoists;
+    }
+
     // v0.3 Phase C.2 — IAsyncEnumerable<T> streaming. Emits a yield-based async
     // iterator that opens the connection (if closed), executes the reader, yields
     // one row per ReadAsync iteration, and closes the connection in finally.
@@ -4900,9 +4993,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("            {");
-        sb.AppendLine($"                yield return new {mat.TargetTypeFullName}(");
         var cols = mat.Columns;
         var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
+        // v0.3-CLN1 — for column-name-resolved streaming (DomainEntity element),
+        // hoist GetOrdinal(<name>) into a per-row local so the IsDBNull guard and
+        // GetXxx read share the same lookup. Positional reads skip hoisting; the
+        // integer literal is already free.
+        string[]?[]? hoistedOrdinals = null;
+        if (useColumnNames)
+        {
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "                ");
+        }
+        sb.AppendLine($"                yield return new {mat.TargetTypeFullName}(");
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
@@ -4914,8 +5016,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             string ordinalExpr;
             if (useColumnNames)
             {
-                var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
-                ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+                ordinalExpr = hoistedOrdinals![i]![0];
             }
             else
             {
@@ -5407,8 +5508,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     {
                         sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
                     }
+                    // v0.3-CLN1 — hoist GetOrdinal(<name>) per column-name-resolved column.
+                    var rowHoists = HasAnyColumnName(el.Columns)
+                        ? EmitOrdinalHoistsForColumns(sb, el.Columns, indent)
+                        : null;
                     sb.AppendLine($"{indent}{declarePrefix}{localName} = new {el.ElementTypeName}(");
-                    EmitColumnReads(sb, el.Columns, indent + "    ", trailing: ");");
+                    EmitColumnReads(sb, el.Columns, indent + "    ", trailing: ");", rowHoists);
                     break;
                 }
             case MultiResultElementKind.List:
@@ -5416,8 +5521,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
                     sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
                     sb.AppendLine($"{indent}{{");
+                    // v0.3-CLN1 — hoist GetOrdinal(<name>) per row inside the loop.
+                    var listHoists = HasAnyColumnName(el.Columns)
+                        ? EmitOrdinalHoistsForColumns(sb, el.Columns, indent + "    ")
+                        : null;
                     sb.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
-                    EmitColumnReads(sb, el.Columns, indent + "        ", trailing: "));");
+                    EmitColumnReads(sb, el.Columns, indent + "        ", trailing: "));", listHoists);
                     sb.AppendLine($"{indent}}}");
                     break;
                 }
@@ -5463,7 +5572,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // the EmitFlatRow column loop but emits one expression per line with a trailing
     // comma except for the last. The `trailing` parameter lets the caller close the
     // outer ctor call appropriately (")" for Row, "))" for List's inner Add).
-    private static void EmitColumnReads(StringBuilder sb, EquatableArray<ColumnBinding> cols, string indent, string trailing)
+    //
+    // v0.3-CLN1 — when `hoistedOrdinals` is non-null, column-name-resolved columns
+    // reuse pre-emitted ordinal locals instead of calling GetOrdinal(<name>) inline.
+    // The caller emits the hoists at the right indent (Row: outside the `new T(`
+    // call; List: inside the while-loop body before the `Add(new T(` line) so the
+    // local is alive for both the IsDBNull guard and the GetXxx read.
+    private static void EmitColumnReads(StringBuilder sb, EquatableArray<ColumnBinding> cols, string indent, string trailing, string[]?[]? hoistedOrdinals = null)
     {
         for (var i = 0; i < cols.Length; i++)
         {
@@ -5474,8 +5589,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // index; column-name DomainEntity routes through GetOrdinal("Name").
             if (col.ColumnName is { } columnName)
             {
-                var colNameLiteral = SymbolDisplay.FormatLiteral(columnName, quote: true);
-                ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+                if (hoistedOrdinals is not null)
+                {
+                    ordinalExpr = hoistedOrdinals[i]![0];
+                }
+                else
+                {
+                    var colNameLiteral = SymbolDisplay.FormatLiteral(columnName, quote: true);
+                    ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
+                }
             }
             else
             {
