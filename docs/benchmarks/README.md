@@ -5,7 +5,7 @@ This directory holds reproducible BenchmarkDotNet numbers comparing
 canonical workloads on two backends.
 
 The benchmark project lives at
-[`tests/ZeroAlloc.ORM.Benchmarks`](../../tests/ZeroAlloc.ORM.Benchmarks).
+[`tests/ZeroAlloc.ORM.Benchmarks`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/tests/ZeroAlloc.ORM.Benchmarks).
 
 ## Workloads
 
@@ -24,7 +24,7 @@ shapes — divergence between them is pure framework overhead.
 
 ## How to run
 
-The benchmarks require **.NET SDK 10.0.300** (see [`global.json`](../../global.json)).
+The benchmarks require **.NET SDK 10.0.300** (see [`global.json`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/global.json)).
 BenchmarkDotNet only produces meaningful numbers in `Release` configuration.
 
 ### Sqlite (default, fast, CI-safe, no Docker required)
