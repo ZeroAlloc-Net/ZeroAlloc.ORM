@@ -116,8 +116,17 @@ await foreach (var row in repo.StreamAllAsync(cts.Token).ConfigureAwait(false))
 }
 ```
 
+## Related diagnostics
+
+- [`ZAO007`](../diagnostics/ZAO007.md) — `IAsyncEnumerable<T>` return without
+  `[EnumeratorCancellation]` on the cancellation token.
+- [`ZAO001`](../diagnostics/ZAO001.md) — method must be `partial`.
+- [`ZAO022`](../diagnostics/ZAO022.md) — return-type shape not supported (e.g.
+  `IAsyncEnumerable<T>` of a type the generator can't materialise).
+
 ## See also
 
+- [`flat-row.md`](flat-row.md) — single-row `Task<T?>` for the one-row case.
 - [`multi-result-set.md`](multi-result-set.md) — tuple-shaped multi-result
   patterns (head + lines, count + first + all). Materialises eagerly — pick
   streaming over multi-result-set when `Lines` could be unbounded.
@@ -126,3 +135,5 @@ await foreach (var row in repo.StreamAllAsync(cts.Token).ConfigureAwait(false))
 - [`stored-procedures.md`](stored-procedures.md) — `[StoredProcedure]` for
   procedure-driven calls. The same `IAsyncEnumerable<T>` shape works under
   `[StoredProcedure]` when the procedure produces a single result set.
+- [`provider-quirks.md`](provider-quirks.md) — provider-specific behaviour
+  that affects streaming (e.g. server-side cursors on Postgres).
