@@ -6,6 +6,16 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!--
+      Public API surface lock: RS0016 (missing entry) / RS0017 (extra entry) are
+      errors even if TreatWarningsAsErrors is locally disabled, so the public API
+      tracking files can never silently drift out of sync with the codebase.
+      Mirrors ZA.Rest / ZA.Mediator. Only takes effect on projects that opt in by
+      adding the PublicApiAnalyzers PackageReference + PublicAPI.{Shipped,Unshipped}.txt
+      AdditionalFiles (currently the three adopter-facing source projects;
+      ZeroAlloc.ORM.Generator is build-time-only and opts out).
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
 
     <!-- Dependency versions (pinned at repo root so all csprojs stay aligned). -->
     <AdoNetAsyncVersion>1.*</AdoNetAsyncVersion>
