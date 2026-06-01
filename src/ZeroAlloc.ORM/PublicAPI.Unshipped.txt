@@ -2,8 +2,21 @@
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.EmbeddedResourceMigrationSource(System.Reflection.Assembly! assembly, string? resourceNamespacePrefix = null) -> void
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.IMigrationDialect
+ZeroAlloc.ORM.Migrations.IMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.SelectAppliedVersionsSql.get -> string!
 ZeroAlloc.ORM.Migrations.IMigrationSource
 ZeroAlloc.ORM.Migrations.IMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SqliteMigrationDialect() -> void
 ZeroAlloc.ORM.Migrations.Migration
 ZeroAlloc.ORM.Migrations.Migration.<Clone>$() -> ZeroAlloc.ORM.Migrations.Migration!
 ZeroAlloc.ORM.Migrations.Migration.AppliedAt.get -> System.DateTime?
