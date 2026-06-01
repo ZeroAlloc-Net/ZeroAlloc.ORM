@@ -231,13 +231,17 @@ Both generators are AOT-safe by design:
 - ZA.Telemetry emits a closed proxy class — no reflection, no
   `MakeGenericType`, static `ActivitySource` / `Meter` field initializers.
 
-Composing the two under `<PublishAot>true</PublishAot>` produces no IL2026 /
-IL3050 warnings. The combined approach is validated in CI by
-`tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke` — a single project
-consuming both generators, AOT-publishing to `linux-x64`, and running the
-native binary against an in-memory Sqlite database. The
-[Telemetry Collision Smoke workflow](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/actions/workflows/telemetry-collision-smoke.yml)
-gates every PR.
+Composing the two under `<PublishAot>true</PublishAot>` is expected to
+produce no IL2026 / IL3050 warnings. An automated AOT collision smoke test
+(`tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke`) that would gate this
+composition end-to-end on every PR is **deferred** — the v0.6 attempt
+surfaced a ZA.Telemetry-side nullable-annotation bug in its
+`InstrumentGenerator` (CS8613 / CS8603 on `Task<T?>` return types through
+the generated proxy). The smoke will be re-attempted once ZA.Telemetry
+ships a generator update that preserves nullable annotations across the
+`[Instrument]` boundary (tracked as v0.6-CLN1 in the backlog). The
+conceptual composition pattern documented above is unaffected — only the
+automated AOT verification is pending.
 
 ## Diagnostics
 
