@@ -1,0 +1,67 @@
+name: Telemetry Collision Smoke
+
+# Verifies that ZeroAlloc.ORM.Generator composes with ZeroAlloc.Telemetry.Generator
+# in the same compilation unit under PublishAot=true. The two generators target
+# different code shapes (ZA.ORM fills partial bodies, ZA.Telemetry emits a sealed
+# wrapper proxy off an [Instrument]-marked interface) and the cookbook recipe in
+# docs/cookbook/observability.md documents this as the canonical observability
+# composition for ZA.ORM adopters. This workflow gates that the composition
+# AOT-publishes cleanly and the runtime behavior is correct.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  telemetry-collision-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Skip when collision smoke project does not exist yet
+        id: check
+        run: |
+          if [ -d "tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Telemetry collision smoke project not present — skipping."
+          fi
+
+      - name: Restore smoke test
+        if: steps.check.outputs.exists == 'true'
+        run: dotnet restore tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/ZeroAlloc.ORM.TelemetryCollision.AotSmoke.csproj
+
+      - name: Publish AOT smoke test (linux-x64)
+        if: steps.check.outputs.exists == 'true'
+        # PublishAot=true is set inside the csproj itself. We do NOT pass
+        # `-p:PublishAot=true` here: that would propagate across the
+        # ProjectReference graph, triggering NETSDK1207 on the build-time-only
+        # netstandard2.0 generator projects.
+        run: |
+          dotnet publish tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/ZeroAlloc.ORM.TelemetryCollision.AotSmoke.csproj \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -o ./telemetry-collision-out
+
+      - name: Run AOT-published smoke test
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          chmod +x ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+          ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+
+      - name: Report binary size
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          ls -lh ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+          file ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
