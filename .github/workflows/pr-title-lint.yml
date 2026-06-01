@@ -1,0 +1,48 @@
+name: PR Title Lint
+
+# v0.5-CLN5 — enforce conventional-commit shape on PR titles. release-please
+# parses merged PR titles to compute the next semver bump, so a typo in the
+# prefix (e.g. `Feat:` instead of `feat:`) silently downgrades the release. This
+# workflow catches the mistake at PR-open time instead of at release time.
+#
+# No companion repo settings are required: the workflow runs under the default
+# GITHUB_TOKEN with `pull-requests: read` and posts a status check; PR authors
+# can fix the title in-place and the check re-runs on the `edited` trigger.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Lint PR title against conventional-commit spec
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed type prefixes. Mirrors the set already in use across this
+          # repo's commit history (see `git log --oneline` for prior phases).
+          # `deps` covers Renovate / dependabot bumps; `revert` covers the
+          # release-please rollback shape.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            deps
+            build
+            ci
+            chore
+            revert
+          # Scopes (the `(generator)` in `feat(generator): ...`) are optional —
+          # many ZeroAlloc PRs span multiple subsystems and a single scope would
+          # be misleading. Enforce only the type prefix + subject shape.
+          requireScope: false

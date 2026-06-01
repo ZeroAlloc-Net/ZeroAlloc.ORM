@@ -23,10 +23,13 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
+            var __Id_ord = __reader.GetOrdinal("Id");
+            var __CustomerId_ord = __reader.GetOrdinal("CustomerId");
+            var __Total_ord = __reader.GetOrdinal("Total");
             return new global::TestApp.Order(
-                __reader.GetInt32(__reader.GetOrdinal("Id")),
-                __reader.GetInt32(__reader.GetOrdinal("CustomerId")),
-                __reader.GetDecimal(__reader.GetOrdinal("Total")));
+                __reader.GetInt32(__Id_ord),
+                __reader.GetInt32(__CustomerId_ord),
+                __reader.GetDecimal(__Total_ord));
         }
         finally
         {
