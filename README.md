@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** **v1.0.0 — API frozen, stable, AOT-clean.** Public surface locked at 103 entries / 16 types via `PublicAPI.Shipped.txt`; the v1.x line is additive-only. Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** **v1.1.0 — additive release.** Adds `MigrationRunner` for embedded SQL migrations (Sqlite + Postgres dialects); v1.0 public surface still frozen and AOT-clean. The v1.x line is additive-only via `PublicAPI.Shipped.txt`. Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md); v1.1 implementation plan at [`docs/plans/2026-06-01-v1.1-implementation.md`](docs/plans/2026-06-01-v1.1-implementation.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -256,6 +256,26 @@ Deferred past v1.0 (see **Roadmap beyond v1.0** below): recursive composites (ZA
   - **ZAO050 per-position firing** — when a row materializes two `Money?` fields, ZAO050 fires once per nullable-composite position rather than once per method site. Audit revealed v0.5 Phase C already emitted per-position; v1.0 Phase C added regression tests to pin the contract. Resolves v0.5-CLN1.
   - **Benchmark async-parity** — `MultiRowReadBench.Dapper_AOT` audited and confirmed already on `QueryAsync<T>` (not the sync `Query<T>`). The original v0.7-CLN2 concern was filed against an incorrect source reading; the comparison is genuinely async-async. Numbers re-captured in [`docs/benchmarks/v0.7.0-sqlite-results.md`](docs/benchmarks/v0.7.0-sqlite-results.md) without the Caveat block. Resolves v0.7-CLN2.
 
+### Added in v1.1
+
+- **`MigrationRunner` for embedded SQL migrations** — versioned, idempotent, multi-instance-safe SQL apply. Embed `.sql` files in your assembly (`Migrations/001_initial.sql`, `Migrations/002_add_orders.sql`, ...), instantiate `MigrationRunner(connection, source, dialect)`, call `RunAsync(ct)` at startup. The runner tracks applied versions in `__zaorm_migrations`, skips already-applied migrations on re-run, and applies each pending migration in its own transaction. Mid-apply failure rolls back the failing migration only — earlier migrations stay committed, the runner throws, the adopter writes a forward-fix and re-runs. See [`docs/cookbook/migrations.md`](docs/cookbook/migrations.md).
+
+  ```csharp
+  var conn = new NpgsqlConnection(connString).AsAsync();
+  await conn.OpenAsync(ct);
+
+  var source = new EmbeddedResourceMigrationSource(typeof(Program).Assembly);
+  var dialect = new PostgresMigrationDialect();
+  var runner = new MigrationRunner(conn, source, dialect);
+
+  var applied = await runner.RunAsync(ct);
+  logger.LogInformation("Applied {Count} migrations", applied.Count);
+  ```
+
+- **Sqlite + Postgres dialects ship in v1.1** — `SqliteMigrationDialect` (single-writer model, no explicit lock) and `PostgresMigrationDialect` (uses `pg_advisory_lock(<constant>)` to serialize multi-instance API startup). Adopters can subclass `PostgresMigrationDialect` with a custom lock key. SQL Server + MySQL dialects are out-of-scope for v1.1 — tracked as **v1.1-CLN1**.
+
+- **Unblocks ZA.Templates' EF Core → ZA.ORM swap** — `ZeroAlloc.Templates`' one-shot `schema.sql` bootstrap (`ApplyEmbeddedSchemaAsync`) becomes the v1.1 `MigrationRunner` for versioned, idempotent, multi-instance-safe schema apply. Templates work lives in the separate [`ZeroAlloc.Templates`](https://github.com/ZeroAlloc-Net/ZeroAlloc.Templates) repo.
+
 ## NativeAOT compatibility
 
 ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
@@ -331,7 +351,7 @@ Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each pa
 
 ## Roadmap beyond v1.0
 
-With v1.0 shipped, the project enters **maintenance mode under SemVer**. The public surface (103 entries / 16 types) is locked; v1.x releases are additive-only and any breaking change pushes to v2.0.
+With v1.0 shipped, the project enters **maintenance mode under SemVer**. The v1.0 public surface (103 entries / 16 types) is locked; v1.x releases are additive-only (v1.1 added the `ZeroAlloc.ORM.Migrations` namespace) and any breaking change pushes to v2.0.
 
 **Carry-forward backlog (post-1.0 polish, none of which blocks adopter use today):**
 
@@ -344,6 +364,10 @@ With v1.0 shipped, the project enters **maintenance mode under SemVer**. The pub
 - **v0.7-CLN1 (Postgres portion)** — Capture Postgres BDN numbers once a Docker-reachable machine is available. Sqlite portion shipped.
 - **v1.0-CLN1** — Capture Postgres benchmark numbers (Docker daemon was not available during the v1.0 capture window).
 - **v1.0-CLN2** — ZA.Website ruleset / `orm.zeroalloc.net` go-live (tracked in the ZeroAlloc.Website repo, PR #25).
+- **v1.1-CLN1** — SQL Server + MySQL migration dialects (Sqlite + Postgres shipped in v1.1; remaining providers gated on adopter demand).
+- **v1.1-CLN2** — Migration rollback support (adopter writes forward-fix migrations today).
+- **v1.1-CLN3** — C# migration DSL (raw SQL is the v1.1 contract).
+- **v1.1-CLN4** — Generator-emitted migrations from `[Materialize]` shape changes (speculative).
 
 **v2.0 design space** sketched in [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) Section 5 (lines 656+):
 
