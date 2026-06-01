@@ -234,6 +234,18 @@ Deferred to later milestones: recursive composites (v0.7+, ZAO052 flags them tod
 
 - **v0.5-CLN5 fix — PR-title lint workflow** — `.github/workflows/pr-title-lint.yml` enforces conventional-commit prefixes (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`, ...) on every PR. Prevents the v0.5 release CHANGELOG hole where `feat:`-less merges silently dropped from release-please's commit aggregation.
 
+## NativeAOT compatibility
+
+ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
+
+- **Zero reflection at runtime.** Source-generator-based emit produces compile-time-known materialization code; no `Activator.CreateInstance`, no `Type.GetMethod`, no `Expression.Compile`.
+- **Globally-qualified type references** in every emitted line — AOT publishing trims correctly regardless of consumer `using` directives.
+- **Trimming-safe.** No `[DynamicallyAccessedMembers]` requirements on consumer types.
+- **CI gated.** Every PR runs:
+  - `tests/ZeroAlloc.ORM.AotSmoke/` — single-generator AOT publish.
+  - `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` — composition with `ZeroAlloc.Rest.Generator` (the v1.0 release gate).
+- **Performance.** See [docs/benchmarks/](docs/benchmarks/) for comparative numbers against hand-written ADO.NET and Dapper.AOT.
+
 ## Diagnostics catalog
 
 ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
