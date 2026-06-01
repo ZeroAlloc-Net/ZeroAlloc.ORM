@@ -30,7 +30,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <!-- Dapper.AOT generates interceptors that replace standard Dapper call
          sites at build time. The interceptors-preview namespace below opts in
