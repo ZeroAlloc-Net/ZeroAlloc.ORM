@@ -803,6 +803,138 @@ through v0.7, and explicitly carry past v1.0. None blocks the v1.0 freeze:
 
 ---
 
+## P2 — Milestone v1.1 (release): SQL migrations
+
+Commits in chronological order, all merged via PR on `main` after `v1.0.0` shipped.
+Plan: [`docs/plans/2026-06-01-v1.1-implementation.md`](2026-06-01-v1.1-implementation.md).
+
+- Phase A — Migration core + Sqlite dialect: `Migration` record, `IMigrationSource`, `EmbeddedResourceMigrationSource`, `IMigrationDialect`, `SqliteMigrationDialect`, `MigrationRunner` end-to-end with Sqlite integration tests (#95)
+- Phase B — Postgres dialect: `PostgresMigrationDialect` with `pg_advisory_lock(<constant>)` + multi-instance lock serialization tests (#96)
+- Phase C — Cookbook recipe: `docs/cookbook/migrations.md` + README cookbook index entry (#97)
+- Phase D — README v1.1 section + `PublicAPI.Unshipped.txt` → `Shipped.txt` promotion + backlog reconciliation (this PR)
+
+Test-count delta: 373 → **401 passing + 1 skipped** (+28 net from migration tests across Phase A + Phase B —
+`EmbeddedResourceMigrationSource` unit tests plus Sqlite + Postgres integration suites). The 1 skipped
+placeholder remains the v0.4 sproc archaeology row.
+
+v1.1 milestone scoreboard:
+
+- ~~v1.1-T1 — MigrationRunner core + Sqlite dialect~~ — ✅ shipped 1.1.0 (#95)
+  - New public types under `ZeroAlloc.ORM.Migrations`: `Migration` (record),
+    `IMigrationSource`, `EmbeddedResourceMigrationSource`, `IMigrationDialect`,
+    `SqliteMigrationDialect`, `MigrationRunner`.
+  - Algorithm: acquire dialect lock → ensure `__zaorm_migrations` exists →
+    SELECT applied versions → filter pending → per-migration transaction
+    (BEGIN / execute SQL / INSERT history row / COMMIT) → release lock.
+  - Idempotent on re-run. Mid-apply failure rolls back the failing migration
+    only; earlier migrations stay committed; runner throws; adopter writes
+    a forward-fix migration and re-runs.
+- ~~v1.1-T2 — Postgres dialect~~ — ✅ shipped 1.1.0 (#96)
+  - `PostgresMigrationDialect` with `pg_advisory_lock(<constant>)` at runner
+    entry, released at exit. Default lock key `0x5A_41_4F_52_4D_4D_49_47_52`
+    ("ZAORM_MIGR"); adopters can construct with a custom `lockKey`.
+  - Multi-instance serialization integration test: two parallel runners
+    attempt apply; only one holds the lock at a time; both complete cleanly.
+  - Lock release on exception verified.
+- ~~v1.1-T3 — Cookbook recipe + README cookbook index~~ — ✅ shipped 1.1.0 (#97)
+  - `docs/cookbook/migrations.md` covers embedded SQL migrations, provider
+    selection, multi-instance startup, failure semantics, file naming
+    convention (`NNN_description.sql`), provider quirks, when-not-to-use.
+  - README cookbook table grew from 8 to 9 recipes.
+- ~~v1.1-T4 — README + Shipped.txt promotion + backlog reconciliation~~ — ✅ shipped 1.1.0 (this PR)
+  - README "Added in v1.1" section under "Capabilities by milestone"; Roadmap
+    carry-forward list updated with v1.1-CLN1–4.
+  - All ~50 v1.1 entries moved from `PublicAPI.Unshipped.txt` → `Shipped.txt`.
+    `Unshipped.txt` now contains only the `#nullable enable` header.
+  - Backlog v1.1 milestone scoreboard + post-v1.1 cleanup section (below).
+
+**v1.1 milestone complete. Released as 1.1.0 to NuGet under SemVer.** The v1.0 public surface
+(103 entries / 16 types) stays frozen; v1.1 added the `ZeroAlloc.ORM.Migrations` namespace
+purely additively. v1.x releases remain additive-only via the `PublicAPI.Unshipped.txt`
+review pipeline.
+
+---
+
+## Post-v1.1 cleanup
+
+Items surfaced during the v1.1 milestone that are intentionally deferred rather than
+blocking the release PRs. Pick up under v1.1 polish or roll into v1.2 / v2.
+
+### v1.1-CLN1 — SQL Server + MySQL migration dialects
+
+- Source: v1.1 scoping decision (2026-06-01).
+- v1.1 ships `SqliteMigrationDialect` and `PostgresMigrationDialect` only.
+  SQL Server and MySQL adopters need a dialect implementation for the
+  history table, the advisory-lock strategy (SQL Server: `sp_getapplock`;
+  MySQL: `GET_LOCK`), and the timestamp column type.
+- Fix: implement `SqlServerMigrationDialect` + `MySqlMigrationDialect`
+  following the same `IMigrationDialect` contract as the shipped pair.
+  Mirror the existing Sqlite/Postgres integration test surface against
+  Testcontainers-backed SQL Server and MySQL fixtures.
+- Defer to v1.2 (or earlier patch) — gated on adopter demand. Both
+  providers are usable today via a custom `IMigrationDialect` implementation
+  in adopter code if the need surfaces before the upstream ship.
+
+### v1.1-CLN2 — Migration rollback support
+
+- Source: v1.1 design decision (2026-06-01).
+- v1.1's failure model: each migration applies in its own transaction;
+  failure rolls back the failing migration only; the adopter writes a
+  forward-fix migration (`NNN+1_revert_X.sql`) and re-runs. There is no
+  built-in "down" / rollback path.
+- Fix: add an optional `DownSql` to the `Migration` record + a
+  `RollbackToVersionAsync(int targetVersion, CancellationToken ct)` API
+  on `MigrationRunner`. `EmbeddedResourceMigrationSource` would need to
+  discover paired `NNN_*.up.sql` / `NNN_*.down.sql` files (or a single-file
+  `--//@DOWN` sentinel convention).
+- Defer to v1.x — gated on adopter demand. Forward-fix migrations are the
+  defensible default for production schemas; "down" SQL is famously hard
+  to write correctly for non-trivial migrations.
+
+### v1.1-CLN3 — C# migration DSL
+
+- Source: v1.1 design decision (2026-06-01).
+- v1.1 contract is raw SQL only. No `MigrationBuilder.CreateTable(...)`
+  fluent API in the Fluent Migrator / EF Core mould.
+- Fix: introduce a `Migration` subclass / interface accepting an
+  `IAsyncDbConnection`-typed apply lambda, surface a `CreateTable` /
+  `AddColumn` builder lifted out of the v2 design space.
+- Defer to v2.0 — meaningful DSL surface is a v2 design conversation,
+  not a v1.x additive change. Raw SQL covers the dominant adopter case.
+
+### v1.1-CLN4 — Generator-emitted migrations from `[Materialize]` shape changes
+
+- Source: v1.1 speculative future-direction (2026-06-01).
+- Idea: detect `[Materialize]` shape changes between two commits and
+  emit a candidate migration `.sql` file as part of the generator output.
+  Pulls schema management closer to the source-generator pipeline.
+- Fix: speculative; needs a design pass before implementation. Would
+  likely require a `ZeroAlloc.ORM.SchemaTracker` analyzer + a generator
+  hook that writes migration candidates to the project directory.
+- Defer to v2 design space — speculative until adopters surface the
+  pain point. v1.1 raw SQL contract is the answer today.
+
+### Carry-forward items still open after v1.1
+
+These items were originally tagged against earlier milestones, remained open
+through v1.0, and explicitly carry past v1.1. None blocks the v1.1 freeze:
+
+- **v0.3-CLN2** — Lift keeper-connection / shared-cache helper into `SqliteFixture`.
+- **v0.4-CLN1** — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`.
+- **v0.5-CLN2** — Nullable reference-type composite parameter binding (struct case shipped in v0.5).
+- **v0.5-CLN3** — Recursive composite support (ZAO052 still flags them today).
+- **v0.5-CLN4** — Factory parameter-to-column matching falls back to positional (gated on ORM-V2-3 SQL parser).
+- **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream fixes nullable annotations.
+- **v0.7-CLN1** (Postgres portion) — Capture Postgres BDN numbers. Sqlite portion shipped.
+- **v1.0-CLN1** — Capture Postgres benchmark numbers (Docker daemon unavailable during v1.0 capture window).
+- **v1.0-CLN2** — ZA.Website ruleset / `orm.zeroalloc.net` go-live (OPS in ZeroAlloc.Website).
+- **v1.1-CLN1** — SQL Server + MySQL migration dialects (Sqlite + Postgres shipped in v1.1).
+- **v1.1-CLN2** — Migration rollback support (forward-fix is the v1.1 contract).
+- **v1.1-CLN3** — C# migration DSL (raw SQL is the v1.1 contract).
+- **v1.1-CLN4** — Generator-emitted migrations from `[Materialize]` shape changes (speculative).
+
+---
+
 ## P2 — v1.0 release gates (historical placeholder, superseded by the v1.0 milestone above)
 
 The original entries below pre-dated the v1.0 implementation plan and are retained as
