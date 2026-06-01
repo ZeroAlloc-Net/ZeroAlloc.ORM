@@ -3,10 +3,14 @@ name: Collision Smoke
 # Verifies that ZeroAlloc.ORM.Generator composes with ZeroAlloc.Rest.Generator
 # (and any other in-ecosystem source generator) in the same compilation unit
 # under PublishAot=true. This is the gap EF Core's precompile-queries pipeline
-# can't bridge — proving we don't fall into the same trap is the v1.0 release gate.
+# can't bridge — proving we don't fall into the same trap is the v1.0 release
+# gate.
 #
-# The collision smoke project is added in milestone v0.7. Until then this workflow
-# is a no-op placeholder so the wiring exists.
+# Activated in milestone v0.7 (Phase B). The smoke project lives at
+# tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/. CI publishes it with
+# PublishAot=true on linux-x64 and runs the native binary — any new
+# IL2026/IL2046/IL3050 surfaced by the publish-time trimmer fails the job,
+# and a non-zero exit from the runtime check fails the workflow.
 
 on:
   push:
@@ -27,32 +31,28 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Skip when collision smoke project does not exist yet
-        id: check
-        run: |
-          if [ -d "tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Collision smoke project not present yet — skipping. Will activate in v0.7."
-          fi
-
       - name: Restore
-        if: steps.check.outputs.exists == 'true'
         run: dotnet restore tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj
 
       - name: Publish AOT (linux-x64)
-        if: steps.check.outputs.exists == 'true'
+        # PublishAot=true is set inside the csproj itself. We deliberately do NOT
+        # pass `-p:PublishAot=true` on the command line: that would promote it to
+        # a global MSBuild property and propagate across the ProjectReference
+        # graph, tripping NETSDK1207 on the build-time-only netstandard2.0
+        # generator project.
         run: |
           dotnet publish tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj \
             -c Release \
             -r linux-x64 \
             --self-contained true \
-            -p:PublishAot=true \
             -o ./collision-out
 
       - name: Run AOT-published collision smoke
-        if: steps.check.outputs.exists == 'true'
         run: |
           chmod +x ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
           ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
+
+      - name: Report binary size
+        run: |
+          ls -lh ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
+          file ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
