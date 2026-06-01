@@ -15,12 +15,12 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 
 ## Packages
 
-| Package | Description | NativeAOT |
-|---------|-------------|---|
-| **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[StoreAsString]`, `[Materialize]`) + exception types. | ✅ |
-| **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
-| **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
+| Package | Version | AOT | Description |
+|---------|---------|-----|-------------|
+| `ZeroAlloc.ORM` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM) | ✅ | Runtime extensions and exception types |
+| `ZeroAlloc.ORM.Abstractions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Abstractions.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Abstractions) | ✅ | `[Query]` / `[Command]` / `[StoredProcedure]` / `[Materialize]` attributes |
+| `ZeroAlloc.ORM.Generator` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Generator.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | ✅ (build-time) | Roslyn incremental source generator |
+| `ZeroAlloc.TypeConversions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.TypeConversions.svg)](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | ✅ (build-time) | Convention discovery catalog shared with ZA.Mapping |
 
 ## Quick Start
 
