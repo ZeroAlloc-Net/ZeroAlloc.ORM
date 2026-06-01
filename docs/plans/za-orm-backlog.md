@@ -676,35 +676,27 @@ blocking the release PRs. Pick up under v0.7 polish or roll into v1.0.
   the local Docker daemon was offline. Re-capture when running on a machine
   with Docker reachable. Carried forward as part of the open backlog.
 
-### v0.7-CLN2 — Benchmark async-parity for fair Dapper comparison
+### ~~v0.7-CLN2 — Benchmark async-parity for fair Dapper comparison~~ — ✅ resolved in v1.0 Phase C
 
 - Source: post-shipping review of the Sqlite numbers (2026-06-01).
-- The `MultiRowReadBench.Dapper_AOT` baseline uses Dapper's **synchronous**
-  `Query<T>` extension, while `HandWrittenAdoNet` and `ZeroAlloc_ORM` both go
-  through `ReadAsync`. On 1000-row in-memory Sqlite this gives Dapper a ~36%
-  time edge that isn't a materialization win — it's the async state-machine
-  overhead the other two pay per row but Dapper doesn't.
-- Evidence the comparison isn't fair:
-  - On 1-row SingleRowRead (async overhead doesn't amortize), ZA.ORM is 1.05×
-    hand-written and Dapper is 1.30× — same async-vs-sync mismatch, opposite
-    ranking.
-  - Hand-written async still beats Dapper sync on allocation (86 KB vs 127 KB
-    for 1000 rows), confirming Dapper's "win" is purely state-machine elision.
-- Fix options:
-  1. Switch `Dapper_AOT` to `QueryAsync<T>` in all multi-row workloads so all
-     three baselines use async paths.
-  2. Add a `Task<List<T>>` top-level emit shape to ZA.ORM (currently we drain
-     `IAsyncEnumerable<T>` into `List<T>` at the benchmark site, paying the
-     enumerator state-machine cost). This is **v0.5-CLN3 territory** —
-     recursive composite support is unrelated, but `Task<List<T>>` may be a
-     small dedicated CLN to file.
-  3. Add a synchronous emit shape to ZA.ORM and use that for the comparison.
-     Probably out of scope — async-first is the design contract.
-- Recommended: combine (1) for parity in the BDN harness with a follow-up to
-  evaluate (2) once a real adopter asks for `Task<List<T>>`.
-- Defer to v0.8 or standalone docs/bench PR. The current numbers stay useful
-  as "Dapper sync vs async paths" reference, but the table headings should be
-  annotated until the async-parity fix lands.
+- Original concern: the `MultiRowReadBench.Dapper_AOT` baseline was believed to
+  use Dapper's **synchronous** `Query<T>` extension while `HandWrittenAdoNet`
+  and `ZeroAlloc_ORM` both went through `ReadAsync`, giving Dapper an unfair
+  ~36% time edge on 1000-row Sqlite that would be the async state-machine
+  overhead the other two pay per row but Dapper didn't.
+- v1.0 Phase C resolution: auditing the bench source revealed both
+  `MultiRowReadBench` and `Postgres/PostgresMultiRowReadBench` already call
+  `_raw.QueryAsync<OrderRow>(...)` (since the initial Phase A.3 commit, never
+  the sync `Query<T>`). The CLN entry was filed against an incorrect reading
+  of the source — the comparison was already async-async. The Dapper "win" on
+  the multi-row drain is genuine (allocation-for-throughput trade), not a
+  state-machine elision artefact.
+- Action taken: re-captured `MultiRowReadBench` numbers on the same machine
+  and refreshed `docs/benchmarks/v0.7.0-sqlite-results.md` (Dapper now lands
+  at 0.89× hand-written instead of 0.64×, narrowing the gap as expected once
+  the table was re-measured; Caveat block removed). `SingleRowReadBench`
+  already uses `QueryFirstOrDefaultAsync` and `InsertBench` already uses
+  `ExecuteAsync`, so no other tables required updates.
 
 ### Carry-forward items still open after v0.7
 
