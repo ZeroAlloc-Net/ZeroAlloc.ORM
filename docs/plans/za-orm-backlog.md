@@ -268,19 +268,18 @@ v0.3 milestone scoreboard:
 Items surfaced during the Phase C code review (2026-05-31, PR #42) that are intentionally
 deferred rather than blocking the streaming PR. Pick up under v0.3 polish or roll into v0.4.
 
-### v0.3-CLN1 — Hoist `GetOrdinal` once per column in column-name materialization
+### ~~v0.3-CLN1 — Hoist `GetOrdinal` once per column in column-name materialization~~ — ✅ shipped in v0.6 Phase D (PR #71)
 
 - Source: PR #42 code review (2026-05-31).
-- Affects all column-name emit paths (DomainEntity in Streaming, FlatRow, plus the
-  single-row DomainEntity path) — wherever the emit currently produces both
+- Affected all column-name emit paths (DomainEntity in Streaming, FlatRow, plus the
+  single-row DomainEntity path) — every emit previously produced both
   `__reader.IsDBNull(__reader.GetOrdinal("Col"))` and
-  `__reader.GetXxx(__reader.GetOrdinal("Col"))`, `GetOrdinal` runs twice per row per
+  `__reader.GetXxx(__reader.GetOrdinal("Col"))`, so `GetOrdinal` ran twice per row per
   column in the hot loop.
-- Fix: emit `var __o_Col = __reader.GetOrdinal("Col");` once before the materialization
-  body and reuse the local in both the `IsDBNull` and `GetXxx` calls.
-- Cross-shape (FlatRow + DomainEntity + Streaming-DomainEntity), so treat as a single
-  pass rather than per-shape patches. Snapshot churn will be wide — bundle with other
-  emit cleanups if possible.
+- v0.6 Phase D fix: emit now produces `var __o_Col = __reader.GetOrdinal("Col");` once
+  before the materialization body and reuses the local in both the `IsDBNull` and
+  `GetXxx` calls across FlatRow / DomainEntity / Streaming-DomainEntity paths in a
+  single pass.
 
 ### v0.3-CLN2 — Lift keeper-connection / shared-cache helper into SqliteFixture
 
@@ -547,22 +546,44 @@ blocking the release PRs. Pick up under v0.5 polish or roll into v0.6.
 
 ---
 
-## P1 — Milestone v0.6 (3-4 days): diagnostics polish + observability composition recipe
+## P1 — Milestone v0.6 (5-6 days): Postgres fixture + diagnostics polish + observability composition recipe
 
-### v0.6-T2 — Full diagnostics catalog audit
+Commits in chronological order, all merged via PR on `main` after `v0.5.0` shipped.
+Phase plan: [`docs/plans/2026-06-01-v0.6-implementation.md`](2026-06-01-v0.6-implementation.md).
 
-- All ZAO codes ZAO001-ZAO070 emit correctly.
-- `helpLinkUri` points to per-code docs.
-- Each diagnostic has a unit test (1 case where it should fire, 1 where it should not).
+- Phase A — Postgres integration fixture via Testcontainers; ports FlatRow / multi-result-set / streaming / sproc / `[Materialize(Factory)]` round-trips to a real Postgres backend (#68)
+- Phase B — diagnostics catalog audit: backfill missing reference page (ZAO022); add `DiagnosticHelpLinkTests`; positive/negative coverage for ZAO001 and ZAO043; README catalog table (#69)
+- Phase C — ZA.Telemetry observability cookbook recipe at `docs/cookbook/observability.md`; collision smoke deferred to v0.6-CLN1 due to upstream nullable-annotation issues (#70)
+- Phase D — backlog cleanup batch: v0.3-CLN1 (GetOrdinal hoist) + v0.5-CLN5 (PR-title lint workflow) (#71)
+- Phase E — README v0.6 section + backlog reconciliation (this PR)
 
-### v0.6-T4 — `docs/diagnostics/` reference pages
+Test-count delta: 340 → 368 passing + 1 skipped (+28 net). The +28 comes primarily
+from the Postgres integration suite (FlatRow / multi-result-set / streaming / sproc /
+factory / composites) plus diagnostic positive/negative pairs. The 1 skipped is the
+original v0.4 sproc placeholder retained as archaeology; the Postgres sproc suite
+provides the real runtime coverage.
 
-- One markdown file per ZAO code with: trigger, fix hint, code example, related codes.
-- Pre-published on `main` so the `helpLinkUri` resolves.
+v0.6 milestone scoreboard:
 
-### v0.6-T5 — ZA.Telemetry composition cookbook recipe
+- ~~v0.6-T2 — Full diagnostics catalog audit~~ — ✅ shipped 0.6.0 (#69)
+  - All shipping ZAO codes (ZAO001-ZAO063 inclusive of reserved ZAO060) verified
+    via `DiagnosticHelpLinkTests` — every `DiagnosticDescriptor.HelpLinkUri`
+    resolves to a real, non-empty markdown file under `docs/diagnostics/`.
+  - Positive + negative coverage backfilled for ZAO001 and ZAO043; remaining
+    descriptors already had coverage from prior milestones.
+- ~~v0.6-T4 — `docs/diagnostics/` reference pages~~ — ✅ shipped 0.6.0 (#69)
+  - ZAO022 backfilled (missing prior to v0.6). All other codes already had pages
+    from earlier milestones; the audit confirmed completeness.
+  - README diagnostics catalog table links each code to its docs page.
+- ~~v0.6-T5 — ZA.Telemetry composition cookbook recipe~~ — ✅ shipped 0.6.0 (#70)
+  - `docs/cookbook/observability.md` documents the consumer-seam composition pattern.
+  - ZA.ORM ships **no** built-in `ActivitySource`; observability lives at the adopter
+    boundary via `[Instrument]` (ZA.Telemetry) on a `partial class` that also carries
+    `[Query]` (ZA.ORM). The two generators emit independently.
+  - Collision smoke test (`ZeroAlloc.ORM.TelemetryCollision.AotSmoke`) was attempted
+    but backed out — see v0.6-CLN1 for the deferral reason.
 
-Single `docs/cookbook/observability.md` page showing the `[Instrument]` interface + `[Query]` partial class composition pattern. ZA.ORM ships no ActivitySource of its own; observability lives at consumer seam via ZA.Telemetry.
+**v0.6 milestone complete. Release-please will propose 0.6.0 from conventional commits.**
 
 ---
 
