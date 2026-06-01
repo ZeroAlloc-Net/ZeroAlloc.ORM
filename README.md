@@ -236,7 +236,7 @@ Deferred to later milestones: recursive composites (v1.0+, ZAO052 flags them tod
 
 ### Added in v0.7
 
-- **BenchmarkDotNet suite** — `tests/ZeroAlloc.ORM.Benchmarks/` ships a comparative micro-benchmark harness with 4 workloads (single-row read, multi-row read, head + lines multi-result, insert) × 3 baselines (hand-written ADO.NET, Dapper.AOT, ZeroAlloc.ORM) × 2 backends (Sqlite in-memory and Postgres via Testcontainers). The suite is the canonical answer to "how does ZA.ORM compare to the alternatives an adopter would otherwise pick?" — raw numbers live under [`docs/benchmarks/`](docs/benchmarks/). Tracked under v0.7-CLN1: locking in real SDK 10.0.300 numbers as the placeholder values get re-captured.
+- **BenchmarkDotNet suite** — `tests/ZeroAlloc.ORM.Benchmarks/` ships a comparative micro-benchmark harness with 4 workloads (single-row read, multi-row read, head + lines multi-result, insert) × 3 baselines (hand-written ADO.NET, Dapper.AOT, ZeroAlloc.ORM) × 2 backends (Sqlite in-memory and Postgres via Testcontainers). First Sqlite capture (Windows 11, .NET 10.0.300) lives in [`docs/benchmarks/v0.7.0-sqlite-results.md`](docs/benchmarks/v0.7.0-sqlite-results.md): ZA.ORM sits within 5% of hand-written ADO.NET on single-row reads and matches its allocation profile to ~0.5% on 1000-row reads; multi-result-set has a 30% gap that's the next v1.0+ target.
 
 - **ZA.Rest collision smoke (v1.0 release gate)** — `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` composes `[Query]` (ZA.ORM) and `[Route]`/`[Query]` (ZA.Rest) in a single AOT-publishable consumer. Wired into `.github/workflows/collision-smoke.yml`, so every PR proves the two source generators co-exist and the resulting binary AOT-publishes cleanly. Discovery during Phase B: both libraries ship a `QueryAttribute`; the collision is resolved cleanly via file-scoped `using` aliases at the call site. **This is the v1.0 release gate** — if collision-smoke ever breaks, v1.0 doesn't ship.
 
@@ -254,7 +254,7 @@ ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
 - **CI gated.** Every PR runs:
   - `tests/ZeroAlloc.ORM.AotSmoke/` — single-generator AOT publish.
   - `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` — composition with `ZeroAlloc.Rest.Generator` (the v1.0 release gate).
-- **Performance.** See [docs/benchmarks/](docs/benchmarks/) for comparative numbers against hand-written ADO.NET and Dapper.AOT.
+- **Performance.** ZA.ORM is within 5% of hand-written ADO.NET on single-row reads and matches its allocation profile on multi-row reads; see [docs/benchmarks/v0.7.0-sqlite-results.md](docs/benchmarks/v0.7.0-sqlite-results.md) for the full comparison against hand-written ADO.NET and Dapper.AOT.
 
 ## Diagnostics catalog
 
