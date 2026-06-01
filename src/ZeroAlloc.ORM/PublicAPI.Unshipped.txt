@@ -19,6 +19,9 @@ ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectAppliedVersionsSql.get -> 
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SqliteMigrationDialect() -> void
 ZeroAlloc.ORM.Migrations.Migration
 ZeroAlloc.ORM.Migrations.Migration.<Clone>$() -> ZeroAlloc.ORM.Migrations.Migration!
+ZeroAlloc.ORM.Migrations.MigrationRunner
+ZeroAlloc.ORM.Migrations.MigrationRunner.MigrationRunner(System.Data.Async.IAsyncDbConnection! connection, ZeroAlloc.ORM.Migrations.IMigrationSource! source, ZeroAlloc.ORM.Migrations.IMigrationDialect! dialect) -> void
+ZeroAlloc.ORM.Migrations.MigrationRunner.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!>!
 ZeroAlloc.ORM.Migrations.Migration.AppliedAt.get -> System.DateTime?
 ZeroAlloc.ORM.Migrations.Migration.AppliedAt.init -> void
 ZeroAlloc.ORM.Migrations.Migration.Deconstruct(out int Version, out string! Name, out string! Sql, out System.DateTime? AppliedAt) -> void
