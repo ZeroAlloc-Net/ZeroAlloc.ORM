@@ -723,20 +723,103 @@ quality-of-life polish that adopters will start feeling once v1.0 ships.
 
 ---
 
-## P2 — v1.0 release gates
+## P2 — Milestone v1.0 (release): polish + docs site + selected CLNs + API freeze tag
 
-### v1.0-G1 — Cookbook docs
+Commits in chronological order, all merged via PR on `main` after `v0.7.0` shipped.
+Plan: [`docs/plans/2026-06-01-v1.0-implementation.md`](2026-06-01-v1.0-implementation.md) (#86, with corrections in #88).
 
-- `docs/cookbook/` with 7 recipes from design doc Section 5.
+- Phase A — Cookbook polish: audit existing 6 recipes (commands / composites / multi-result-set / observability / stored-procedures / streaming) + add dedicated `flat-row.md` and `provider-quirks.md` (#87)
+- Phase B (ZA.ORM side) — Prep `docs/` tree for rendering at `orm.zeroalloc.net` (#89)
+- Phase B (ZA.Website side) — `apps/docs-orm/` + `repos/orm/` wired through the shared Docusaurus monorepo (ZeroAlloc.Website PR #25 — **currently blocked on a ZA.Website-side branch-protection ruleset config**; goes live once admin resolves the ruleset)
+- Phase C — Four polish CLNs: bench async-parity audit (v0.7-CLN2), ZAO050 per-position regression tests (v0.5-CLN1), ZAO062 per-element-span regression tests (v0.4-CLN6), new ZAO064 info diagnostic (v0.4-CLN5) (#90)
+- Phase D — **Skipped**: Postgres BDN capture deferred because Docker daemon wasn't available during the v1.0 capture window. Carried forward as **v1.0-CLN1**.
+- Phase E — README + backlog reconciliation (this PR)
+
+Test-count delta: 368 → **373 passing + 1 skipped** (+5 net from Phase C ZAO050/062 regression tests and ZAO064 coverage). The 1 skipped placeholder remains the v0.4 sproc archaeology row.
+
+v1.0 milestone scoreboard:
+
+- ~~v1.0-G1 — Cookbook docs~~ — ✅ shipped 1.0.0 (#87)
+  - 8 recipes total in `docs/cookbook/`: the 6 audited (commands / composites / multi-result-set / observability / stored-procedures / streaming) plus 2 new (flat-row, provider-quirks).
+  - Each recipe: code sample, expected behaviour, common pitfalls, diagnostics cross-links.
+  - Design Section 5 cookbook target hit in full.
+- ~~v1.0-G2 — Docusaurus website~~ — ✅ shipped 1.0.0 ZA.ORM-side (#89); ZA.Website-side blocked on ruleset config (ZA.Website PR #25, tracked as v1.0-CLN2)
+  - `docs/` tree prepped for rendering (cookbook / diagnostics / benchmarks / design).
+  - Docusaurus app lives in the shared `ZeroAlloc.Website` monorepo: `apps/docs-orm/` + `repos/orm/` mirroring the canonical per-package pattern (`docs-mediator`, `docs-rest`, ...).
+  - Hosted at `https://orm.zeroalloc.net`. Go-live deferred until ZA.Website PR #25 unblocks.
+  - DocFX-generated API reference still TBD — the shared monorepo's pattern across other packages will dictate whether it lands in v1.0-CLN or later.
+- ~~v1.0-G3 — release-please bump to 1.0.0~~ — controller step (post-merge of this PR)
+  - release-please proposes 1.0.0; pack-push publishes all 4 NuGet packages.
+- ~~v1.0-G4 — Selected polish CLNs (v0.7-CLN2 / v0.5-CLN1 / v0.4-CLN6 / v0.4-CLN5)~~ — ✅ shipped 1.0.0 (#90)
+  - All four bundled in Phase C. Each carries its own catalog reference (see crossed-out entries in v0.3/v0.4/v0.5 post-cleanup sections above).
+
+**v1.0 milestone complete. Project enters maintenance mode under SemVer. The public surface (`PublicAPI.Shipped.txt`, 103 entries / 16 types) is locked; v1.x releases are additive-only via `PublicAPI.Unshipped.txt`. Breaking changes go to v2.0 — design doc Section 5 lines 656+ sketches the v2 surface.**
+
+---
+
+## Post-v1.0 cleanup
+
+Items that emerged during the v1.0 milestone or were explicitly carried forward from earlier milestones. None block adopter use; they are quality-of-life polish that lands in 1.x patches/minors as bandwidth allows.
+
+### v1.0-CLN1 — Capture Postgres benchmark numbers
+
+- Source: v1.0 Phase D scoping decision (2026-06-01).
+- Phase D was the planned Postgres BDN capture, but the local Docker daemon
+  was offline during the v1.0 capture window. Sqlite portion of the bench
+  was captured in v0.7-CLN1; Postgres portion still open.
+- Fix: re-run `tests/ZeroAlloc.ORM.Benchmarks/Postgres/*Bench.cs` on a
+  Docker-reachable machine and assemble `docs/benchmarks/v0.7.0-postgres-results.md`.
+- Defer to v1.0.x or v1.1 — gated only on machine availability. Sqlite
+  numbers cover the dominant adopter case already.
+
+### v1.0-CLN2 — ZA.Website ruleset / `orm.zeroalloc.net` go-live (OPS)
+
+- Source: v1.0 Phase B (2026-06-01).
+- This is an **OPS task in `ZeroAlloc-Net/ZeroAlloc.Website`**, cross-referenced
+  here for visibility from the ZA.ORM side.
+- ZA.Website PR #25 wires `apps/docs-orm/` + `repos/orm/` into the shared
+  Docusaurus monorepo, but is currently blocked on a branch-protection
+  ruleset config issue on the ZA.Website repo. Resolving the ruleset
+  unblocks the PR merge → triggers the deploy workflow → `orm.zeroalloc.net`
+  starts resolving.
+- Fix: ZA.Website-side admin action; nothing to change in this repo.
+- This repo's README already links to `https://orm.zeroalloc.net` — the
+  link goes live the moment the ZA.Website PR merges.
+
+### Carry-forward items still open after v1.0
+
+These items were originally tagged against earlier milestones, remained open
+through v0.7, and explicitly carry past v1.0. None blocks the v1.0 freeze:
+
+- **v0.3-CLN2** — Lift keeper-connection / shared-cache helper into `SqliteFixture`.
+- **v0.4-CLN1** — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`.
+- **v0.5-CLN2** — Nullable reference-type composite parameter binding (struct case shipped in v0.5).
+- **v0.5-CLN3** — Recursive composite support (ZAO052 still flags them today).
+- **v0.5-CLN4** — Factory parameter-to-column matching falls back to positional (gated on ORM-V2-3 SQL parser).
+- **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream fixes nullable annotations.
+- **v0.7-CLN1** (Postgres portion) — Capture Postgres BDN numbers. Sqlite portion shipped.
+- **v1.0-CLN1** — Capture Postgres benchmark numbers (Docker daemon unavailable during v1.0 capture window).
+- **v1.0-CLN2** — ZA.Website ruleset / `orm.zeroalloc.net` go-live (OPS in ZeroAlloc.Website).
+
+---
+
+## P2 — v1.0 release gates (historical placeholder, superseded by the v1.0 milestone above)
+
+The original entries below pre-dated the v1.0 implementation plan and are retained as
+archaeology; the live status sits in the v1.0 milestone scoreboard above.
+
+### ~~v1.0-G1 — Cookbook docs~~ — ✅ shipped 1.0.0 (#87)
+
+- `docs/cookbook/` with 7 recipes from design doc Section 5 (shipped 8 — added `provider-quirks.md` beyond the original 7).
 - Each recipe: code sample, expected behavior, common pitfalls.
 
-### v1.0-G2 — Docusaurus website
+### ~~v1.0-G2 — Docusaurus website~~ — ✅ shipped 1.0.0 ZA.ORM-side (#89); ZA.Website-side go-live blocked on ruleset (v1.0-CLN2)
 
-- `https://zeroalloc-net.github.io/ZeroAlloc.ORM/`.
+- Hosted at `https://orm.zeroalloc.net` (via the shared `ZeroAlloc.Website` monorepo).
 - README + Quick Start + Cookbook + Diagnostics reference.
-- DocFX-generated API reference page.
+- DocFX-generated API reference page — deferred; the shared monorepo's pattern across other packages will dictate whether it lands as v1.0-CLN or v1.1.
 
-### v1.0-G3 — release-please bump to `1.0.0`
+### ~~v1.0-G3 — release-please bump to `1.0.0`~~ — controller step (post-merge of E.3)
 
 - Tag, NuGet publish, announcement.
 - ZA.Mediator's release-please config is the template.
