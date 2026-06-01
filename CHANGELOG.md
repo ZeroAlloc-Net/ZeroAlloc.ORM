@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.0.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.7.0...v1.0.0) (2026-06-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **release-please:** footers. The override is removed in the post-1.0 release-please reset (file as v1.0-CLN3 if it ships).
+
+### Features
+
+* v1.0 Phase A - cookbook polish + flat-row.md + provider-quirks.md ([#87](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/87)) ([459d7cd](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/459d7cd93f985f9376df502645c39db2607a776f))
+* v1.0 Phase C - selected polish CLNs (bench async + ZAO050/062 tightening + ZAO064) ([#90](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/90)) ([486d886](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/486d886d9148d75e7676aac5f30348e06f9d1d0d))
+* v1.0 Phase E - README + backlog reconciliation (release prep) ([#91](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/91)) ([b2e376f](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/b2e376f6636bd7eabc9e5c5382ae97a4fcd38464))
+
+
+### Documentation
+
+* **backlog:** file v0.7-CLN2 (bench async-parity) and annotate Sqlite results ([#85](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/85)) ([8690b53](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/8690b533b977cdaa480475ab1a8e45630ed0cfe2))
+* **benchmarks:** capture first Sqlite BDN run + update README ([#83](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/83)) ([140b8a1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/140b8a1a608b16262db8f3dd3b4abb9b1e31bb1a))
+* **plan:** correct v1.0 Phase B to wire into ZeroAlloc.Website monorepo ([#88](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/88)) ([c7e4935](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c7e4935e895a63beada2c4e8288f3bb6a867545d))
+* **plan:** v1.0 implementation plan (polish + docs site + selected CLNs) ([#86](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/86)) ([785bd48](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/785bd489b31030f5719e43aab61e10f71a2fc880))
+* prepare docs/ tree for rendering at orm.zeroalloc.net ([#89](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/89)) ([0fd9fd5](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/0fd9fd57229e8be8e4024d2bc961aeea0519ca5f))
+
+
+### Miscellaneous
+
+* **release-please:** force 1.0.0 for the API-freeze release ([#92](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/92)) ([711d0a0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/711d0a0426ecbac1c198d53f6587d53beba17f55))
+
 ## [0.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.6.0...v0.7.0) (2026-06-01)
 
 
