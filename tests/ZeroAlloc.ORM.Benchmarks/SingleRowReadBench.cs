@@ -1,16 +1,22 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
+using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;
 using ZeroAlloc.ORM;
 
+// v0.7 Phase A.2 — enable Dapper.AOT interceptors at the module level.
+// Without this, Dapper.AOT generates nothing and the Dapper_AOT benchmark
+// falls back to reflection-based Dapper (defeating the comparison).
+[module: global::Dapper.DapperAot]
+
 namespace ZeroAlloc.ORM.Benchmarks;
 
 // v0.7 Phase A.1 — first benchmark workload. Single-row SELECT against an
-// in-memory Sqlite database, measured under [MemoryDiagnoser]. Only ZA.ORM
-// is wired up in this commit; hand-written ADO.NET and Dapper.AOT baselines
-// land in A.2.
+// in-memory Sqlite database, measured under [MemoryDiagnoser]. Three competing
+// implementations: hand-written ADO.NET (zero-overhead reference, baseline),
+// Dapper.AOT (build-time interceptors), ZA.ORM (source-generator emit).
 //
 // Why Sqlite in-memory? It keeps the benchmark CI-friendly (no Docker, no
 // network, no fixture warmup) and isolates the measurement to the ADO.NET
@@ -50,6 +56,33 @@ public class SingleRowReadBench
         await _conn.DisposeAsync().ConfigureAwait(false);
         await _raw.DisposeAsync().ConfigureAwait(false);
     }
+
+    // Zero-overhead reference. The reader-tape calls + new() are exactly what
+    // every source-generator-based ORM should be approaching.
+    [Benchmark(Baseline = true)]
+    public async Task<OrderRow?> HandWrittenAdoNet()
+    {
+        await using var cmd = _raw.CreateCommand();
+        cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@id";
+        p.Value = 1;
+        cmd.Parameters.Add(p);
+        await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        if (!await reader.ReadAsync().ConfigureAwait(false))
+        {
+            return null;
+        }
+        return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+    }
+
+    // Dapper.AOT — the [module: DapperAot] above triggers the build-time
+    // interceptor rewrite; this call site becomes the generated code.
+    [Benchmark]
+    public Task<OrderRow?> Dapper_AOT()
+        => _raw.QueryFirstOrDefaultAsync<OrderRow>(
+            "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id",
+            new { id = 1 });
 
     [Benchmark]
     public Task<OrderRow?> ZeroAlloc_ORM() => _repo.GetByIdAsync(1, default);
