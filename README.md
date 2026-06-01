@@ -15,47 +15,62 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 
 ## Packages
 
-| Package | Description | NativeAOT |
-|---------|-------------|---|
-| **ZeroAlloc.ORM** | Runtime helpers + `ActivitySource` for observability. Depends on AdoNet.Async. | ✅ |
-| **ZeroAlloc.ORM.Abstractions** | Public attribute surface (`[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[StoreAsString]`, `[Materialize]`) + exception types. | ✅ |
-| **ZeroAlloc.ORM.Generator** | Roslyn incremental source generator. Build-time only. | N/A |
-| **ZeroAlloc.TypeConversions** | Shared convention-discovery catalog (value-objects, enums, composites). Build-time only. | N/A |
+| Package | Version | AOT | Description |
+|---------|---------|-----|-------------|
+| `ZeroAlloc.ORM` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM) | ✅ | Runtime extensions and exception types |
+| `ZeroAlloc.ORM.Abstractions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Abstractions.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Abstractions) | ✅ | `[Query]` / `[Command]` / `[StoredProcedure]` / `[Materialize]` attributes |
+| `ZeroAlloc.ORM.Generator` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Generator.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | ✅ (build-time) | Roslyn incremental source generator |
+| `ZeroAlloc.TypeConversions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.TypeConversions.svg)](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | ✅ (build-time) | Convention discovery catalog shared with ZA.Mapping |
 
 ## Quick Start
 
-### Scalar query
+Every example below assumes a containing `partial class` that exposes an `IAsyncDbConnection` (from [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)) — usually injected via primary constructor. The source generator emits the open / execute / close pipeline against that connection.
+
+### 1. Single-row read
 
 ```csharp
-using System.Data.Async;
-using System.Threading;
-using System.Threading.Tasks;
-using ZeroAlloc.ORM;
+[Query("SELECT id, name FROM customers WHERE id = @id")]
+public partial Task<Customer?> GetCustomerAsync(int id, CancellationToken ct);
 
-public sealed partial class Repo(IAsyncDbConnection connection)
-{
-    [Query("SELECT count(*) FROM Orders")]
-    public partial Task<int> CountOrdersAsync(CancellationToken ct);
-}
+public sealed record Customer(int Id, string Name);
 ```
 
-The source generator emits the open / execute / close pipeline against AdoNet.Async's `IAsyncDbConnection`. Zero runtime reflection; the emit composes through `global::`-qualified identifiers so it doesn't care about the consumer's `using` directives.
+Positional record + matching SELECT column order = no mapping config. Nullable return type = empty result set yields `null`. See [docs/cookbook/multi-result-set.md](docs/cookbook/multi-result-set.md) for the head + lines tuple pattern.
 
-### Row materialization (FlatRow)
+### 2. Streaming with `IAsyncEnumerable`
 
 ```csharp
-public sealed record OrderRow(int Id, int CustomerId, decimal Total);
-
-public sealed partial class OrderRepo(IAsyncDbConnection connection)
-{
-    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
-    public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
-}
+[Query("SELECT id, name FROM customers ORDER BY id")]
+public partial IAsyncEnumerable<Customer> StreamCustomersAsync(
+    [EnumeratorCancellation] CancellationToken ct);
 ```
 
-Positional record + matching SELECT column order = no mapping config. Nullable return = empty result set yields `null`.
+Connection opens lazily on first `MoveNextAsync`, closes deterministically on `DisposeAsync` (including early `break` exits). More in [docs/cookbook/streaming.md](docs/cookbook/streaming.md).
 
-### Available in v0.1
+### 3. Insert returning identity
+
+```csharp
+[Command(
+    "INSERT INTO orders (customer_id, total) VALUES (@customerId, @total)",
+    Kind = CommandKind.Identity)]
+public partial Task<int> InsertOrderAsync(int customerId, decimal total, CancellationToken ct);
+```
+
+`CommandKind.Identity` appends the provider-aware identity suffix (`SCOPE_IDENTITY()` for SQL Server, `LAST_INSERT_ROWID()` for Sqlite, `RETURNING` for Postgres). More in [docs/cookbook/commands.md](docs/cookbook/commands.md).
+
+### 4. Stored procedure with output parameters
+
+```csharp
+[StoredProcedure("usp_insert_order")]
+public partial Task<(int rowsAffected, int newOrderId, decimal computedTotal)> InsertOrderSprocAsync(
+    int customerId, CancellationToken ct);
+```
+
+The first tuple field is the result-set materialization (here: rows-affected). Subsequent named tuple fields map to `ParameterDirection.Output` SQL parameters by name. More in [docs/cookbook/stored-procedures.md](docs/cookbook/stored-procedures.md).
+
+## Capabilities by milestone
+
+### Added in v0.1
 
 - `[Query]` with scalar (`Task<int>`, `Task<T?>`) and FlatRow (`Task<TRow?>`) return shapes.
 - 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants.
@@ -218,6 +233,18 @@ Deferred to later milestones: recursive composites (v0.7+, ZAO052 flags them tod
 - **v0.3-CLN1 perf cleanup — GetOrdinal hoisted once per column** — every column-name materialization path (DomainEntity, FlatRow column-name fallback, nullable composite) now emits `var __o_<Col> = __reader.GetOrdinal("<Col>");` ONCE before the materialization body and reuses the local in both the `IsDBNull` and `GetXxx` calls. Eliminates the double-lookup in the hot row-materialization loop.
 
 - **v0.5-CLN5 fix — PR-title lint workflow** — `.github/workflows/pr-title-lint.yml` enforces conventional-commit prefixes (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`, ...) on every PR. Prevents the v0.5 release CHANGELOG hole where `feat:`-less merges silently dropped from release-please's commit aggregation.
+
+## NativeAOT compatibility
+
+ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
+
+- **Zero reflection at runtime.** Source-generator-based emit produces compile-time-known materialization code; no `Activator.CreateInstance`, no `Type.GetMethod`, no `Expression.Compile`.
+- **Globally-qualified type references** in every emitted line — AOT publishing trims correctly regardless of consumer `using` directives.
+- **Trimming-safe.** No `[DynamicallyAccessedMembers]` requirements on consumer types.
+- **CI gated.** Every PR runs:
+  - `tests/ZeroAlloc.ORM.AotSmoke/` — single-generator AOT publish.
+  - `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` — composition with `ZeroAlloc.Rest.Generator` (the v1.0 release gate).
+- **Performance.** See [docs/benchmarks/](docs/benchmarks/) for comparative numbers against hand-written ADO.NET and Dapper.AOT.
 
 ## Diagnostics catalog
 
