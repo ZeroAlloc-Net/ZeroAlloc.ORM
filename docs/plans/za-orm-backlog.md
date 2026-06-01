@@ -666,17 +666,45 @@ v0.7 milestone scoreboard:
 Items surfaced during the v0.7 milestone that are intentionally deferred rather than
 blocking the release PRs. Pick up under v0.7 polish or roll into v1.0.
 
-### v0.7-CLN1 — Capture real BenchmarkDotNet numbers once SDK 10.0.300 is locally available
+### ~~v0.7-CLN1 — Capture real BenchmarkDotNet numbers once SDK 10.0.300 is locally available~~ — ✅ shipped (Sqlite portion)
 
 - Source: v0.7 Phase A (PR #76).
-- The BDN harness, project skeleton, workloads, baselines, and runner wiring all
-  ship in v0.7.0. The artifacts under `docs/benchmarks/` are placeholder values
-  pending a clean local run against the pinned SDK and pinned NuGet versions.
-- Fix: re-run the suite locally once SDK 10.0.300 is available, regenerate the
-  artifacts under `docs/benchmarks/`, and update the README's "Performance"
-  pointer to call out the captured-date so adopters know the numbers are real.
-- Defer to v1.0 release prep or as a standalone docs PR — gating v0.7.0 on
-  perfect numbers would have stretched the release window past the target.
+- Captured 2026-06-01 against Sqlite in-memory + .NET SDK 10.0.300 + BDN 0.15.2
+  (PR #83). Results live in [`docs/benchmarks/v0.7.0-sqlite-results.md`](../../docs/benchmarks/v0.7.0-sqlite-results.md);
+  README's NativeAOT section cites the inline ratios.
+- Postgres portion still open — capture attempt yielded NA-only tables because
+  the local Docker daemon was offline. Re-capture when running on a machine
+  with Docker reachable. Carried forward as part of the open backlog.
+
+### v0.7-CLN2 — Benchmark async-parity for fair Dapper comparison
+
+- Source: post-shipping review of the Sqlite numbers (2026-06-01).
+- The `MultiRowReadBench.Dapper_AOT` baseline uses Dapper's **synchronous**
+  `Query<T>` extension, while `HandWrittenAdoNet` and `ZeroAlloc_ORM` both go
+  through `ReadAsync`. On 1000-row in-memory Sqlite this gives Dapper a ~36%
+  time edge that isn't a materialization win — it's the async state-machine
+  overhead the other two pay per row but Dapper doesn't.
+- Evidence the comparison isn't fair:
+  - On 1-row SingleRowRead (async overhead doesn't amortize), ZA.ORM is 1.05×
+    hand-written and Dapper is 1.30× — same async-vs-sync mismatch, opposite
+    ranking.
+  - Hand-written async still beats Dapper sync on allocation (86 KB vs 127 KB
+    for 1000 rows), confirming Dapper's "win" is purely state-machine elision.
+- Fix options:
+  1. Switch `Dapper_AOT` to `QueryAsync<T>` in all multi-row workloads so all
+     three baselines use async paths.
+  2. Add a `Task<List<T>>` top-level emit shape to ZA.ORM (currently we drain
+     `IAsyncEnumerable<T>` into `List<T>` at the benchmark site, paying the
+     enumerator state-machine cost). This is **v0.5-CLN3 territory** —
+     recursive composite support is unrelated, but `Task<List<T>>` may be a
+     small dedicated CLN to file.
+  3. Add a synchronous emit shape to ZA.ORM and use that for the comparison.
+     Probably out of scope — async-first is the design contract.
+- Recommended: combine (1) for parity in the BDN harness with a follow-up to
+  evaluate (2) once a real adopter asks for `Task<List<T>>`.
+- Defer to v0.8 or standalone docs/bench PR. The current numbers stay useful
+  as "Dapper sync vs async paths" reference, but the table headings should be
+  annotated until the async-parity fix lands.
 
 ### Carry-forward items still open after v0.7
 
