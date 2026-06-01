@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.6 shipped (Postgres integration fixture + full diagnostics catalog audit + ZA.Telemetry observability cookbook). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** Pre-release. v0.7 shipped (BenchmarkDotNet suite + ZA.Rest collision smoke + README polish + v1.0 public-API freeze via PublicApiAnalyzers). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -220,7 +220,7 @@ The first tuple field is the result-set materialization (here: rows-affected). S
 
 - **New diagnostics ZAO050 / ZAO051 / ZAO052 / ZAO063** — composite + factory + sproc-batch guardrails. ZAO050 (nullable-composite partial-null runtime-only check, see above). ZAO051 (factory parameter list unresolved). ZAO052 (recursive composite — a composite ctor parameter that is itself another composite — explicitly deferred to v0.6+ with a clear error). ZAO063 (informational: `[StoredProcedure(Batch = ...)]` with a non-default value is silently ignored — sprocs encapsulate their own batching semantics).
 
-Deferred to later milestones: recursive composites (v0.7+, ZAO052 flags them today, tracked under v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2 still open); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (v0.7+).
+Deferred to later milestones: recursive composites (v1.0+, ZAO052 flags them today, tracked under v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2 still open); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (v1.0 if adopter demand surfaces); Docusaurus website + DocFX API reference (v1.0-G2); cookbook polish pass (v1.0-G1); v0.5-CLN2 nullable RT composite binding; ZA.Telemetry collision smoke (v0.6-CLN1, blocked on upstream nullable-annotation fix).
 
 ### Added in v0.6
 
@@ -233,6 +233,16 @@ Deferred to later milestones: recursive composites (v0.7+, ZAO052 flags them tod
 - **v0.3-CLN1 perf cleanup — GetOrdinal hoisted once per column** — every column-name materialization path (DomainEntity, FlatRow column-name fallback, nullable composite) now emits `var __o_<Col> = __reader.GetOrdinal("<Col>");` ONCE before the materialization body and reuses the local in both the `IsDBNull` and `GetXxx` calls. Eliminates the double-lookup in the hot row-materialization loop.
 
 - **v0.5-CLN5 fix — PR-title lint workflow** — `.github/workflows/pr-title-lint.yml` enforces conventional-commit prefixes (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`, ...) on every PR. Prevents the v0.5 release CHANGELOG hole where `feat:`-less merges silently dropped from release-please's commit aggregation.
+
+### Added in v0.7
+
+- **BenchmarkDotNet suite** — `tests/ZeroAlloc.ORM.Benchmarks/` ships a comparative micro-benchmark harness with 4 workloads (single-row read, multi-row read, head + lines multi-result, insert) × 3 baselines (hand-written ADO.NET, Dapper.AOT, ZeroAlloc.ORM) × 2 backends (Sqlite in-memory and Postgres via Testcontainers). The suite is the canonical answer to "how does ZA.ORM compare to the alternatives an adopter would otherwise pick?" — raw numbers live under [`docs/benchmarks/`](docs/benchmarks/). Tracked under v0.7-CLN1: locking in real SDK 10.0.300 numbers as the placeholder values get re-captured.
+
+- **ZA.Rest collision smoke (v1.0 release gate)** — `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` composes `[Query]` (ZA.ORM) and `[Route]`/`[Query]` (ZA.Rest) in a single AOT-publishable consumer. Wired into `.github/workflows/collision-smoke.yml`, so every PR proves the two source generators co-exist and the resulting binary AOT-publishes cleanly. Discovery during Phase B: both libraries ship a `QueryAttribute`; the collision is resolved cleanly via file-scoped `using` aliases at the call site. **This is the v1.0 release gate** — if collision-smoke ever breaks, v1.0 doesn't ship.
+
+- **README + Quick Start polish (Phase C)** — packages table now carries an AOT compatibility column (every shipping package marked ✅), four canonical Quick Start snippets at the top of the doc (single-row read, streaming, insert-returning-identity, stored procedure with output params), and a dedicated **NativeAOT compatibility** section calling out the AOT smoke + collision smoke gates and pointing at the benchmark suite for performance numbers.
+
+- **v1.0 public-API surface freeze** — `Microsoft.CodeAnalysis.PublicApiAnalyzers` is wired across `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, and `ZeroAlloc.TypeConversions`, with `PublicAPI.Shipped.txt` baselined at **103 entries across 16 public types**. Any accidental addition / change / removal of a public member now breaks `dotnet build`. The surface lock holds until v1.0 ships, and any v1.x evolution must go through the additive `PublicAPI.Unshipped.txt` path with explicit reviewer sign-off.
 
 ## NativeAOT compatibility
 
