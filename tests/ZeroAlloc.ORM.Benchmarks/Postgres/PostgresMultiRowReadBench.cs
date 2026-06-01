@@ -3,6 +3,7 @@ using BenchmarkDotNet.Order;
 using Dapper;
 using Npgsql;
 using System.Data.Async;
+using System.Runtime.CompilerServices;
 using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks.Postgres;
@@ -73,12 +74,24 @@ public class PostgresMultiRowReadBench
         return [.. rows];
     }
 
+    // See MultiRowReadBench — `IAsyncEnumerable<T>` is the canonical streaming
+    // shape; the benchmark materializes to List<T> for parity with the other
+    // implementations.
     [Benchmark]
-    public Task<List<OrderRow>> ZeroAlloc_ORM() => _repo.GetAllAsync(default);
+    public async Task<List<OrderRow>> ZeroAlloc_ORM()
+    {
+        var list = new List<OrderRow>(capacity: RowCount);
+        await foreach (var row in _repo.StreamAllAsync(default).ConfigureAwait(false))
+        {
+            list.Add(row);
+        }
+        return list;
+    }
 }
 
 public sealed partial class PostgresMultiRowRepository(IAsyncDbConnection connection)
 {
     [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
-    public partial Task<List<OrderRow>> GetAllAsync(CancellationToken ct);
+    public partial IAsyncEnumerable<OrderRow> StreamAllAsync(
+        [EnumeratorCancellation] CancellationToken ct);
 }

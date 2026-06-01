@@ -4,6 +4,7 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;
+using System.Runtime.CompilerServices;
 using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks;
@@ -88,12 +89,24 @@ public class MultiRowReadBench
         return [.. rows];
     }
 
+    // ZA.ORM v0.7 does not support `Task<List<T>>` as a top-level return shape —
+    // `IAsyncEnumerable<T>` is the canonical streaming form. The benchmark
+    // materializes to List<T> so the comparison stays apples-to-apples.
     [Benchmark]
-    public Task<List<OrderRow>> ZeroAlloc_ORM() => _repo.GetAllAsync(default);
+    public async Task<List<OrderRow>> ZeroAlloc_ORM()
+    {
+        var list = new List<OrderRow>(capacity: RowCount);
+        await foreach (var row in _repo.StreamAllAsync(default).ConfigureAwait(false))
+        {
+            list.Add(row);
+        }
+        return list;
+    }
 }
 
 public sealed partial class MultiRowRepository(IAsyncDbConnection connection)
 {
     [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
-    public partial Task<List<OrderRow>> GetAllAsync(CancellationToken ct);
+    public partial IAsyncEnumerable<OrderRow> StreamAllAsync(
+        [EnumeratorCancellation] CancellationToken ct);
 }
