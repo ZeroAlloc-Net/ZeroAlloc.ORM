@@ -228,4 +228,24 @@ internal static class DiagnosticDescriptors
         "ZAO052", "Recursive composite types are not supported in v0.5",
         "Method '{0}' uses composite type '{1}' which contains a nested composite ctor parameter ('{2}'). Recursive composites (composite-of-composite) are deferred to v0.6+. Flatten the nested composite into the outer ctor or use [Materialize(Factory)] to handle the materialization explicitly.",
         DiagnosticSeverity.Error);
+
+    // v1.0 Phase C (v0.4-CLN5) — fires when a method carries
+    // `[StoredProcedure(..., Batch = X)]` with X != BatchMode.Never (the sproc
+    // pipeline default). The Batch property on StoredProcedureAttribute is
+    // accepted only for symmetry with QueryAttribute — stored procedures
+    // encapsulate their own batching semantics server-side and the emit always
+    // treats the procedure call as a single DbCommand. The non-default value
+    // is silently ignored at emit time; ZAO064 surfaces the no-op at compile
+    // time so adopters don't ship a misleading attribute.
+    //
+    // MessageArgs:
+    //   {0} = method name
+    //   {1} = the explicit BatchMode value the adopter wrote (e.g. "Always")
+    //
+    // Severity: Info — the shape still emits correctly (the Batch value is
+    // ignored, not an error). The diagnostic is a hint, not a build break.
+    public static readonly DiagnosticDescriptor ZAO064_BatchOnStoredProcedureIgnored = Make(
+        "ZAO064", "[StoredProcedure(Batch=...)] is ignored",
+        "Method '{0}' has [StoredProcedure(..., Batch = {1})] but stored procedures encapsulate their own batching semantics. The Batch value is ignored. Use BatchMode.Never (the default) or remove the explicit value.",
+        DiagnosticSeverity.Info);
 }

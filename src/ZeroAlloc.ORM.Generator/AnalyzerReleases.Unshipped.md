@@ -30,3 +30,4 @@ ZAO060  | ZeroAlloc.ORM | Error    | [StoredProcedure] async method has out/ref 
 ZAO061  | ZeroAlloc.ORM | Error    | [StoredProcedure] name is empty
 ZAO062  | ZeroAlloc.ORM | Warning  | Named-tuple field does not match any parameter
 ZAO063  | ZeroAlloc.ORM | Error    | [Param(Name = ...)] override is not supported on composite parameters
+ZAO064  | ZeroAlloc.ORM | Info     | [StoredProcedure(Batch=...)] is ignored

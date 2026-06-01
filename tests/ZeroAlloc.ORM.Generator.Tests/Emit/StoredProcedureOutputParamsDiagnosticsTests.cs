@@ -126,6 +126,95 @@ public class StoredProcedureOutputParamsDiagnosticsTests
     }
 
     [Fact]
+    public void Sproc_tuple_ZAO062_location_anchors_at_offending_tuple_element_span()
+    {
+        // v0.4-CLN6 (v1.0 Phase C) — ZAO062 must anchor at the offending
+        // tuple-element syntax span, NOT at the whole return-type span.
+        // Stacking diagnostics on the same span confuses IDEs and degrades
+        // the multi-typo case where two non-matching fields produce two
+        // ZAO062 diagnostics that should land on distinct squiggles.
+        //
+        // The location's source span must be a strict sub-range of the
+        // return-type span and must cover (at minimum) the offending tuple
+        // field's syntax.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(int Status, int Total, int NewOrderId)> InsertAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+        var zao062 = diagnostics
+            .AsEnumerable()
+            .Where(d => string.Equals(d.Id, "ZAO062", System.StringComparison.Ordinal))
+            .ToArray();
+        Assert.Single(zao062);
+
+        var diagSpan = zao062[0].Location.SourceSpan;
+        Assert.True(diagSpan.Length > 0, "ZAO062 location must have a non-zero span.");
+
+        // The full return type is `Task<(int Status, int Total, int NewOrderId)>`.
+        // The diagnostic must NOT span the entire return type — that would be
+        // the pre-CLN6 behaviour. We assert by checking the span is materially
+        // shorter than the full tuple-syntax span.
+        var diagSource = source.Substring(diagSpan.Start, diagSpan.Length);
+        Assert.Contains("Total", diagSource, System.StringComparison.Ordinal);
+        // The offending field is `int Total`; the span must NOT also cover
+        // `NewOrderId` (the next field) — that would mean we're anchoring on
+        // the whole tuple, not the element.
+        Assert.DoesNotContain("NewOrderId", diagSource, System.StringComparison.Ordinal);
+        // Likewise the span must not cover `Status` (the skipped first
+        // non-matching field, conventional result-row position).
+        Assert.DoesNotContain("Status", diagSource, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Sproc_tuple_ZAO062_two_typos_produce_two_diagnostics_at_distinct_spans()
+    {
+        // v0.4-CLN6 (v1.0 Phase C) — the multi-typo case: three non-matching
+        // tuple fields produce two ZAO062 diagnostics (Heuristic 1 skips the
+        // first), and the two diagnostics must land on DISTINCT source spans.
+        // Pre-CLN6 both anchored at the whole return-type and IDE dedupe
+        // collapsed them into one squiggle.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(int Status, int Total, int Subtotal, int NewOrderId)> InsertAsync(
+                    int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+        var zao062 = diagnostics
+            .AsEnumerable()
+            .Where(d => string.Equals(d.Id, "ZAO062", System.StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, zao062.Length);
+
+        var span1 = zao062[0].Location.SourceSpan;
+        var span2 = zao062[1].Location.SourceSpan;
+        Assert.NotEqual(span1, span2);
+    }
+
+    [Fact]
     public void Sproc_tuple_with_query_attribute_does_not_emit_ZAO062()
     {
         // ZAO062 is gated on [StoredProcedure] — [Query] tuple returns stay on
