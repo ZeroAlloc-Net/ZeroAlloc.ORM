@@ -24,38 +24,53 @@ ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare 
 
 ## Quick Start
 
-### Scalar query
+Every example below assumes a containing `partial class` that exposes an `IAsyncDbConnection` (from [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)) — usually injected via primary constructor. The source generator emits the open / execute / close pipeline against that connection.
+
+### 1. Single-row read
 
 ```csharp
-using System.Data.Async;
-using System.Threading;
-using System.Threading.Tasks;
-using ZeroAlloc.ORM;
+[Query("SELECT id, name FROM customers WHERE id = @id")]
+public partial Task<Customer?> GetCustomerAsync(int id, CancellationToken ct);
 
-public sealed partial class Repo(IAsyncDbConnection connection)
-{
-    [Query("SELECT count(*) FROM Orders")]
-    public partial Task<int> CountOrdersAsync(CancellationToken ct);
-}
+public sealed record Customer(int Id, string Name);
 ```
 
-The source generator emits the open / execute / close pipeline against AdoNet.Async's `IAsyncDbConnection`. Zero runtime reflection; the emit composes through `global::`-qualified identifiers so it doesn't care about the consumer's `using` directives.
+Positional record + matching SELECT column order = no mapping config. Nullable return type = empty result set yields `null`. See [docs/cookbook/multi-result-set.md](docs/cookbook/multi-result-set.md) for the head + lines tuple pattern.
 
-### Row materialization (FlatRow)
+### 2. Streaming with `IAsyncEnumerable`
 
 ```csharp
-public sealed record OrderRow(int Id, int CustomerId, decimal Total);
-
-public sealed partial class OrderRepo(IAsyncDbConnection connection)
-{
-    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
-    public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
-}
+[Query("SELECT id, name FROM customers ORDER BY id")]
+public partial IAsyncEnumerable<Customer> StreamCustomersAsync(
+    [EnumeratorCancellation] CancellationToken ct);
 ```
 
-Positional record + matching SELECT column order = no mapping config. Nullable return = empty result set yields `null`.
+Connection opens lazily on first `MoveNextAsync`, closes deterministically on `DisposeAsync` (including early `break` exits). More in [docs/cookbook/streaming.md](docs/cookbook/streaming.md).
 
-### Available in v0.1
+### 3. Insert returning identity
+
+```csharp
+[Command(
+    "INSERT INTO orders (customer_id, total) VALUES (@customerId, @total)",
+    Kind = CommandKind.Identity)]
+public partial Task<int> InsertOrderAsync(int customerId, decimal total, CancellationToken ct);
+```
+
+`CommandKind.Identity` appends the provider-aware identity suffix (`SCOPE_IDENTITY()` for SQL Server, `LAST_INSERT_ROWID()` for Sqlite, `RETURNING` for Postgres). More in [docs/cookbook/commands.md](docs/cookbook/commands.md).
+
+### 4. Stored procedure with output parameters
+
+```csharp
+[StoredProcedure("usp_insert_order")]
+public partial Task<(int rowsAffected, int newOrderId, decimal computedTotal)> InsertOrderSprocAsync(
+    int customerId, CancellationToken ct);
+```
+
+The first tuple field is the result-set materialization (here: rows-affected). Subsequent named tuple fields map to `ParameterDirection.Output` SQL parameters by name. More in [docs/cookbook/stored-procedures.md](docs/cookbook/stored-procedures.md).
+
+## Capabilities by milestone
+
+### Added in v0.1
 
 - `[Query]` with scalar (`Task<int>`, `Task<T?>`) and FlatRow (`Task<TRow?>`) return shapes.
 - 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants.
