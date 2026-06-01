@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM.GeneratorCollision.AotSmoke</RootNamespace>
+    <AssemblyName>ZeroAlloc.ORM.GeneratorCollision.AotSmoke</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+
+    <!-- Both ZA.Rest and ZA.ORM expose a [Query] attribute (parameter-level vs.
+         method-level, respectively). The collision surfaces only when both `using`
+         directives appear in the same file. We keep them in separate files to
+         exercise the realistic adopter shape; if anyone copy-pastes both `using`
+         imports later, the CS0104 ambiguity is a compile error, not a runtime
+         surprise — this csproj proves the generators can coexist in one
+         assembly without partial-slot or assembly-attribute collisions. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ZA.ORM: project references (local dev, NOT NuGet). -->
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ZA.Rest: latest published 1.1.x from NuGet. The main package bundles the
+         source generator as an analyzer, so a single PackageReference is all we
+         need. See https://www.nuget.org/packages/ZeroAlloc.Rest. -->
+    <PackageReference Include="ZeroAlloc.Rest" Version="1.1.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+  </ItemGroup>
+</Project>
