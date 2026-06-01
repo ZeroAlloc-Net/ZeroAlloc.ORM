@@ -8,6 +8,12 @@ on:
 
 jobs:
   build-test:
+    # ubuntu-latest ships Docker Engine pre-installed, which the v0.6 Postgres
+    # integration suite (tests/ZeroAlloc.ORM.Integration.Tests/Postgres/) needs
+    # — Testcontainers.PostgreSql boots a `postgres:16-alpine` container per
+    # test fixture instance. Switching to a runner without Docker (e.g.
+    # windows-latest without Docker Desktop) will break the Postgres tests;
+    # the Sqlite + snapshot + AOT-smoke suites do NOT depend on Docker.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,6 +23,14 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
+
+      # Pin the Docker prereq for the Postgres integration fixture (A.5).
+      # Surfaces a clear error if a future runner image drops Docker pre-
+      # install instead of failing deep in the Testcontainers boot path.
+      - name: Verify Docker is available (for Postgres integration tests)
+        run: |
+          docker --version
+          docker info
 
       - name: Restore
         run: dotnet restore
