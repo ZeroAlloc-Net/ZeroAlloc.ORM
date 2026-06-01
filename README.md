@@ -207,6 +207,40 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 
 Deferred to later milestones: recursive composites (v0.6+, ZAO052 flags them today); ActivitySource / built-in observability (v0.6 via ZA.Telemetry composition); Postgres / SQL Server integration fixtures including stored-procedure round-trips (v0.6); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2).
 
+## Diagnostics catalog
+
+ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
+
+| Code | Severity | Trigger | Link |
+|------|----------|---------|------|
+| ZAO001 | Error | Annotated method must be partial | [ZAO001](docs/diagnostics/ZAO001.md) |
+| ZAO002 | Error | Unsupported return type | [ZAO002](docs/diagnostics/ZAO002.md) |
+| ZAO003 | Error | No `IAsyncDbConnection` found on containing type | [ZAO003](docs/diagnostics/ZAO003.md) |
+| ZAO004 | Error | Containing type must be partial | [ZAO004](docs/diagnostics/ZAO004.md) |
+| ZAO005 | Error | Multiple ORM attributes on one method | [ZAO005](docs/diagnostics/ZAO005.md) |
+| ZAO006 | Warning | Method has multiple `CancellationToken` parameters | [ZAO006](docs/diagnostics/ZAO006.md) |
+| ZAO007 | Error | `IAsyncEnumerable<T>` return without `[EnumeratorCancellation]` | [ZAO007](docs/diagnostics/ZAO007.md) |
+| ZAO008 | Error | Multi-statement SQL with single-result return type | [ZAO008](docs/diagnostics/ZAO008.md) |
+| ZAO009 | Warning | Redundant `async` keyword on generated partial | [ZAO009](docs/diagnostics/ZAO009.md) |
+| ZAO020 | Info | `[Query](FromResource = true)` not yet implemented | [ZAO020](docs/diagnostics/ZAO020.md) |
+| ZAO022 | Info | Return type shape not yet supported | [ZAO022](docs/diagnostics/ZAO022.md) |
+| ZAO032 | Error | Tuple arity exceeds SQL statement count | [ZAO032](docs/diagnostics/ZAO032.md) |
+| ZAO033 | Error | SQL statement count exceeds tuple arity | [ZAO033](docs/diagnostics/ZAO033.md) |
+| ZAO040 | Error | No construction strategy resolved for type | [ZAO040](docs/diagnostics/ZAO040.md) |
+| ZAO041 | Error | No binding strategy resolved for parameter | [ZAO041](docs/diagnostics/ZAO041.md) |
+| ZAO042 | Error | `[StoreAsString]` requires an enum type | [ZAO042](docs/diagnostics/ZAO042.md) |
+| ZAO043 | Error | `[Materialize(Factory)]` references missing method | [ZAO043](docs/diagnostics/ZAO043.md) |
+| ZAO044 | Error | Ambiguous convention discovery | [ZAO044](docs/diagnostics/ZAO044.md) |
+| ZAO050 | Warning | Nullable composite type requires runtime all-or-nothing check | [ZAO050](docs/diagnostics/ZAO050.md) |
+| ZAO051 | Error | Factory parameter does not match any SELECT column | [ZAO051](docs/diagnostics/ZAO051.md) |
+| ZAO052 | Error | Recursive composite types are not supported | [ZAO052](docs/diagnostics/ZAO052.md) |
+| ZAO060 | Error | `[StoredProcedure]` async method has out/ref parameter (reserved) | [ZAO060](docs/diagnostics/ZAO060.md) |
+| ZAO061 | Error | `[StoredProcedure]` name is empty | [ZAO061](docs/diagnostics/ZAO061.md) |
+| ZAO062 | Warning | Named-tuple field does not match any parameter | [ZAO062](docs/diagnostics/ZAO062.md) |
+| ZAO063 | Error | `[Param(Name = ...)]` override is not supported on composite parameters | [ZAO063](docs/diagnostics/ZAO063.md) |
+
+A unit test (`DiagnosticHelpLinkTests`) enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/` — broken links can't be shipped.
+
 ## Design + roadmap
 
 - **Design:** [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) — 5-section v1.0 design covering architecture, generator surface, convention discovery, diagnostics, test strategy, milestones.
