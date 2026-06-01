@@ -351,22 +351,28 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
   (`v0.6-T2` full catalog audit) where every ZAO code gets a per-trigger
   unit test pass anyway.
 
-### v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite
+### ~~v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite~~ — ✅ resolved in v0.6 Phase A
 
 - Source: PR #44 fix-up (2026-05-31).
 - `Microsoft.Data.Sqlite` ≥9.x exposes `CanCreateBatch = true` on `SqliteConnection`,
   but `AdoNet.Async.Adapters.AsAsync()` wrapper reports `CanCreateBatch = false`.
-- Consequence: `MultiResultSetTests` Auto + Never variants both exercise the
-  `;`-joined fallback branch — no integration test in the Sqlite suite actually
-  drives the `IAsyncDbBatch` path. Batch-branch emit is still proven via the
+- Consequence (pre-v0.6): `MultiResultSetTests` Auto + Never variants both
+  exercised the `;`-joined fallback branch — no integration test in the Sqlite
+  suite drove the `IAsyncDbBatch` path. Batch-branch emit was proven via the
   generator snapshot test `MultiResultSetAutoTests.Tuple_with_record_and_list_emits_runtime_CanCreateBatch_branch`.
-- Fix options:
-  1. If the adapter SHOULD forward `CanCreateBatch` from the underlying connection,
-     file as an upstream bug in AdoNet.Async and bump once fixed.
-  2. If the adapter intentionally gates this on its own batch-shape support, add a
-     Postgres / SQL Server integration fixture (already on the v0.5 / v0.6 roadmap)
-     that exercises the batch branch in CI.
-- File-header comment in `MultiResultSetTests.cs` records this state honestly.
+- v0.6 Phase A resolution: Postgres via Npgsql properly forwards
+  `CanCreateBatch == true` through the AdoNet.Async wrapper. The
+  Postgres-backed `MultiResultSetTests` (under `tests/ZeroAlloc.ORM.Integration.Tests/Postgres/`)
+  pins this with an explicit `fx.Connection.CanCreateBatch.Should().BeTrue()`
+  assertion at the top of each Auto variant, and the round-trip succeeds —
+  so the runtime IAsyncDbBatch branch finally has end-to-end coverage.
+  Sqlite continues to drive the fallback branch (no behavioural change there).
+  Whether the Sqlite-specific `AsAsync()` forwarding is fixed upstream remains
+  open as an upstream-adapter polish item — but it no longer blocks ORM
+  integration coverage.
+- File-header comment in `tests/ZeroAlloc.ORM.Integration.Tests/MultiResultSetTests.cs`
+  retains the original honesty about Sqlite's fallback behaviour for
+  archaeology.
 
 ### ~~v0.3-CLN4 — Collapse release-please to a single linked version~~ — ✅ shipped
 
