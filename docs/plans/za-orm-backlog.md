@@ -313,7 +313,7 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
 - Defer to v0.4 polish after Phase D lands; chasing it during Phase A risks reshuffling
   emit semantics for an aesthetic gain.
 
-### v0.4-CLN5 — Diagnose non-default `Batch` on `[StoredProcedure]`
+### ~~v0.4-CLN5 — Diagnose non-default `Batch` on `[StoredProcedure]`~~ — ✅ resolved in v1.0 Phase C
 
 - Source: PR #53 code review (2026-05-31, Phase D fix-up).
 - `StoredProcedureAttribute.Batch` is accepted (kept for surface symmetry with
@@ -321,34 +321,31 @@ deferred rather than blocking the streaming PR. Pick up under v0.3 polish or rol
   command path regardless of `BatchMode.Always` / `BatchMode.Auto`. Adopters writing
   `[StoredProcedure("usp_X", Batch = BatchMode.Always)]` get silent acceptance and
   no behavior change, which is materially confusing.
-- Fix: add an Info-severity diagnostic (tentative ZAO063 — reserve a number in the
-  next phase that touches the descriptor catalog) that fires when `Batch` is set
-  to anything other than the `BatchMode.Never` default on a `[StoredProcedure]`
-  method. Message: "Method '{0}' has [StoredProcedure(Batch = {1})] but Batch is
-  ignored on stored procedures (they encapsulate their own batching semantics)."
-- Defer to v0.4 polish or v0.5; not urgent enough to gate Phase D / Phase E.
+- v1.0 Phase C resolution: added Info-severity diagnostic **ZAO064** which fires
+  when `Batch` is explicitly set to anything other than `BatchMode.Never` on a
+  `[StoredProcedure]` method. Omitting the named arg (sproc default `Never`) and
+  explicit `Batch = BatchMode.Never` both stay silent. Doc at
+  `docs/diagnostics/ZAO064.md`; 5 coverage tests in
+  `tests/ZeroAlloc.ORM.Generator.Tests/Diagnostics/ZAO064Tests.cs`. The reserved
+  ZAO060 slot remained reserved per its catalog comment; ZAO063 had already been
+  taken by the v0.5 Phase B composite `[Param(Name=…)]` diagnostic.
 
-### v0.4-CLN6 — Revisit per-element span granularity for named-tuple ZAO062
+### ~~v0.4-CLN6 — Revisit per-element span granularity for named-tuple ZAO062~~ — ✅ resolved in v0.4 Phase F (review Fix 2)
 
 - Source: PR #55 review (2026-05-31, Phase F).
 - ZAO062 (named-tuple output-parameter field doesn't match any method
-  parameter) currently reports against a cache-safe `LocationInfo` derived
+  parameter) originally reported against a cache-safe `LocationInfo` derived
   from the method declaration rather than the per-element span of the
-  offending tuple field. The cache-safe form was picked deliberately to
-  keep the diagnostic in the incremental-generator hot path without
-  pulling `SyntaxNode` references into the cached model.
-- Trade-off: adopters see the diagnostic anchored on the method signature
-  instead of the specific tuple field, which is slightly noisier when a
-  big tuple has one bad name.
-- Fix options to evaluate later: (1) lift just the tuple-element span into
-  `LocationInfo` (per-element offset within the method declaration —
-  cheap if we already walk the tuple syntax for Phase E emit); (2) keep
-  the method-level location and add the offending field name in the
-  message (lowest cost). Option 2 is already partially in place via the
-  `{0}` placeholder in the diagnostic message.
-- Defer to v0.4 polish or roll into the v0.6 diagnostics-polish milestone
-  (`v0.6-T2` full catalog audit) where every ZAO code gets a per-trigger
-  unit test pass anyway.
+  offending tuple field.
+- Resolved during the original Phase F review iteration (see "Phase F review
+  Fix 2" comment block on the ZAO062 emit in `OrmGenerator.cs`):
+  `TupleTypeSyntax.DescendantNodesAndSelf` is walked to find each
+  `TupleElementSyntax`, and each ZAO062 anchors at the offending element's
+  syntax span. Per-element location is cache-safe because it serialises to
+  the same `LocationInfo` (file path + spans) as the method-level location.
+- v1.0 Phase C added two regression tests (`*_anchors_at_offending_tuple_element_span`,
+  `*_two_typos_produce_two_diagnostics_at_distinct_spans`) to pin the
+  behaviour and confirm the multi-typo case produces distinct squiggles.
 
 ### ~~v0.3-CLN3 — `IAsyncDbConnection.CanCreateBatch` not forwarded for Sqlite~~ — ✅ resolved in v0.6 Phase A
 
@@ -479,20 +476,23 @@ banding — it's the final scope-guard + adopter-docs sweep for the milestone.
 Items surfaced during the v0.5 milestone that are intentionally deferred rather than
 blocking the release PRs. Pick up under v0.5 polish or roll into v0.6.
 
-### v0.5-CLN1 — ZAO050 per-position firing (Heuristic 1 refinement)
+### ~~v0.5-CLN1 — ZAO050 per-position firing (Heuristic 1 refinement)~~ — ✅ resolved in v1.0 Phase C
 
 - Source: v0.5 Phase C review (2026-05-31, PR #62).
-- ZAO050 (nullable composite — partial-null undetectable at compile time) currently fires
-  once per nullable-composite materialization SITE rather than once per nullable-composite
-  POSITION within a composite materialization (e.g. a row containing two `Money?` fields
-  gets one warning at the method, not one warning per field).
-- This is the same trade-off ZAO062 originally had before its tightening pass — the
-  site-level firing was picked for cache-safe `LocationInfo` and to keep the diagnostic
-  out of the per-position hot loop in the incremental generator.
-- Fix options to evaluate later: (1) lift a per-position offset into `LocationInfo`
-  (analogous to the ZAO062 tightening tracked in v0.4-CLN6); (2) keep the site-level
-  location and include the offending field name(s) in the message text.
-- Defer to v0.6 diagnostics polish (`v0.6-T2` full-catalog audit covers this anyway).
+- Original concern: ZAO050 fired once per nullable-composite materialization SITE
+  rather than once per nullable-composite POSITION within a composite
+  materialization (e.g. a row containing two `Money?` fields would get one warning
+  at the method instead of one warning per field).
+- v1.0 Phase C audit: the v0.5 Phase C implementation already iterates
+  `materialization.Columns` and emits a separate ZAO050 per nullable-composite
+  inner column (see `OrmGenerator.cs` ZAO050 emit block). Parameter-side ZAO050
+  is similarly anchored at each `Money? total` parameter's own location. The
+  CLN entry was filed against the pre-Phase-C-2 behaviour and never updated
+  after the per-position emit landed.
+- Action taken: added two regression tests
+  (`Flat_row_with_two_nullable_composite_fields_emits_ZAO050_per_position`,
+  `Two_nullable_composite_parameters_emit_ZAO050_per_parameter`) in
+  `ZAO050Tests.cs` to pin the per-position contract.
 
 ### v0.5-CLN2 — Nullable reference-type composite parameter binding
 
@@ -705,13 +705,17 @@ heading into v1.0 polish:
 
 - **v0.3-CLN2** — Lift keeper-connection / shared-cache helper into SqliteFixture.
 - **v0.4-CLN1** — Investigate single-pipeline architecture for `[Query]` + `[Command]` + `[StoredProcedure]`.
-- **v0.4-CLN5** — Diagnose non-default `Batch` on `[StoredProcedure]` (informational diagnostic).
-- **v0.4-CLN6** — Revisit per-element span granularity for named-tuple ZAO062.
-- **v0.5-CLN1** — ZAO050 per-position firing refinement.
 - **v0.5-CLN2** — Nullable reference-type composite parameter binding.
 - **v0.5-CLN3** — Recursive composite support (ZAO052 still flags them today).
 - **v0.5-CLN4** — Factory parameter-to-column matching falls back to positional.
 - **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream fixes nullable annotations.
+
+Resolved in v1.0 Phase C (selected polish CLNs):
+
+- **v0.4-CLN5** — ✅ ZAO064 (Info) emitted on non-default `Batch` for sprocs.
+- **v0.4-CLN6** — ✅ Per-element span on ZAO062 (originally fixed in Phase F review Fix 2; v1.0 Phase C added regression tests).
+- **v0.5-CLN1** — ✅ ZAO050 fires per nullable-composite position rather than once per method (see CLN entry above).
+- **v0.7-CLN2** — ✅ Bench async-parity confirmed; CLN entry was filed against an incorrect source reading.
 
 Each item carries the original "fix options" and "defer to" notes from its
 milestone-of-origin entry above. None block the v1.0 release gates — they are
