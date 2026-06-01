@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.5 shipped (multi-column composites + `[Materialize(Factory)]` + nullable composite handling). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** Pre-release. v0.6 shipped (Postgres integration fixture + full diagnostics catalog audit + ZA.Telemetry observability cookbook). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -205,7 +205,19 @@ Positional record + matching SELECT column order = no mapping config. Nullable r
 
 - **New diagnostics ZAO050 / ZAO051 / ZAO052 / ZAO063** — composite + factory + sproc-batch guardrails. ZAO050 (nullable-composite partial-null runtime-only check, see above). ZAO051 (factory parameter list unresolved). ZAO052 (recursive composite — a composite ctor parameter that is itself another composite — explicitly deferred to v0.6+ with a clear error). ZAO063 (informational: `[StoredProcedure(Batch = ...)]` with a non-default value is silently ignored — sprocs encapsulate their own batching semantics).
 
-Deferred to later milestones: recursive composites (v0.6+, ZAO052 flags them today); ActivitySource / built-in observability (v0.6 via ZA.Telemetry composition); Postgres / SQL Server integration fixtures including stored-procedure round-trips (v0.6); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2).
+Deferred to later milestones: recursive composites (v0.7+, ZAO052 flags them today, tracked under v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2 still open); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (v0.7+).
+
+### Added in v0.6
+
+- **Postgres integration fixture (Testcontainers)** — `tests/ZeroAlloc.ORM.Integration.Tests/Postgres/` runs the full integration matrix (FlatRow, multi-result-set with real `IAsyncDbBatch`, streaming, stored procedures with `INOUT`/`OUT` params, `[Materialize(Factory)]` against `NUMERIC` columns, composites) against a real Postgres 16 container. Resolves the accumulated v0.3/v0.4/v0.5 deferrals: the runtime `IAsyncDbBatch` branch (v0.3-CLN3), stored-procedure round-trips (v0.4 placeholder), and `Money.FromStorage` against a real decimal provider (v0.5).
+
+- **Diagnostics catalog audit** — every shipping ZAO code now has a dedicated reference page under [`docs/diagnostics/`](docs/diagnostics/) with trigger, fix recipe, code example, and related codes. A new `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown file — broken links can't be shipped. Positive/negative test pairs backfilled for ZAO001 and ZAO043. The catalog table (below) is the canonical adopter-facing index.
+
+- **ZA.Telemetry observability cookbook recipe** — [`docs/cookbook/observability.md`](docs/cookbook/observability.md) shows the composition pattern at the consumer seam: a `partial class OrderRepository` annotated with both `[Query]` (ZA.ORM) and `[Instrument]` (ZA.Telemetry), with the two generators emitting independently. ZA.ORM ships **no built-in `ActivitySource`** — observability lives at the adopter boundary so the package graph stays minimal and consumers pick their own tracing stack. Collision smoke deferred to v0.6-CLN1 (blocked on upstream nullable-annotation fix in ZA.Telemetry's `InstrumentGenerator`).
+
+- **v0.3-CLN1 perf cleanup — GetOrdinal hoisted once per column** — every column-name materialization path (DomainEntity, FlatRow column-name fallback, nullable composite) now emits `var __o_<Col> = __reader.GetOrdinal("<Col>");` ONCE before the materialization body and reuses the local in both the `IsDBNull` and `GetXxx` calls. Eliminates the double-lookup in the hot row-materialization loop.
+
+- **v0.5-CLN5 fix — PR-title lint workflow** — `.github/workflows/pr-title-lint.yml` enforces conventional-commit prefixes (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`, ...) on every PR. Prevents the v0.5 release CHANGELOG hole where `feat:`-less merges silently dropped from release-please's commit aggregation.
 
 ## Diagnostics catalog
 
