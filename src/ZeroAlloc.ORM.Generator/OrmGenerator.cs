@@ -419,6 +419,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ResolveBatchStrategy below — keeping the read in one place avoids a
         // second scan over the attribute's NamedArguments.
         var batchMode = 0; // BatchMode.Auto default
+        var batchExplicitlySet = false;
         if (triggeringAttribute is not null)
         {
             foreach (var named in triggeringAttribute.NamedArguments)
@@ -448,8 +449,33 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && named.Value.Value is int batchValue)
                 {
                     batchMode = batchValue;
+                    batchExplicitlySet = true;
                 }
             }
+        }
+
+        // v1.0 Phase C (v0.4-CLN5) — ZAO064: `[StoredProcedure(Batch=...)]` is
+        // accepted only for symmetry with `[Query]` / `[Command]` but has no
+        // effect on the sproc pipeline (the procedure call is always a single
+        // DbCommand whose result-set traversal lives in the materializer). Fire
+        // ZAO064 only when the adopter explicitly wrote a non-default value;
+        // omitting the named arg (sproc default == BatchMode.Never == 2)
+        // must NOT fire. Info severity — the shape still emits.
+        if (isStoredProcedureAttribute && batchExplicitlySet && batchMode != 2)
+        {
+            var batchModeName = batchMode switch
+            {
+                0 => "Auto",
+                1 => "Always",
+                2 => "Never",
+                _ => batchMode.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            };
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO064",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    "BatchMode." + batchModeName))));
         }
 
         var strategy = ResolveBatchStrategy(sql, batchMode);
@@ -3244,6 +3270,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO061" => DiagnosticDescriptors.ZAO061_EmptyProcedureName,
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         "ZAO063" => DiagnosticDescriptors.ZAO063_ParamNameOnCompositeUnsupported,
+        "ZAO064" => DiagnosticDescriptors.ZAO064_BatchOnStoredProcedureIgnored,
         _ => null,
     };
 
