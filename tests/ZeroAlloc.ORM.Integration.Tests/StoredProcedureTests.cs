@@ -2,27 +2,31 @@ using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests;
 
-// v0.4 Phase D — integration coverage for [StoredProcedure] is DEFERRED to Phase G
-// (Postgres fixture in v0.6). Sqlite — the integration backend in v0.4 — has no
-// native stored-procedure support: there's no CREATE PROCEDURE syntax, and the
-// closest equivalents (views, triggers, table-valued functions) all require the
-// caller to use SELECT/INSERT statements rather than `EXEC procname` /
-// CommandType.StoredProcedure. Routing a Sqlite call through CommandType =
-// StoredProcedure with CommandText = "my_view" surfaces "SQLite Error 1: 'no
-// such function: my_view'" — the driver passes the text through to the parser
-// which expects a function-call statement, not a procedure invocation.
+// v0.4 Phase D — [StoredProcedure] integration coverage on a real-server
+// provider was DEFERRED until the v0.6 Postgres fixture landed. Sqlite has
+// no native stored-procedure support: there's no CREATE PROCEDURE syntax,
+// and the closest equivalents (views, triggers, table-valued functions) all
+// require the caller to use SELECT/INSERT statements rather than `EXEC` /
+// `CALL` / `CommandType.StoredProcedure`.
 //
-// Snapshot + compile-smoke coverage in ZeroAlloc.ORM.Generator.Tests
-// (StoredProcedureEmitTests, StoredProcedureMultiResultTests,
-// CompileSmokeTests.StoredProcedure_*_emit_compiles_cleanly) verify the emit
-// shape end-to-end. Real-server integration lands when Phase G adds the
-// Postgres fixture (`CREATE PROCEDURE` + `CALL`) or a SQL Server fixture
-// (`CREATE PROC` + `EXEC`).
+// v0.6 Phase A.3 RESOLVED this deferral — see
+// `Postgres/StoredProcedureTests.cs` for the real-server round-trip suite
+// covering:
+//   * Function-via-[Query] for rowset returns (Postgres-idiomatic path).
+//   * CREATE PROCEDURE + CALL with INOUT named-tuple output parameter via
+//     [StoredProcedure], proving the v0.4 output-param emit lights up.
+//   * Multi-result-set via function calls under BatchMode.Auto (also
+//     resolves v0.3-CLN3 — IAsyncDbBatch runtime branch finally exercised).
+//
+// This Sqlite placeholder stays as a documentation trail: a future Sqlite
+// adopter discovering `[StoredProcedure]` against Sqlite hits this file
+// first and learns why the integration suite redirects to Postgres.
+[Trait("Provider", "Sqlite")]
 public class StoredProcedureTests
 {
-    [Fact(Skip = "v0.4 Phase D: Sqlite has no native stored procedures. Integration coverage deferred to Phase G with the Postgres / SQL Server fixture. Snapshot tests in StoredProcedureEmitTests verify the emit shape.")]
-    public void StoredProcedure_integration_deferred_to_phase_G()
+    [Fact(Skip = "Sqlite has no native stored procedures. Integration coverage lives in tests/ZeroAlloc.ORM.Integration.Tests/Postgres/StoredProcedureTests.cs (v0.6 Phase A.3).")]
+    public void StoredProcedure_integration_lives_in_postgres_suite()
     {
-        // Placeholder so the deferral is visible in the test output.
+        // Placeholder so the deferral context is visible in dotnet test output.
     }
 }
