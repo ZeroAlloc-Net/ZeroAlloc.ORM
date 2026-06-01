@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.5.0...v0.6.0) (2026-06-01)
+
+
+### Features
+
+* v0.6 Phase A — Postgres integration fixture via Testcontainers ([#68](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/68)) ([1d45801](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/1d45801b8640b8091de5e4cb4c935ee3ed6a1761))
+* v0.6 Phase B — diagnostics catalog audit (docs + tests + README table) ([#69](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/69)) ([c4ae424](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c4ae4242b808b0d7bf411f747d04ea14e35a973f))
+* v0.6 Phase C - ZA.Telemetry observability cookbook recipe ([#70](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/70)) ([be1bdaf](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/be1bdafaec8168066deec740af7f00689791a4e0))
+* v0.6 Phase D - backlog cleanup (GetOrdinal hoist + PR-title lint) ([#71](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/71)) ([fa9747a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/fa9747a38a55db5ddb362804babfff5516a0467a))
+* v0.6 Phase E - README + backlog reconciliation (release prep) ([#72](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/72)) ([701aed4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/701aed4031428007a86998c0fd543c1cf105db34))
+
+
+### Documentation
+
+* **plan:** v0.6 implementation plan (Postgres fixture + diagnostics audit + observability) ([#66](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/66)) ([97f3e63](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/97f3e63c1afa550e5a5edd4c651946d99ec70e20))
+
 ## [0.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.4.0...v0.5.0) (2026-05-31)
 
 
