@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM.Benchmarks</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Mirrors ZA.Rest's BDN project: benchmarks are JIT-targeted (not AOT-published),
+         so AOT call-site warnings are suppressed and warnings are not treated as errors.
+         The ZA.ORM-emitted code itself remains AOT-clean — verified by ZA.ORM.AotSmoke. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- BenchmarkDotNet requires Release config to run; gate this here so a stray
+         `dotnet run` in Debug fails fast with a clear error rather than producing
+         meaningless numbers. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Abstractions\ZeroAlloc.ORM.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+  </ItemGroup>
+</Project>
