@@ -37,13 +37,29 @@ public sealed class PostgresFixture : IAsyncDisposable
 
     public IAsyncDbConnection Connection { get; private set; } = null!;
 
-    public string ConnectionString => _container.GetConnectionString();
+    // Internal — only the streaming "second-connection" test inside this
+    // assembly reaches for the raw connection string. Demoted from public to
+    // keep the fixture's surface minimal (post-review Fix 8).
+    internal string ConnectionString => _container.GetConnectionString();
 
     public PostgresFixture()
     {
         // Testcontainers 4.x requires passing the image to the builder ctor
         // (the parameterless overload is obsolete as of 4.10+).
         _container = new PostgreSqlBuilder("postgres:16-alpine").Build();
+    }
+
+    /// <summary>
+    /// Convenience factory that constructs the fixture and awaits
+    /// <see cref="InitializeAsync"/> in one call so test sites can write
+    /// <c>await using var fx = await PostgresFixture.CreateAndInitializeAsync()</c>
+    /// instead of the two-step ctor + initialize dance.
+    /// </summary>
+    public static async Task<PostgresFixture> CreateAndInitializeAsync()
+    {
+        var fx = new PostgresFixture();
+        await fx.InitializeAsync().ConfigureAwait(false);
+        return fx;
     }
 
     public async ValueTask InitializeAsync()

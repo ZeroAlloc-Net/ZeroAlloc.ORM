@@ -24,12 +24,6 @@ namespace ZeroAlloc.ORM.Integration.Tests.Postgres;
 //                                        15+ supports OUT parameters on
 //                                        procedures; 14 supported only INOUT.
 //                                        We use INOUT for broad compatibility.
-//   * CountOrdersForCustomerAsync      — function returning a scalar, via
-//                                        [Query] with Kind=Scalar-like SELECT
-//                                        that materializes the scalar through
-//                                        the single-row tuple shape. Not used
-//                                        in tests (kept for symmetry with the
-//                                        cookbook example), removed for now.
 //   * GetOrdersAndCountAsync           — multi-result-set via TWO function
 //                                        invocations joined with `;`. The
 //                                        functions encapsulate the procedure-

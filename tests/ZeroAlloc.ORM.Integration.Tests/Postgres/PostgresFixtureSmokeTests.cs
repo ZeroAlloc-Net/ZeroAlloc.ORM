@@ -21,20 +21,16 @@ public sealed class PostgresFixtureSmokeTests
     [Fact]
     public async Task Fixture_starts_opens_runs_select_one_closes_cleanly()
     {
-        var fx = new PostgresFixture();
-        await using (fx.ConfigureAwait(false))
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+
+        var cmd = fx.Connection.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
         {
-            await fx.InitializeAsync().ConfigureAwait(false);
+            cmd.CommandText = "SELECT 1";
+            var result = await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
 
-            var cmd = fx.Connection.CreateCommand();
-            await using (cmd.ConfigureAwait(false))
-            {
-                cmd.CommandText = "SELECT 1";
-                var result = await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
-
-                result.Should().NotBeNull();
-                Convert.ToInt32(result, CultureInfo.InvariantCulture).Should().Be(1);
-            }
+            result.Should().NotBeNull();
+            Convert.ToInt32(result, CultureInfo.InvariantCulture).Should().Be(1);
         }
     }
 
@@ -45,14 +41,10 @@ public sealed class PostgresFixtureSmokeTests
         // and the AdoNet.Async wrapper forwards CanCreateBatch on real-batching providers.
         // This test pins the assumption that the Postgres-backed multi-result-set Auto
         // tests will exercise the IAsyncDbBatch branch (not the ;-joined fallback that
-        // Sqlite forces). If this fails, the Auto/Never tests in MultiResultSetTests
+        // Sqlite forces). If this fails, the Auto/Never tests in PostgresMultiResultSetTests
         // collapse to the same fallback — and we need to either (a) chase the AdoNet.Async
         // forwarding, or (b) downgrade the v0.3-CLN3 close-out claim.
-        var fx = new PostgresFixture();
-        await using (fx.ConfigureAwait(false))
-        {
-            await fx.InitializeAsync().ConfigureAwait(false);
-            fx.Connection.CanCreateBatch.Should().BeTrue();
-        }
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        fx.Connection.CanCreateBatch.Should().BeTrue();
     }
 }

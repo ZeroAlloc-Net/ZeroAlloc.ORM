@@ -30,7 +30,9 @@ jobs:
       - name: Verify Docker is available (for Postgres integration tests)
         run: |
           docker --version
+          echo "::group::docker info"
           docker info
+          echo "::endgroup::"
 
       - name: Restore
         run: dotnet restore
