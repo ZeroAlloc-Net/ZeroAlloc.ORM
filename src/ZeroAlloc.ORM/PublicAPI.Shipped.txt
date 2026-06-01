@@ -1,1 +1,9 @@
 #nullable enable
+ZeroAlloc.ORM.ZeroAllocOrmMaterializationException
+ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException() -> void
+ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException(string! message) -> void
+ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException(string! message, System.Exception! inner) -> void
+ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException
+ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException.ZeroAllocOrmVersionMismatchException() -> void
+ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException.ZeroAllocOrmVersionMismatchException(string! message) -> void
+ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException.ZeroAllocOrmVersionMismatchException(string! message, System.Exception! inner) -> void
