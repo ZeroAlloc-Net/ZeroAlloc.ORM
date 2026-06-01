@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.0.0...v1.1.0) (2026-06-01)
+
+
+### Features
+
+* v1.1 Phase A - MigrationRunner core + Sqlite ([#95](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/95)) ([732f145](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/732f1453f22586e752284727327921ba345f2527))
+* v1.1 Phase B - PostgresMigrationDialect with pg_advisory_lock ([#96](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/96)) ([fe0556e](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/fe0556eda3c0b93d00e8d033d624dd7d102d281f))
+* v1.1 Phase C - cookbook migrations recipe ([#97](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/97)) ([4728a9c](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/4728a9c2e87e7f84f7a77b8c4198254b771e257c))
+* v1.1 Phase D - README + Shipped.txt promotion + backlog reconciliation ([#98](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/98)) ([37a06e7](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/37a06e770768762460ed4d500d7c27593732c27d))
+
+
+### Documentation
+
+* **plan:** v1.1 implementation plan (MigrationRunner) ([#93](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/93)) ([91fb885](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/91fb885aff751e085ac5388c3dbe3db53f3fa532))
+
 ## [1.0.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.7.0...v1.0.0) (2026-06-01)
 
 
