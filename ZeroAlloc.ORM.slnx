@@ -12,6 +12,7 @@
     <Project Path="tests/ZeroAlloc.ORM.Integration.Tests/ZeroAlloc.ORM.Integration.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.AotSmoke/ZeroAlloc.ORM.AotSmoke.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Benchmarks/ZeroAlloc.ORM.Benchmarks.csproj" />
+    <Project Path="tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj" />
     <Project Path="tests/ZeroAlloc.TypeConversions.Tests/ZeroAlloc.TypeConversions.Tests.csproj" />
   </Folder>
   <Folder Name="/docs/" />
