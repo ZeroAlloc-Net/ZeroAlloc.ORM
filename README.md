@@ -2,7 +2,7 @@
 
 <p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
 
-> **Status:** Pre-release. v0.7 shipped (BenchmarkDotNet suite + ZA.Rest collision smoke + README polish + v1.0 public-API freeze via PublicApiAnalyzers). Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+> **Status:** **v1.0.0 — API frozen, stable, AOT-clean.** Public surface locked at 103 entries / 16 types via `PublicAPI.Shipped.txt`; the v1.x line is additive-only. Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
 
 ## What it is
 
@@ -220,7 +220,7 @@ The first tuple field is the result-set materialization (here: rows-affected). S
 
 - **New diagnostics ZAO050 / ZAO051 / ZAO052 / ZAO063** — composite + factory + sproc-batch guardrails. ZAO050 (nullable-composite partial-null runtime-only check, see above). ZAO051 (factory parameter list unresolved). ZAO052 (recursive composite — a composite ctor parameter that is itself another composite — explicitly deferred to v0.6+ with a clear error). ZAO063 (informational: `[StoredProcedure(Batch = ...)]` with a non-default value is silently ignored — sprocs encapsulate their own batching semantics).
 
-Deferred to later milestones: recursive composites (v1.0+, ZAO052 flags them today, tracked under v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2 still open); TVPs / array parameters / `SqlBulkCopy` (out of v1.0 scope); provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (v1.0 if adopter demand surfaces); Docusaurus website + DocFX API reference (v1.0-G2); cookbook polish pass (v1.0-G1); v0.5-CLN2 nullable RT composite binding; ZA.Telemetry collision smoke (v0.6-CLN1, blocked on upstream nullable-annotation fix).
+Deferred past v1.0 (see **Roadmap beyond v1.0** below): recursive composites (ZAO052 flags them today, v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2); TVPs / array parameters / `SqlBulkCopy` (v2 scope); runtime provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (gated on adopter demand); ZA.Telemetry collision smoke (v0.6-CLN1, blocked on upstream nullable-annotation fix); Postgres benchmark numbers (v1.0-CLN1, gated on Docker availability during the capture window).
 
 ### Added in v0.6
 
@@ -243,6 +243,18 @@ Deferred to later milestones: recursive composites (v1.0+, ZAO052 flags them tod
 - **README + Quick Start polish (Phase C)** — packages table now carries an AOT compatibility column (every shipping package marked ✅), four canonical Quick Start snippets at the top of the doc (single-row read, streaming, insert-returning-identity, stored procedure with output params), and a dedicated **NativeAOT compatibility** section calling out the AOT smoke + collision smoke gates and pointing at the benchmark suite for performance numbers.
 
 - **v1.0 public-API surface freeze** — `Microsoft.CodeAnalysis.PublicApiAnalyzers` is wired across `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, and `ZeroAlloc.TypeConversions`, with `PublicAPI.Shipped.txt` baselined at **103 entries across 16 public types**. Any accidental addition / change / removal of a public member now breaks `dotnet build`. The surface lock holds until v1.0 ships, and any v1.x evolution must go through the additive `PublicAPI.Unshipped.txt` path with explicit reviewer sign-off.
+
+### Added in v1.0
+
+- **Cookbook completion (8 recipes)** — the design Section 5 cookbook target hits all eight adopter-facing pages: [`flat-row.md`](docs/cookbook/flat-row.md) (positional-record single-row reads — promoted from coverage scattered across `multi-result-set.md` + `commands.md`) and [`provider-quirks.md`](docs/cookbook/provider-quirks.md) (Sqlite / PostgreSQL / SQL Server / MySQL differences consolidated in one place) join the six recipes shipped across v0.3-v0.6 (`multi-result-set.md`, `streaming.md`, `commands.md`, `stored-procedures.md`, `composites.md`, `observability.md`). All eight audited for compile-clean code samples + cross-links to diagnostics.
+
+- **Rendered docs at [orm.zeroalloc.net](https://orm.zeroalloc.net)** — Docusaurus app wired through the shared [ZeroAlloc.Website](https://github.com/ZeroAlloc-Net/ZeroAlloc.Website) monorepo (canonical per-package pattern: `apps/docs-orm/` + `repos/orm/`). Cookbook, diagnostics catalog, benchmarks, and design doc all surface there. Go-live coupled to ZA.Website PR #25 (currently blocked on ZA.Website-side ruleset config; tracked as v1.0-CLN2).
+
+- **Polish CLNs (4 selected, low-risk)** — final pre-freeze sweep:
+  - **ZAO064** (Info) — `[StoredProcedure(Batch = …)]` set to anything other than `BatchMode.Never` is silently ignored by the sproc emit path. The new info diagnostic surfaces this so adopters don't reach for it expecting behaviour change. Resolves v0.4-CLN5.
+  - **ZAO062 per-element span** — when a stored procedure has multiple typo'd named-tuple output fields, ZAO062 now anchors at each offending tuple-element's own syntax span (one squiggle per typo) rather than the whole tuple-return type. Resolves v0.4-CLN6.
+  - **ZAO050 per-position firing** — when a row materializes two `Money?` fields, ZAO050 fires once per nullable-composite position rather than once per method site. Audit revealed v0.5 Phase C already emitted per-position; v1.0 Phase C added regression tests to pin the contract. Resolves v0.5-CLN1.
+  - **Benchmark async-parity** — `MultiRowReadBench.Dapper_AOT` audited and confirmed already on `QueryAsync<T>` (not the sync `Query<T>`). The original v0.7-CLN2 concern was filed against an incorrect source reading; the comparison is genuinely async-async. Numbers re-captured in [`docs/benchmarks/v0.7.0-sqlite-results.md`](docs/benchmarks/v0.7.0-sqlite-results.md) without the Caveat block. Resolves v0.7-CLN2.
 
 ## NativeAOT compatibility
 
@@ -287,6 +299,7 @@ ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code
 | ZAO061 | Error | `[StoredProcedure]` name is empty | [ZAO061](docs/diagnostics/ZAO061.md) |
 | ZAO062 | Warning | Named-tuple field does not match any parameter | [ZAO062](docs/diagnostics/ZAO062.md) |
 | ZAO063 | Error | `[Param(Name = ...)]` override is not supported on composite parameters | [ZAO063](docs/diagnostics/ZAO063.md) |
+| ZAO064 | Info | `[StoredProcedure(Batch = ...)]` non-default value is ignored | [ZAO064](docs/diagnostics/ZAO064.md) |
 
 A unit test (`DiagnosticHelpLinkTests`) enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/` — broken links can't be shipped.
 
@@ -314,6 +327,31 @@ Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each pa
 - **Design:** [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) — 5-section v1.0 design covering architecture, generator surface, convention discovery, diagnostics, test strategy, milestones.
 - **Backlog:** [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md) — priority-banded task list. New findings during implementation get appended.
 - **Ecosystem context:** sits alongside [ZeroAlloc.Mediator](https://github.com/ZeroAlloc-Net/ZeroAlloc.Mediator), [ZeroAlloc.Mapping](https://github.com/ZeroAlloc-Net/ZeroAlloc.Mapping), [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects), [ZeroAlloc.Validation](https://github.com/ZeroAlloc-Net/ZeroAlloc.Validation). Substrate is [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async) (AOT-compatible since v1.x).
+
+## Roadmap beyond v1.0
+
+With v1.0 shipped, the project enters **maintenance mode under SemVer**. The public surface (103 entries / 16 types) is locked; v1.x releases are additive-only and any breaking change pushes to v2.0.
+
+**Carry-forward backlog (post-1.0 polish, none of which blocks adopter use today):**
+
+- **v0.3-CLN2** — Lift the keeper-connection / shared-cache helper into `SqliteFixture`. Single-test pattern today; promote once a second adopter lands.
+- **v0.4-CLN1** — Investigate single-pipeline architecture across `[Query]` / `[Command]` / `[StoredProcedure]` (current `Collect()` + `SelectMany` union step collapses incremental-cache granularity).
+- **v0.5-CLN2** — Nullable reference-type composite parameter binding (struct case ships in v0.5; reference-type case routes through ZAO041 today).
+- **v0.5-CLN3** — Recursive composite support (ZAO052 explicitly flags them; generalize the classifier + column-index walk).
+- **v0.5-CLN4** — Factory parameter-to-column SQL-parser-based name matching (gated on ORM-V2-3).
+- **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream `InstrumentGenerator` preserves nullable annotations.
+- **v0.7-CLN1 (Postgres portion)** — Capture Postgres BDN numbers once a Docker-reachable machine is available. Sqlite portion shipped.
+- **v1.0-CLN1** — Capture Postgres benchmark numbers (Docker daemon was not available during the v1.0 capture window).
+- **v1.0-CLN2** — ZA.Website ruleset / `orm.zeroalloc.net` go-live (tracked in the ZeroAlloc.Website repo, PR #25).
+
+**v2.0 design space** sketched in [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) Section 5 (lines 656+):
+
+- Composites with arbitrary recursive nesting.
+- Table-valued parameters (SQL Server `READONLY` types, Postgres array params `int[]` / `text[]`).
+- `SqlBulkCopy` semantics + provider equivalents.
+- Runtime provider routing of identity suffixes beyond Sqlite (SQL Server `SCOPE_IDENTITY()` / Postgres `RETURNING`).
+- Schema-drift detection (opt-in analyzer with DB connection at compile time).
+- Broader primitive catalog (`BigInteger`, `Half`, `Int128`/`UInt128`).
 
 ## License
 
