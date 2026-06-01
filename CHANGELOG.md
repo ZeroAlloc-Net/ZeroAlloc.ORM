@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.6.0...v0.7.0) (2026-06-01)
+
+
+### Features
+
+* v0.7 Phase A - BenchmarkDotNet suite (workloads + baselines) ([#76](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/76)) ([b8833ab](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/b8833ab6e835a293312cf485d0906818ef292888))
+* v0.7 Phase B - ZA.Rest collision smoke (v1.0 gate) ([#77](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/77)) ([dc8d857](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/dc8d857c0df0ee6f3c4c554d5f2763f276c4a741))
+* v0.7 Phase C - README + Quick Start polish ([#78](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/78)) ([464c9a4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/464c9a4a709f7d4bb64449e5e460a32aae9f3009))
+* v0.7 Phase D - API review + PublicApiAnalyzers + v1.0 surface lock ([#81](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/81)) ([5f8bf51](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/5f8bf51c35fe18e167101d3882df08782d7fae1a))
+* v0.7 Phase E - README + backlog reconciliation (release prep) ([#82](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/82)) ([7263fd6](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/7263fd681a60eb3cff87e8ae6f36948906b518ee))
+
+
+### Documentation
+
+* **plan:** v0.7 implementation plan (benchmarks + collision + API review) ([#74](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/74)) ([76a404e](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/76a404e84f72985115608c4e03719fada984c32e))
+
 ## [0.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v0.5.0...v0.6.0) (2026-06-01)
 
 
