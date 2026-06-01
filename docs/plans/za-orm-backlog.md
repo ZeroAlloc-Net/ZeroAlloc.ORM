@@ -566,6 +566,27 @@ Single `docs/cookbook/observability.md` page showing the `[Instrument]` interfac
 
 ---
 
+## Post-v0.6 cleanup
+
+Items surfaced during the v0.6 milestone that are intentionally deferred rather than
+blocking the release PRs. Pick up under v0.6 polish or roll into v0.7.
+
+### v0.6-CLN1 — Re-attempt ZA.Telemetry collision smoke test
+
+- Source: v0.6 Phase C (2026-06-01).
+- Attempted to ship a `tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/` project
+  composing `[Instrument]` (ZA.Telemetry) with `[Query]` (ZA.ORM) but the build
+  hit nullable-annotation issues in ZA.Telemetry's InstrumentGenerator:
+  - CS8613: wrapper method drops nullable annotation on `Task<T?>` return types.
+  - CS8603: possible null reference return on the generated wrapper.
+- Backed out the smoke project + workflow in v0.6 Phase C fix-up.
+- Re-attempt once ZA.Telemetry ships a generator update that preserves
+  nullable annotations across the `[Instrument]` boundary.
+- Cookbook recipe at `docs/cookbook/observability.md` retains the
+  conceptual composition pattern.
+
+---
+
 ## P2 — Milestone v0.7 (1 week): benchmarks + collision + polish
 
 ### v0.7-T1 — Benchmark suite
