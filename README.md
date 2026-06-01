@@ -290,6 +290,10 @@ ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code
 
 A unit test (`DiagnosticHelpLinkTests`) enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/` — broken links can't be shipped.
 
+## Documentation
+
+Rendered docs (cookbook, diagnostics catalog, benchmarks, design doc) live at **[orm.zeroalloc.net](https://orm.zeroalloc.net)** — built from this repo's `docs/` directory by the ZA ecosystem website at [ZeroAlloc-Net/ZeroAlloc.Website](https://github.com/ZeroAlloc-Net/ZeroAlloc.Website).
+
 ## Cookbook recipes
 
 Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each page is paste-into-fresh-project quality with provider notes and diagnostics cross-links.

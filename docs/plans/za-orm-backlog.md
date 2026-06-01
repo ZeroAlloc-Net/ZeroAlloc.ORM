@@ -670,7 +670,7 @@ blocking the release PRs. Pick up under v0.7 polish or roll into v1.0.
 
 - Source: v0.7 Phase A (PR #76).
 - Captured 2026-06-01 against Sqlite in-memory + .NET SDK 10.0.300 + BDN 0.15.2
-  (PR #83). Results live in [`docs/benchmarks/v0.7.0-sqlite-results.md`](../../docs/benchmarks/v0.7.0-sqlite-results.md);
+  (PR #83). Results live in [`docs/benchmarks/v0.7.0-sqlite-results.md`](../benchmarks/v0.7.0-sqlite-results.md);
   README's NativeAOT section cites the inline ratios.
 - Postgres portion still open — capture attempt yielded NA-only tables because
   the local Docker daemon was offline. Re-capture when running on a machine
