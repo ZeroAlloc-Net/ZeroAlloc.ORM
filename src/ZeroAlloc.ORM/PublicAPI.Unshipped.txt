@@ -1,1 +1,40 @@
 #nullable enable
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.EmbeddedResourceMigrationSource(System.Reflection.Assembly! assembly, string? resourceNamespacePrefix = null) -> void
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.IMigrationDialect
+ZeroAlloc.ORM.Migrations.IMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.IMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.IMigrationSource
+ZeroAlloc.ORM.Migrations.IMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SqliteMigrationDialect() -> void
+ZeroAlloc.ORM.Migrations.Migration
+ZeroAlloc.ORM.Migrations.Migration.<Clone>$() -> ZeroAlloc.ORM.Migrations.Migration!
+ZeroAlloc.ORM.Migrations.MigrationRunner
+ZeroAlloc.ORM.Migrations.MigrationRunner.MigrationRunner(System.Data.Async.IAsyncDbConnection! connection, ZeroAlloc.ORM.Migrations.IMigrationSource! source, ZeroAlloc.ORM.Migrations.IMigrationDialect! dialect) -> void
+ZeroAlloc.ORM.Migrations.MigrationRunner.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!>!
+ZeroAlloc.ORM.Migrations.Migration.AppliedAt.get -> System.DateTime?
+ZeroAlloc.ORM.Migrations.Migration.AppliedAt.init -> void
+ZeroAlloc.ORM.Migrations.Migration.Deconstruct(out int Version, out string! Name, out string! Sql, out System.DateTime? AppliedAt) -> void
+ZeroAlloc.ORM.Migrations.Migration.Equals(ZeroAlloc.ORM.Migrations.Migration? other) -> bool
+ZeroAlloc.ORM.Migrations.Migration.Migration(int Version, string! Name, string! Sql, System.DateTime? AppliedAt = null) -> void
+ZeroAlloc.ORM.Migrations.Migration.Name.get -> string!
+ZeroAlloc.ORM.Migrations.Migration.Name.init -> void
+ZeroAlloc.ORM.Migrations.Migration.Sql.get -> string!
+ZeroAlloc.ORM.Migrations.Migration.Sql.init -> void
+ZeroAlloc.ORM.Migrations.Migration.Version.get -> int
+ZeroAlloc.ORM.Migrations.Migration.Version.init -> void
+override ZeroAlloc.ORM.Migrations.Migration.Equals(object? obj) -> bool
+override ZeroAlloc.ORM.Migrations.Migration.GetHashCode() -> int
+override ZeroAlloc.ORM.Migrations.Migration.ToString() -> string!
+static ZeroAlloc.ORM.Migrations.Migration.operator !=(ZeroAlloc.ORM.Migrations.Migration? left, ZeroAlloc.ORM.Migrations.Migration? right) -> bool
+static ZeroAlloc.ORM.Migrations.Migration.operator ==(ZeroAlloc.ORM.Migrations.Migration? left, ZeroAlloc.ORM.Migrations.Migration? right) -> bool

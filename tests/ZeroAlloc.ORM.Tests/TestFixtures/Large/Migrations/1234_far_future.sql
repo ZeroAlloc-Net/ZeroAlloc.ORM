@@ -1,0 +1,1 @@
+CREATE TABLE far_future (id INTEGER PRIMARY KEY);

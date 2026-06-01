@@ -1,0 +1,1 @@
+CREATE TABLE alt_only (id INTEGER PRIMARY KEY);
