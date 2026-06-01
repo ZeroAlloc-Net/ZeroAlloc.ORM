@@ -290,6 +290,21 @@ ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code
 
 A unit test (`DiagnosticHelpLinkTests`) enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/` — broken links can't be shipped.
 
+## Cookbook recipes
+
+Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each page is paste-into-fresh-project quality with provider notes and diagnostics cross-links.
+
+| Recipe | Description |
+|--------|-------------|
+| [flat-row.md](docs/cookbook/flat-row.md) | Single-row reads → positional record (`Task<T?>` / `Task<T>`). |
+| [multi-result-set.md](docs/cookbook/multi-result-set.md) | `(head, lines)` tuple returns; `BatchMode.Auto` / `Always` / `Never`. |
+| [streaming.md](docs/cookbook/streaming.md) | `IAsyncEnumerable<T>` for unbounded result sets. |
+| [commands.md](docs/cookbook/commands.md) | `[Command]` — `NonQuery` / `Scalar` / `Identity`. |
+| [stored-procedures.md](docs/cookbook/stored-procedures.md) | `[StoredProcedure]` with output parameters + multi-result-set sprocs. |
+| [composites.md](docs/cookbook/composites.md) | Multi-column composites (`Money`) + `[Materialize(Factory)]`. |
+| [observability.md](docs/cookbook/observability.md) | ZA.Telemetry composition (`[Instrument]` + `[Trace]` + `[Count]` + `[Histogram]`). |
+| [provider-quirks.md](docs/cookbook/provider-quirks.md) | Sqlite / PostgreSQL / SQL Server / MySQL differences. |
+
 ## Design + roadmap
 
 - **Design:** [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) — 5-section v1.0 design covering architecture, generator surface, convention discovery, diagnostics, test strategy, milestones.
