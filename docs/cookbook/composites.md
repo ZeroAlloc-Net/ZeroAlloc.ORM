@@ -268,6 +268,10 @@ don't interact.
 - **MySQL** — `DECIMAL` columns surface as `decimal` via the official
   provider; `MEDIUMTEXT`-backed financial columns need `[Materialize(Factory)]`.
 
+See [`provider-quirks.md`](provider-quirks.md) for the full per-provider
+catalog (decimal-as-text, identifier folding, batch support, identity
+syntax, and more).
+
 ## When NOT to use composites
 
 - **1-arg wrappers** — use the value-object pattern (`[ValueObject]` or a
@@ -313,3 +317,7 @@ don't interact.
   result iteration.
 - [`stored-procedures.md`](stored-procedures.md) — `[StoredProcedure]` for
   procedure-driven calls and output parameters.
+- [`flat-row.md`](flat-row.md) — single-row `Task<T?>` returns; the natural
+  outer shape that holds a composite field.
+- [`provider-quirks.md`](provider-quirks.md) — provider-specific decimal,
+  identifier, and numeric handling.

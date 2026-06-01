@@ -234,6 +234,10 @@ notable differences:
   `Parameter.Direction = Output`. The generator's named-tuple convention
   works the same way.
 
+See [`provider-quirks.md`](provider-quirks.md) for the consolidated
+per-provider catalog (procedure-vs-function distinction, parameter prefixes,
+identifier folding, batch support).
+
 ## When NOT to use `[StoredProcedure]`
 
 - **Postgres functions returning rowsets.** Use
@@ -268,3 +272,7 @@ notable differences:
 - [`streaming.md`](streaming.md) — `IAsyncEnumerable<T>` over large result
   sets. (Sprocs work here too — wrap a procedure-driven stream with the same
   attribute shape.)
+- [`composites.md`](composites.md) — `Money`-style multi-column types as
+  procedure input or as a row field in the result set.
+- [`provider-quirks.md`](provider-quirks.md) — procedure vs function on PG,
+  SQL Server `RETURN value`, MySQL `CALL` wire syntax.

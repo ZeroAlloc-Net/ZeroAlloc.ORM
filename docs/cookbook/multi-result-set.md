@@ -115,3 +115,25 @@ procedure with `[StoredProcedure]` instead of `[Query]`. See Recipe 4 in
 - **Single-value writes / scalar aggregates** — use `[Command]` instead. See
   [`commands.md`](commands.md) for INSERT / UPDATE / DELETE rows-affected,
   scalar aggregates (`COUNT`, `SUM`), and identity (`RETURNING`) capture.
+
+## Related diagnostics
+
+- [`ZAO008`](../diagnostics/ZAO008.md) — multi-statement SQL with a
+  single-result return type (use a tuple return instead).
+- [`ZAO032`](../diagnostics/ZAO032.md) — tuple arity exceeds the number of
+  `;`-separated SQL statements.
+- [`ZAO033`](../diagnostics/ZAO033.md) — SQL statement count exceeds the
+  tuple arity.
+- [`ZAO022`](../diagnostics/ZAO022.md) — return-type shape not supported
+  (e.g. a tuple element whose type the generator can't materialise).
+
+## See also
+
+- [`flat-row.md`](flat-row.md) — single-row `Task<T?>` returns.
+- [`streaming.md`](streaming.md) — `IAsyncEnumerable<T>` for unbounded result
+  sets.
+- [`commands.md`](commands.md) — `[Command]` for non-result-set writes.
+- [`stored-procedures.md`](stored-procedures.md) — same tuple shape, but the
+  procedure body produces the result sets.
+- [`provider-quirks.md`](provider-quirks.md) — per-provider notes on
+  `CanCreateBatch`, `LIMIT` vs `TOP`, and `NextResult` semantics.

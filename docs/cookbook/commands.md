@@ -153,6 +153,9 @@ four of the above. Use the provider-native form when available (`RETURNING` /
 `OUTPUT`) because it survives transaction isolation cleanly and avoids any
 session-state coupling.
 
+See [`provider-quirks.md`](provider-quirks.md) for the consolidated catalog
+of identity-return patterns, parameter prefixes, and identifier folding.
+
 ### Empty-result safety
 
 If the INSERT returns no row — for example `INSERT ... SELECT ... WHERE 1 = 0
@@ -191,3 +194,7 @@ zero-typed identity that didn't come from the database.
   iteration over large result sets.
 - [`stored-procedures.md`](stored-procedures.md) — `[StoredProcedure]` for
   procedure-driven commands and output parameters.
+- [`flat-row.md`](flat-row.md) — single-row `Task<T?>` reads (paired with
+  `[Command(Kind = Identity)]` for the canonical insert-and-fetch pattern).
+- [`provider-quirks.md`](provider-quirks.md) — `RETURNING` /
+  `SCOPE_IDENTITY()` / `LAST_INSERT_ID()` / `last_insert_rowid()` details.
