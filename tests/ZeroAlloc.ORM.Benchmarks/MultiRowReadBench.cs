@@ -81,12 +81,16 @@ public class MultiRowReadBench
         return list;
     }
 
+    // Dapper's natural pattern returns IEnumerable<T>; .AsList() unwraps the
+    // underlying list without re-copying when possible, matching the parity of
+    // the hand-written / ZA.ORM pre-sized lists. Using `[.. rows]` would force
+    // a fresh collection-expression spread and pay an unfair allocation tax.
     [Benchmark]
     public async Task<List<OrderRow>> Dapper_AOT()
     {
         var rows = await _raw.QueryAsync<OrderRow>(
             "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id").ConfigureAwait(false);
-        return [.. rows];
+        return rows.AsList();
     }
 
     // ZA.ORM v0.7 does not support `Task<List<T>>` as a top-level return shape —

@@ -10,8 +10,10 @@ namespace ZeroAlloc.ORM.Benchmarks;
 
 // v0.7 Phase A.3 — INSERT workload (simple non-query). Each iteration inserts
 // one row and returns rows-affected (1). Hand-written / Dapper.AOT / ZA.ORM
-// triad. Per-iteration ID is reset by truncating Orders in [IterationSetup]
-// to keep the PK conflict-free without re-creating the table.
+// triad. Per-iteration ID strategy: `_nextId` increments monotonically across
+// benchmark iterations. The Orders table is never truncated; PK uniqueness is
+// preserved by always inserting a new value. Allocation cost of `_nextId++` is
+// negligible (one increment) and consistent across all three baselines.
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 public class InsertBench

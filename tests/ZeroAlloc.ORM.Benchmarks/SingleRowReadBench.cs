@@ -6,11 +6,6 @@ using System.Data.Async;
 using System.Data.Async.Adapters;
 using ZeroAlloc.ORM;
 
-// v0.7 Phase A.2 — enable Dapper.AOT interceptors at the module level.
-// Without this, Dapper.AOT generates nothing and the Dapper_AOT benchmark
-// falls back to reflection-based Dapper (defeating the comparison).
-[module: global::Dapper.DapperAot]
-
 namespace ZeroAlloc.ORM.Benchmarks;
 
 // v0.7 Phase A.1 — first benchmark workload. Single-row SELECT against an
@@ -96,5 +91,3 @@ public sealed partial class OrderRepository(IAsyncDbConnection connection)
     [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
     public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
 }
-
-public sealed record OrderRow(int Id, int CustomerId, decimal Total);

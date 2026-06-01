@@ -40,7 +40,12 @@ public class MultiResultSetBench
             await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
 
+        // Wrap the 10-row seed in a transaction for symmetry with the larger
+        // seeds in MultiRowReadBench (and to keep the pattern consistent if
+        // LineCount ever grows).
+        await using var tx = (SqliteTransaction)await _raw.BeginTransactionAsync().ConfigureAwait(false);
         var ins = _raw.CreateCommand();
+        ins.Transaction = tx;
         ins.CommandText = "INSERT INTO OrderLines (Id, OrderId, Sku, Qty) VALUES ($id, 1, $sku, $qty)";
         var pId = ins.CreateParameter(); pId.ParameterName = "$id"; ins.Parameters.Add(pId);
         var pSku = ins.CreateParameter(); pSku.ParameterName = "$sku"; ins.Parameters.Add(pSku);
@@ -55,6 +60,7 @@ public class MultiResultSetBench
                 await ins.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
         }
+        await tx.CommitAsync().ConfigureAwait(false);
 
         _repo = new MultiResultSetRepository(_conn);
     }
@@ -125,5 +131,3 @@ public sealed partial class MultiResultSetRepository(IAsyncDbConnection connecti
         int id,
         CancellationToken ct);
 }
-
-public sealed record OrderLineRow(int Id, int OrderId, string Sku, int Qty);

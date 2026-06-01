@@ -32,19 +32,27 @@ public class PostgresMultiRowReadBench
             "CREATE TABLE Orders (Id INTEGER PRIMARY KEY, CustomerId INTEGER, Total NUMERIC(18,4));")
             .ConfigureAwait(false);
 
-        // Bulk seed via a parameterless multi-VALUES INSERT keeps setup quick.
-        await using var ins = _raw.CreateCommand();
-        ins.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)";
-        var pId = ins.CreateParameter(); pId.ParameterName = "@id"; ins.Parameters.Add(pId);
-        var pCust = ins.CreateParameter(); pCust.ParameterName = "@cust"; ins.Parameters.Add(pCust);
-        var pTotal = ins.CreateParameter(); pTotal.ParameterName = "@total"; ins.Parameters.Add(pTotal);
-        for (var i = 1; i <= RowCount; i++)
+        // Seed 1000 rows wrapped in a single transaction — without this, each
+        // per-row INSERT becomes its own Postgres round-trip and setup balloons
+        // to ~1000 sequential network hops. Mirrors the Sqlite variant's
+        // transaction-wrapped seed loop.
+        await using var tx = await _raw.BeginTransactionAsync().ConfigureAwait(false);
+        await using (var ins = _raw.CreateCommand())
         {
-            pId.Value = i;
-            pCust.Value = 100 + (i % 50);
-            pTotal.Value = 9.99m + i;
-            await ins.ExecuteNonQueryAsync().ConfigureAwait(false);
+            ins.Transaction = tx;
+            ins.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)";
+            var pId = ins.CreateParameter(); pId.ParameterName = "@id"; ins.Parameters.Add(pId);
+            var pCust = ins.CreateParameter(); pCust.ParameterName = "@cust"; ins.Parameters.Add(pCust);
+            var pTotal = ins.CreateParameter(); pTotal.ParameterName = "@total"; ins.Parameters.Add(pTotal);
+            for (var i = 1; i <= RowCount; i++)
+            {
+                pId.Value = i;
+                pCust.Value = 100 + (i % 50);
+                pTotal.Value = 9.99m + i;
+                await ins.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
         }
+        await tx.CommitAsync().ConfigureAwait(false);
 
         _repo = new PostgresMultiRowRepository(_fx.Connection);
     }
@@ -66,12 +74,16 @@ public class PostgresMultiRowReadBench
         return list;
     }
 
+    // Dapper's natural pattern returns IEnumerable<T>; .AsList() unwraps the
+    // underlying list without re-copying when possible, matching the parity of
+    // the hand-written / ZA.ORM pre-sized lists. Using `[.. rows]` would force
+    // a fresh collection-expression spread and pay an unfair allocation tax.
     [Benchmark]
     public async Task<List<OrderRow>> Dapper_AOT()
     {
         var rows = await _raw.QueryAsync<OrderRow>(
             "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id").ConfigureAwait(false);
-        return [.. rows];
+        return rows.AsList();
     }
 
     // See MultiRowReadBench — `IAsyncEnumerable<T>` is the canonical streaming

@@ -8,12 +8,18 @@
          so AOT call-site warnings are suppressed and warnings are not treated as errors.
          The ZA.ORM-emitted code itself remains AOT-clean — verified by ZA.ORM.AotSmoke. -->
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <!-- BenchmarkDotNet requires Release config to run; gate this here so a stray
-         `dotnet run` in Debug fails fast with a clear error rather than producing
-         meaningless numbers. -->
+    <!-- Server GC + concurrent GC make BDN numbers more representative of
+         production workloads (matching ZA.Rest's BDN setup). -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
+
+  <!-- BDN only produces meaningful numbers in Release config. Surface a warning
+       (not an error) when invoked in Debug so a stray `dotnet run` still builds
+       but the user is told the numbers will be misleading. -->
+  <Target Name="WarnOnNonReleaseConfig" BeforeTargets="Build" Condition="'$(Configuration)' != 'Release'">
+    <Warning Text="BenchmarkDotNet requires -c Release. Build will succeed but benchmark results will be misleading." />
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />

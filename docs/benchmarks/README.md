@@ -27,47 +27,25 @@ shapes — divergence between them is pure framework overhead.
 The benchmarks require **.NET SDK 10.0.300** (see [`global.json`](../../global.json)).
 BenchmarkDotNet only produces meaningful numbers in `Release` configuration.
 
-### Default — Sqlite only (CI-safe, no Docker required)
+### Sqlite (default, fast, CI-safe, no Docker required)
 
 ```bash
-dotnet run -c Release --project tests/ZeroAlloc.ORM.Benchmarks -- \
-  --filter "*Sqlite*" --exporters json markdown
+dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release
 ```
 
-`BenchmarkSwitcher` matches `--filter` against the full benchmark name —
-`*Sqlite*` won't match Sqlite benchmarks directly because the class names
-don't contain "Sqlite". In practice use one of:
+This runs every benchmark **not** marked `[BenchmarkCategory("Postgres")]` —
+i.e. the Sqlite suite. The Postgres classes are tagged with that category and
+opted out by default so a plain `dotnet run` does not require Docker.
+
+### Postgres (slower, requires Docker)
 
 ```bash
-# Run a specific Sqlite workload
-dotnet run -c Release --project tests/ZeroAlloc.ORM.Benchmarks -- \
-  --filter "*SingleRowReadBench*"
-
-# Run every non-Postgres benchmark
-dotnet run -c Release --project tests/ZeroAlloc.ORM.Benchmarks -- \
-  --filter "ZeroAlloc.ORM.Benchmarks.SingleRowReadBench*" \
-  --filter "ZeroAlloc.ORM.Benchmarks.MultiRowReadBench*" \
-  --filter "ZeroAlloc.ORM.Benchmarks.MultiResultSetBench*" \
-  --filter "ZeroAlloc.ORM.Benchmarks.InsertBench*"
+dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release -- --anyCategories Postgres
 ```
 
-### Postgres opt-in (requires Docker)
-
-```bash
-dotnet run -c Release --project tests/ZeroAlloc.ORM.Benchmarks -- \
-  --filter "*Postgres*"
-```
-
-Or include the category explicitly:
-
-```bash
-dotnet run -c Release --project tests/ZeroAlloc.ORM.Benchmarks -- \
-  --anyCategories Postgres
-```
-
-Testcontainers boots `postgres:16-alpine` per fixture, so Docker Desktop /
-Docker Engine must be reachable. Postgres workloads are markedly slower than
-Sqlite — expect ~10× wall-clock for the full suite.
+Postgres benchmarks boot a Testcontainers `postgres:16-alpine` container per
+benchmark class. Slower setup, real-provider numbers. Budget ~10× wall-clock
+for the full Postgres suite versus Sqlite.
 
 ## Interpreting the output
 

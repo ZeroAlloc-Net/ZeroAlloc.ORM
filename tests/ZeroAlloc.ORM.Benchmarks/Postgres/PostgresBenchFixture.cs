@@ -12,6 +12,12 @@ namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 // the xunit + Testcontainers transitive deps would inflate the BDN
 // assembly graph). Same `postgres:16-alpine` image, same NpgsqlConnection
 // wrapped via AsAsync.
+//
+// IMPORTANT: this file is a copy of tests/ZeroAlloc.ORM.Integration.Tests/PostgresFixture.cs.
+// The two MUST stay in sync. Any container-boot logic, Npgsql connection wiring, or
+// disposal-order change made there must be mirrored here (and vice versa). The
+// reason for the deliberate copy (rather than a shared helper project) is the
+// xunit `IsTestProject=true` / transitive-dep pollution documented above.
 internal sealed class PostgresBenchFixture : IAsyncDisposable
 {
     private readonly PostgreSqlContainer _container;
