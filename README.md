@@ -321,6 +321,7 @@ Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each pa
 | [composites.md](docs/cookbook/composites.md) | Multi-column composites (`Money`) + `[Materialize(Factory)]`. |
 | [observability.md](docs/cookbook/observability.md) | ZA.Telemetry composition (`[Instrument]` + `[Trace]` + `[Count]` + `[Histogram]`). |
 | [provider-quirks.md](docs/cookbook/provider-quirks.md) | Sqlite / PostgreSQL / SQL Server / MySQL differences. |
+| [migrations.md](docs/cookbook/migrations.md) | SQL migrations via `MigrationRunner` (versioned, idempotent, multi-instance safe). |
 
 ## Design + roadmap
 
