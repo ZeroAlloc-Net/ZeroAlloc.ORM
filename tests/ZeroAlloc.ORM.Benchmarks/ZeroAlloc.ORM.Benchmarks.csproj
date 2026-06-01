@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ZeroAlloc.ORM.Benchmarks</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Mirrors ZA.Rest's BDN project: benchmarks are JIT-targeted (not AOT-published),
+         so AOT call-site warnings are suppressed and warnings are not treated as errors.
+         The ZA.ORM-emitted code itself remains AOT-clean — verified by ZA.ORM.AotSmoke. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Server GC + concurrent GC make BDN numbers more representative of
+         production workloads (matching ZA.Rest's BDN setup). -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <!-- BDN only produces meaningful numbers in Release config. Surface a warning
+       (not an error) when invoked in Debug so a stray `dotnet run` still builds
+       but the user is told the numbers will be misleading. -->
+  <Target Name="WarnOnNonReleaseConfig" BeforeTargets="Build" Condition="'$(Configuration)' != 'Release'">
+    <Warning Text="BenchmarkDotNet requires -c Release. Build will succeed but benchmark results will be misleading." />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Abstractions\ZeroAlloc.ORM.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+    <!-- Dapper.AOT generates interceptors that replace standard Dapper call
+         sites at build time. The interceptors-preview namespace below opts in
+         to the C# preview feature the generator uses to rewrite Dapper calls.
+         Dapper itself supplies the QueryFirstOrDefaultAsync<T>() extension. -->
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Dapper.AOT" Version="1.0.52" />
+    <!-- Postgres backend variant (Phase A.4). Gated at runtime via the
+         "Postgres" benchmark category - the default `dotnet run` invocation
+         only triggers Sqlite workloads. Run Postgres locally with
+         `dotnet run -c Release [args] *Postgres*` (Docker required). -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <InterceptorsPreviewNamespaces>$(InterceptorsPreviewNamespaces);Dapper.AOT</InterceptorsPreviewNamespaces>
+  </PropertyGroup>
+</Project>
