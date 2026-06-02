@@ -71,4 +71,52 @@ public class ListResultSetTests
             """;
         return Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public Task ListResultSet_Task_List_emits_buffered_list_shape()
+    {
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderListRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT @limit OFFSET @offset")]
+                public partial Task<List<OrderListRow>> ListOrdersAsync(
+                    int limit, int offset, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public Task ListResultSet_Task_IList_emits_buffered_list_shape()
+    {
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderListRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT @limit OFFSET @offset")]
+                public partial Task<IList<OrderListRow>> ListOrdersAsync(
+                    int limit, int offset, CancellationToken ct);
+            }
+            """;
+        return Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

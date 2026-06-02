@@ -77,12 +77,15 @@ public class CompositeDetectionTests
     [Fact]
     public void Task_of_List_of_composite_row_emits_ZAO022()
     {
-        // v0.5 Phase A (post-review Fix 11) — locks the deferral of `Task<List<T>>`
-        // even when the row type is a composite-containing FlatRow. The outer shape
-        // is what's unsupported; composite materialization for the row itself works
-        // (CompositeNestedTests pins that). Without this test a future change that
-        // accidentally accepts `Task<List<T>>` for composite-bearing rows could ship
-        // undetected.
+        // v0.5 Phase A (post-review Fix 11) — locks the deferral of composite-bearing
+        // top-level list shapes. Originally the outer `Task<List<T>>` shape itself was
+        // unsupported; as of v1.3.1, List<T> / IList<T> / IReadOnlyList<T> are accepted
+        // outer shapes, but composite-bearing element rows still fall through to
+        // ZAO022 because EmitListResultSet doesn't recurse into InnerColumns the way
+        // EmitFlatRow does. The diagnostic now fires from the FlatRow-composite-guard
+        // in the ListResultSet classifier rather than from an outer-shape mismatch.
+        // Composite materialization at single-row position still works
+        // (CompositeNestedTests pins that).
         var source = """
             using System.Collections.Generic;
             using System.Data.Async;
