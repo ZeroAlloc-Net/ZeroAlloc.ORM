@@ -3793,6 +3793,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         "ZAO063" => DiagnosticDescriptors.ZAO063_ParamNameOnCompositeUnsupported,
         "ZAO064" => DiagnosticDescriptors.ZAO064_BatchOnStoredProcedureIgnored,
+        // v1.3 — BulkInsert misuse diagnostics. Tasks 3/5 introduced both the
+        // descriptors and the firing sites but missed wiring them into this
+        // lookup, which is the single funnel from `methodModel.Diagnostics`
+        // to `SourceProductionContext.ReportDiagnostic`. Task 8's diagnostic
+        // tests caught the silent drop — without the entries below, every
+        // ZAO070..ZAO074 produced by ClassifyBulkInsertCommand /
+        // ClassifyEmitShape was discarded by ReportDiagnostics's `descriptor
+        // is null` branch.
+        "ZAO070" => DiagnosticDescriptors.ZAO070_BulkInsertSignature,
+        "ZAO071" => DiagnosticDescriptors.ZAO071_BulkInsertValuesParser,
+        "ZAO072" => DiagnosticDescriptors.ZAO072_BulkInsertPlaceholderUnresolved,
+        "ZAO073" => DiagnosticDescriptors.ZAO073_BulkInsertReturnTypeShape,
+        "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
         _ => null,
     };
 
