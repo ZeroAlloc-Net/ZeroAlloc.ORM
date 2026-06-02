@@ -992,7 +992,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // the MultiResultSet shape because no tuple field matched a C#
             // parameter). The Phase E.2/E.3 emit consumes this model directly;
             // earlier shapes ignore it.
-            SprocOutputParamsMaterialization: sprocOutputParamsMaterialization);
+            SprocOutputParamsMaterialization: sprocOutputParamsMaterialization,
+            // v1.2 — re-emit the user's declared accessibility verbatim. CS8799
+            // requires both partial declarations to match; hardcoding `public`
+            // here forced adopters to expose internal helper methods on the
+            // public surface (surfaced via ZA.Templates PR #152 — issue #101).
+            MethodAccessibilityKeyword: MethodAccessibilityKeyword(method.DeclaredAccessibility));
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1007,6 +1012,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     // Decide which emit template fits this method. Conservative on purpose:
+    // Map Microsoft.CodeAnalysis.Accessibility to its C# keyword form so the
+    // generator can re-emit the user's declared modifier verbatim on the
+    // partial implementation. CS8799 fires when the two partial declarations
+    // disagree on accessibility, so the emit *must* match exactly. Issue #101.
+    private static string MethodAccessibilityKeyword(Accessibility accessibility) =>
+        accessibility switch
+        {
+            Accessibility.Public => "public",
+            Accessibility.Internal => "internal",
+            Accessibility.Protected => "protected",
+            // C# spec: `protected` + `internal` (union) is `protected internal`;
+            // `protected` ∩ `internal` (intersection, "in same project AND derived")
+            // is `private protected`. Roslyn's `ProtectedOrInternal` is the union,
+            // `ProtectedAndInternal` the intersection. Easy to flip these two by
+            // accident — see the doc comment on Accessibility for the canonical
+            // mapping.
+            Accessibility.ProtectedOrInternal => "protected internal",
+            Accessibility.ProtectedAndInternal => "private protected",
+            Accessibility.Private => "private",
+            // NotApplicable defaults to private for the user's safety. Reaching
+            // this branch implies a Roslyn symbol with no declared accessibility,
+            // which should be impossible for a method symbol coming through the
+            // partial-method pipeline. The fall-through keeps emit deterministic.
+            _ => "private",
+        };
+
     // returns concrete shapes only for the exact v0.1 Phase-4 templates with a
     // single CancellationToken parameter (no user-bound parameters). Everything
     // else stays Unknown and falls through to the stub-comment path until a later
@@ -3546,7 +3577,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -3579,7 +3610,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // off the model avoids string-sniffing ReturnTypeDisplay (the prior
         // Contains('<') heuristic was correct but brittle).
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -3702,7 +3733,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // missing wiring is visible at first invocation rather than at compile.
             var paramListFallback = BuildParameterList(m.MethodParameters);
             sb.AppendLine($"    {GeneratedCodeAttribute}");
-            sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
+            sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
             sb.AppendLine($"        => throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant: SprocWithOutputParams missing SprocOutputParamsMaterialization for '{m.MethodName}'.\");");
             return;
         }
@@ -3718,7 +3749,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             outputParamNames.Add(op.MatchingParameterName);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -3974,7 +4005,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -4103,7 +4134,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -4169,7 +4200,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"    // EmitShape: FlatRow with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -4556,7 +4587,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -4778,7 +4809,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"    // EmitShape: DomainEntity with nested composite (flattened columns: {flattenedColumnCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
         }
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -5011,7 +5042,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -5110,7 +5141,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var statements = SqlStatementSplitter.Split(m.Sql);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         EmitBatchSetup(sb, m, statements);
@@ -5141,7 +5172,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            if (__conn.CanCreateBatch)");
@@ -5352,7 +5383,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // SQL. Verbatim keeps snapshots predictable.
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
@@ -5668,7 +5699,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var paramList = BuildParameterList(m.MethodParameters);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    public partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("        => throw new global::System.NotImplementedException(\"MultiResultSet emit lands in v0.3 Phase B.2-B.4\");");
     }
 

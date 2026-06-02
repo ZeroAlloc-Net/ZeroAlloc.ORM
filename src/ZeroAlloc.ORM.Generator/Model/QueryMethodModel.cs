@@ -128,7 +128,21 @@ internal sealed record QueryMethodModel(
     // fields, which fall through to the MultiResultSet shape with the existing
     // multiResultMaterialization carrying the plan). See
     // SprocOutputParamsMaterializationModel for the per-element structure.
-    SprocOutputParamsMaterializationModel? SprocOutputParamsMaterialization);
+    SprocOutputParamsMaterializationModel? SprocOutputParamsMaterialization,
+    // v1.2 — declared accessibility of the partial method as the C# keyword(s)
+    // that should be re-emitted on the implementation side. C# requires partial
+    // method declarations and implementations to have *identical* accessibility
+    // modifiers (CS8799), so the generator must thread the user's choice through
+    // rather than hardcoding `public`. Mapping is straight from
+    // Microsoft.CodeAnalysis.Accessibility to its keyword form:
+    //   Public               -> "public"
+    //   Internal             -> "internal"
+    //   Protected            -> "protected"
+    //   ProtectedOrInternal  -> "protected internal"  (C# operator)
+    //   ProtectedAndInternal -> "private protected"   (C# operator)
+    //   Private              -> "private"
+    // Captured at TransformMethod time; never null.
+    string MethodAccessibilityKeyword);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
