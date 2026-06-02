@@ -70,6 +70,21 @@ internal enum EmitShape
     // Nested composites in FlatRow / DomainEntity rows still ride those shapes;
     // Composite is the standalone scalar-position shape.
     Composite,
+    // v1.2 — bare top-level list return: `Task<IReadOnlyList<TRow>>` where TRow
+    // is a row-shaped element (FlatRow record or DomainEntity class). Single
+    // result set drained into a buffered List<TRow> and returned. Distinct
+    // from MultiResultSet (which routes through a tuple with element kinds
+    // including List) and from Streaming (IAsyncEnumerable yield-based).
+    //
+    // Element materialization reuses the same FlatRow / DomainEntity model
+    // carried by m.Materialization, so positional records resolve by column
+    // order and domain-entity classes resolve by column name — identical to
+    // the single-row paths.
+    //
+    // Issue #102. Workaround pre-1.2: declare as `partial IAsyncEnumerable<TRow>`
+    // with `[EnumeratorCancellation] CancellationToken ct` and drain into a
+    // List in the caller.
+    ListResultSet,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

@@ -1145,6 +1145,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var inner = named.TypeArguments[0];
 
+        // v1.2 — Task<IReadOnlyList<TRow>>: bare top-level list return. Single
+        // result set drained into a buffered List<TRow>. Distinct from
+        // MultiResultSet (which uses a tuple shape with List as one element kind)
+        // and from Streaming (IAsyncEnumerable, yield-based, no buffering).
+        // Element materialization reuses the FlatRow / DomainEntity models so
+        // positional records and named-column classes both work. Issue #102.
+        if (inner is INamedTypeSymbol listInner
+            && string.Equals(listInner.MetadataName, "IReadOnlyList`1", StringComparison.Ordinal)
+            && listInner.Arity == 1
+            && listInner.TypeArguments.Length == 1
+            && string.Equals(listInner.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
+        {
+            var listElement = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
+            if (listFlat is not null)
+                return (EmitShape.ListResultSet, null, listFlat, null, HasReturnValue: true, SprocOutputParams: null);
+            var listDomain = TryBuildDomainEntityMaterialization(listElement, conventionContext);
+            if (listDomain is not null)
+                return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null);
+            // Element type not classifiable — fall through to Unknown so the
+            // existing ZAO022 / ZAO040 path surfaces the gap.
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+        }
+
         // v0.3 Phase B — tuple return type (with optional outer nullable) flagged as
         // MultiResultSet. Element shapes (scalar / single row / list) are captured on
         // MultiResultMaterializationModel so the emit can choose its per-element loop.
@@ -3396,6 +3420,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // the surrounding emit owns the open/while/yield/close shape.
                     EmitStreaming(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.ListResultSet:
+                    // v1.2 — Task<IReadOnlyList<TRow>> buffered list return. Same
+                    // FlatRow / DomainEntity element materialization as Streaming;
+                    // body buffers into a List<TRow> instead of yielding.
+                    EmitListResultSet(sb, m, repo.ConnectionAccess);
+                    break;
                 case EmitShape.CommandNonQuery:
                     // v0.4 Phase A.2 — [Command(Kind = NonQuery)] emit. Open/execute/
                     // close lifecycle around ExecuteNonQueryAsync. Task<int> shape
@@ -5021,6 +5051,99 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Element-binding routes through the same FlatRow positional / DomainEntity
     // column-name code as the single-row emits — m.Materialization.Kind selects
     // which read-expression shape applies.
+    // v1.2 — Task<IReadOnlyList<TRow>> buffered list emit. Mirrors EmitStreaming's
+    // open/read-loop/close lifecycle exactly; the per-row materialization is
+    // identical (positional FlatRow or column-name-keyed DomainEntity); the
+    // surrounding shape buffers into a `List<TRow>` and returns it cast to
+    // `IReadOnlyList<TRow>` at the end. Issue #102.
+    //
+    // No [EnumeratorCancellation] requirement here (that's a Streaming-only
+    // C# requirement on the user's declaration). The CancellationToken propagates
+    // through the normal parameter-binding mechanism.
+    private static void EmitListResultSet(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign ListResultSet without
+            // a model. Emit a throwing body so the missing wiring is visible at
+            // first invocation rather than at compile.
+            var paramListFallback = BuildParameterList(m.MethodParameters);
+            sb.AppendLine($"    {GeneratedCodeAttribute}");
+            sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
+            sb.AppendLine($"        => throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant: ListResultSet missing Materialization for '{m.MethodName}'.\");");
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitParameterBindingWithIndent(sb, m, "            ");
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
+        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("            {");
+        var cols = mat.Columns;
+        var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
+        // Same ordinal-hoisting pattern as Streaming/FlatRow paths: column-name
+        // resolution caches the GetOrdinal call into a per-row local so the
+        // IsDBNull guard and the GetXxx read share one lookup. Positional
+        // FlatRow paths use integer literals directly (no hoist needed).
+        string[]?[]? hoistedOrdinals = null;
+        if (useColumnNames)
+        {
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "                ");
+        }
+        sb.AppendLine($"                __list.Add(new {mat.TargetTypeFullName}(");
+        for (var i = 0; i < cols.Length; i++)
+        {
+            var col = cols[i];
+            var trailing = i == cols.Length - 1 ? "));" : ",";
+            string ordinalExpr;
+            if (useColumnNames)
+            {
+                ordinalExpr = hoistedOrdinals![i]![0];
+            }
+            else
+            {
+                ordinalExpr = $"{i}";
+            }
+            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
+            if (col.Convention is { } conv && conv.FactoryFullName is not null)
+            {
+                readExpr = conv.Kind switch
+                {
+                    (int)ConventionKind.Enum
+                        => $"({conv.FactoryFullName}){readExpr}",
+                    (int)ConventionKind.EnumAsString
+                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+                    _ => conv.FactoryIsCtor
+                        ? $"new {conv.FactoryFullName}({readExpr})"
+                        : $"{conv.FactoryFullName}({readExpr})",
+                };
+            }
+            string expr;
+            if (col.IsNullable)
+            {
+                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
+            }
+            else
+            {
+                expr = readExpr;
+            }
+            sb.AppendLine($"                    {expr}{trailing}");
+        }
+        sb.AppendLine("            }");
+        sb.AppendLine("            return __list;");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
     private static void EmitStreaming(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
