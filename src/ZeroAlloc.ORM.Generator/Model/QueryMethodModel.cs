@@ -45,6 +45,15 @@ internal enum EmitShape
     //     those) — narrower than Scalar's full primitive/enum range, matching the
     //     identity-key idiom across providers.
     CommandIdentity,
+    /// <summary>
+    /// v1.3 — [Command(Kind = BulkInsert)] methods. Chunked multi-row INSERT
+    /// via the SQL-standard VALUES (…), (…), … pattern. Method takes one
+    /// IReadOnlyList&lt;TRow&gt; parameter (or IList/IEnumerable; the
+    /// IEnumerable case materializes once at method entry); return type is
+    /// Task&lt;int&gt; or Task&lt;IReadOnlyList&lt;TIdentity&gt;&gt;. Chunk size
+    /// = 900 / placeholderCount baked at codegen.
+    /// </summary>
+    BulkInsertCommand,
     // v0.4 Phase E — [StoredProcedure] methods returning a named tuple whose
     // field names match (case-insensitive) at least one C# parameter on the
     // method. The matching tuple positions emit Direction = ParameterDirection.Output
@@ -95,6 +104,7 @@ internal enum CommandKindModel
     NonQuery,
     Scalar,
     Identity,
+    BulkInsert,  // NEW — must keep numeric values in sync with public CommandKind
 }
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,
