@@ -3910,22 +3910,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     }
                     break;
                 case EmitShape.BulkInsertCommand:
-                    // v1.3 Task 5 — classifier landed; real chunked-VALUES emit
-                    // arrives in Task 6. Emit a NotImplementedException-throwing
-                    // partial method body so the adopter's build stays green (a
-                    // partial method without a matching body would CS8795) while
-                    // the runtime call surfaces the unimplemented shape loudly.
-                    // The TODO comment is intentional so Task 6 replaces this in
-                    // one place. Task 5's value is the classifier + diagnostics;
-                    // the materialization model is wired through QueryMethodModel
-                    // and ready for Task 6 to consume.
-                    sb.AppendLine($"    {GeneratedCodeAttribute}");
-                    sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({BuildParameterList(m.MethodParameters)})");
-                    sb.AppendLine("    {");
-                    sb.AppendLine($"        // TODO Task 6 — emit chunked VALUES INSERT for {m.MethodName}");
-                    sb.AppendLine("        await global::System.Threading.Tasks.Task.CompletedTask.ConfigureAwait(false);");
-                    sb.AppendLine($"        throw new global::System.NotImplementedException(\"BulkInsert emit (Task 6) not yet implemented for {m.MethodName}.\");");
-                    sb.AppendLine("    }");
+                    // v1.3 Task 6 — chunked multi-row VALUES INSERT emit. The classifier
+                    // landed the BulkInsertMaterializationModel on the method; the helper
+                    // below consumes it to render the open/build-SQL/bind/execute/close
+                    // pipeline that drives the dominant 80%-case of bulk insertion via
+                    // pure ADO.NET. Two return shapes are supported:
+                    //   * Task<int>: SUM ExecuteNonQueryAsync chunk counts.
+                    //   * Task<IReadOnlyList<TIdentity>>: drain RETURNING reader rows.
+                    EmitBulkInsertCommand(sb, m, repo.ConnectionAccess);
                     break;
                 default:
                     // v0.4 Phase C.1 — all three CommandKind values (NonQuery /
@@ -4112,6 +4104,268 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitScalarMaterialization(sb, m, connectionAccess,
             shapeLabelForError: "CommandIdentity",
             nullGuardMessage: "Identity command returned no value; the SQL must include a RETURNING / SCOPE_IDENTITY() clause that produces a non-null value.");
+    }
+
+    // v1.3 Task 6 — [Command(Kind = BulkInsert)] emit. Consumes the
+    // BulkInsertMaterializationModel populated by ClassifyBulkInsertCommand to
+    // render the chunked-VALUES INSERT pipeline:
+    //
+    //   1. Adapt the IEnumerable<TRow> parameter into an IReadOnlyList<TRow>
+    //      ONCE at method entry (so `.Count` + indexer access don't re-enumerate).
+    //      When the user's parameter type is already IReadOnlyList<TRow> the
+    //      adapter is a no-op alias.
+    //   2. Empty short-circuit: `return 0;` / `Array.Empty<TIdentity>()` before
+    //      opening the connection. Hot path for callers that hand the method an
+    //      empty batch (a common occurrence in idempotent sync code).
+    //   3. EF-style ref-counted connection prologue (shared with every other
+    //      single-method emit shape via BuildConnectionPrologue) — open once and
+    //      close in `finally`, regardless of chunk count. Per-chunk
+    //      open/close would trip pooled-connection contention for large batches.
+    //   4. Chunk loop: while rows remain, slice off `min(chunkSize, remaining)`
+    //      rows, build a fresh DbCommand whose CommandText is the static head
+    //      followed by `(@a_0, @b_0, ...), (@a_1, @b_1, ...), ...` for the
+    //      chunk, followed by the static tail. Bind one DbParameter per
+    //      placeholder per row in the chunk (i.e. placeholderCount × thisChunk
+    //      parameters). The chunk size is baked at codegen as
+    //      `900 / placeholderCount` (floor of 1) so a fully-bound chunk stays
+    //      below Sqlite's 999-parameter cap and SQL Server's 2100-parameter cap
+    //      with headroom.
+    //   5. Execute:
+    //        * RowsAffected — ExecuteNonQueryAsync, accumulate the integer sum.
+    //        * IdentityList — ExecuteReaderAsync, drain the RETURNING column
+    //          into a List<TIdentity>, optionally wrapping each scalar via the
+    //          IdentityFactory ctor sentinel.
+    //   6. Connection epilogue (shared) closes the connection if the prologue
+    //      opened it.
+    //
+    // v1.3 limitations carried forward to a future iteration:
+    //   * IdentityFactory is treated as a constructor sentinel (string like
+    //     "new global::Ns.OrderId") which the emit invokes as
+    //     `<sentinel>(reader.GetXxx(0))`. Static-factory VO identity types are
+    //     not supported in v1.3 — adopters who hit that case can return the
+    //     primitive identity column type directly and wrap on the call site.
+    //   * Per-row TRow property nullability is not threaded through
+    //     BulkInsertPlaceholderBinding — primitive properties bind their value
+    //     directly without the `(object?)x ?? DBNull.Value` guard that the
+    //     single-row [Command] emit uses. Adopters who need NULL-able insert
+    //     columns can wrap the property in a VO or expose a nullable
+    //     primitive-mapped property — but the dominant TRow shape (non-null
+    //     value types + non-null reference types via record ctors) round-trips
+    //     correctly.
+    private static void EmitBulkInsertCommand(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.BulkInsertMaterialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign BulkInsertCommand
+            // without a materialization model. Emit a throwing body so the
+            // missing wiring surfaces at first invocation rather than at
+            // compile (a partial method without a matching body trips CS8795).
+            var paramListFallback = BuildParameterList(m.MethodParameters);
+            sb.AppendLine($"    {GeneratedCodeAttribute}");
+            sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
+            sb.AppendLine($"        => throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant: BulkInsertCommand missing BulkInsertMaterialization for '{m.MethodName}'.\");");
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        var rowsParam = mat.CollectionParameterName;
+        var rowsLocal = "__rows";
+        var isIdentity = mat.ReturnKind == BulkInsertReturnKind.IdentityList;
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+
+        // IEnumerable<TRow> adapter. When the parameter is already
+        // IReadOnlyList<TRow> we alias directly (zero allocation, zero copy);
+        // otherwise materialise into a List<TRow> ONCE so the chunk loop can
+        // index without re-enumerating. The `is IReadOnlyList<T>` check
+        // catches arrays / Lists / immutable arrays that the user typed as
+        // IEnumerable so we still avoid a copy in the common case.
+        if (mat.CollectionParameterIsReadOnlyList)
+        {
+            sb.AppendLine($"        var {rowsLocal} = @{rowsParam};");
+        }
+        else
+        {
+            sb.AppendLine($"        var {rowsLocal} = @{rowsParam} is global::System.Collections.Generic.IReadOnlyList<{mat.RowTypeFullName}> __irol ? __irol : new global::System.Collections.Generic.List<{mat.RowTypeFullName}>(@{rowsParam});");
+        }
+
+        // Empty short-circuit BEFORE the connection prologue. No reason to
+        // open a connection (and pay the pool round-trip) for an empty input.
+        if (isIdentity)
+        {
+            sb.AppendLine($"        if ({rowsLocal}.Count == 0) return global::System.Array.Empty<{mat.IdentityTypeFullName}>();");
+        }
+        else
+        {
+            sb.AppendLine($"        if ({rowsLocal}.Count == 0) return 0;");
+        }
+
+        // EF-style ref-counted connection prologue — single open/close across
+        // the entire chunk loop. Matches the lifecycle every other emit
+        // shape uses; do not invent a per-chunk lifecycle here (see PR #145
+        // perf regression: per-chunk Open/Close serialises against the pool).
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+
+        // Chunk loop preamble. __chunkSize is baked as the integer
+        // `900 / placeholderCount` (floor of 1) — a constant the JIT folds.
+        sb.AppendLine($"            const int __chunkSize = {mat.ChunkSize.ToString(System.Globalization.CultureInfo.InvariantCulture)};");
+        if (isIdentity)
+        {
+            sb.AppendLine($"            var __ids = new global::System.Collections.Generic.List<{mat.IdentityTypeFullName}>({rowsLocal}.Count);");
+        }
+        else
+        {
+            sb.AppendLine("            var __totalAffected = 0;");
+        }
+        sb.AppendLine("            var __offset = 0;");
+        sb.AppendLine($"            var __remaining = {rowsLocal}.Count;");
+        sb.AppendLine();
+
+        // SQL builder hoisted outside the chunk loop. Reused via Clear() at
+        // the top of each iteration to avoid N-allocations-per-call for large
+        // batches. Initial capacity = static-head length + room for one tuple
+        // (rough hint; SB grows as needed). Each chunk re-primes by appending
+        // the static head before the per-tuple Append chain.
+        var headLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticHead, quote: true);
+        sb.AppendLine($"            var __sb = new global::System.Text.StringBuilder({headLiteral}.Length + 64);");
+        sb.AppendLine();
+        sb.AppendLine("            while (__remaining > 0)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;");
+        sb.AppendLine("                await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine();
+
+        // SQL builder for this chunk. Static head + N tuples + static tail.
+        // SB is hoisted above; Clear() + re-prime with the static head at the
+        // top of each iteration.
+        sb.AppendLine("                __sb.Clear();");
+        sb.AppendLine($"                __sb.Append({headLiteral});");
+        sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    if (__i > 0) __sb.Append(\", \");");
+        sb.Append("                    __sb.Append(\"(\")");
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            var ph = mat.PlaceholderBindings[i].PlaceholderName;
+            if (i > 0) sb.Append(".Append(\", \")");
+            sb.Append($".Append(\"@{ph}_\").Append(__i)");
+        }
+        sb.AppendLine(".Append(\")\");");
+        sb.AppendLine("                }");
+        if (!string.IsNullOrEmpty(mat.InsertStaticTail))
+        {
+            var tailLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticTail, quote: true);
+            sb.AppendLine($"                __sb.Append({tailLiteral});");
+        }
+        sb.AppendLine("                __cmd.CommandText = __sb.ToString();");
+        sb.AppendLine();
+
+        // Bind one DbParameter per (placeholder, row-in-chunk). The per-row
+        // local is `__p_<placeholder>_<i>` where <i> is the SOURCE-ORDER index
+        // of the placeholder in PlaceholderBindings — not the row index. The
+        // ParameterName carries the row index suffix so the SQL `@a_0`, `@a_1`
+        // bind to distinct DbParameter instances inside the same DbCommand.
+        sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    var __row = {rowsLocal}[__offset + __i];");
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            var binding = mat.PlaceholderBindings[i];
+            var paramLocal = $"__p_{binding.PlaceholderName}_{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
+            sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
+            sb.AppendLine($"                    {paramLocal}.ParameterName = \"@{binding.PlaceholderName}_\" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
+            sb.AppendLine($"                    {paramLocal}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
+        }
+        sb.AppendLine("                }");
+        sb.AppendLine();
+
+        // Execute. RowsAffected uses ExecuteNonQueryAsync (sum the returned
+        // count). IdentityList opens a reader, walks every row, and pushes
+        // either the raw scalar (primitive identity) or the VO-wrapped scalar
+        // (IdentityFactory non-null sentinel) into the result list.
+        if (isIdentity)
+        {
+            sb.AppendLine($"                await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+            sb.AppendLine($"                while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+            sb.AppendLine("                {");
+            if (mat.IdentityFactory is null)
+            {
+                // Primitive identity — no wrap.
+                sb.AppendLine($"                    __ids.Add(__reader.{mat.IdentityReaderMethod}(0));");
+            }
+            else
+            {
+                // VO identity. The IdentityFactory sentinel is a ctor reference
+                // ("new global::Ns.OrderId") emitted by the classifier; static
+                // factories are NOT supported in v1.3 (see method comment).
+                sb.AppendLine($"                    __ids.Add({mat.IdentityFactory}(__reader.{mat.IdentityReaderMethod}(0)));");
+            }
+            sb.AppendLine("                }");
+        }
+        else
+        {
+            sb.AppendLine($"                __totalAffected += await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+        sb.AppendLine();
+        sb.AppendLine("                __offset += __thisChunk;");
+        sb.AppendLine("                __remaining -= __thisChunk;");
+        sb.AppendLine("            }");
+
+        // Return + connection epilogue.
+        if (isIdentity)
+        {
+            sb.AppendLine("            return __ids;");
+        }
+        else
+        {
+            sb.AppendLine("            return __totalAffected;");
+        }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // v1.3 Task 6 — Render the parameter-value expression for one
+    // (TRow property, convention) binding inside the BulkInsert chunk loop.
+    // Mirrors the convention-driven unwrap shape used by EmitParameterBinding
+    // / EmitParameterBindingWithIndent for single-row [Command] parameters,
+    // but reads off `row.<Property>` rather than `@<paramName>`:
+    //
+    //   * No convention                          -> row.PropertyName
+    //   * Enum (default integral storage)        -> ({castType})row.PropertyName
+    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString()
+    //   * ValueObject / SingleArgCtor / StaticFactory
+    //                                            -> row.PropertyName.<ValueProperty>
+    //
+    // v1.3 limitation: BulkInsertPlaceholderBinding does not carry an
+    // IsNullable flag, so the emit does NOT wrap the expression in a
+    // `(object?)... ?? DBNull.Value` guard. A future iteration that extends
+    // the binding with nullability metadata can fold the null-coalesce in
+    // here without disturbing the surrounding emit shape.
+    private static string BuildBulkInsertParameterValueExpression(BulkInsertPlaceholderBinding binding, string rowLocal)
+    {
+        var direct = $"{rowLocal}.{binding.PropertyName}";
+        if (binding.Convention is not { } conv) return direct;
+
+        if (conv.Kind == (int)ConventionKind.Enum)
+        {
+            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            return $"({castType}){direct}";
+        }
+        if (conv.Kind == (int)ConventionKind.EnumAsString)
+        {
+            return $"{direct}.ToString()";
+        }
+        if (conv.ValuePropertyName is { } propName)
+        {
+            return $"{direct}.{propName}";
+        }
+        return direct;
     }
 
     // Shared materialization helper for the two ExecuteScalarAsync-based command
