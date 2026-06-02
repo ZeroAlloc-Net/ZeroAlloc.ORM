@@ -191,6 +191,75 @@ will skip every already-applied migration and apply only the new one.
 Rolling back to a prior version is out of v1.1 scope — see
 [When NOT to use this runner](#when-not-to-use-this-runner).
 
+## Recipe 5 — Test fixtures over a kept-alive in-memory connection
+
+Integration tests against a real database typically reuse one
+`SqliteConnection("DataSource=:memory:")` for the lifetime of the fixture
+— the `:memory:` database is bound to that one connection, so closing it
+drops the schema. Applying migrations once in the fixture ctor against
+that connection and sharing the resulting `IAsyncDbConnection` across
+every test in the suite is the natural pattern:
+
+```csharp
+public sealed class IntegrationFixture : IAsyncDisposable
+{
+    private readonly SqliteConnection _raw = new("DataSource=:memory:");
+
+    public IntegrationFixture()
+    {
+        _raw.Open();
+        AsyncConnection = _raw.AsAsync();
+
+        var runner = new MigrationRunner(
+            AsyncConnection,
+            new EmbeddedResourceMigrationSource(typeof(IntegrationFixture).Assembly),
+            new SqliteMigrationDialect());
+        runner.RunAsync().GetAwaiter().GetResult();
+    }
+
+    public IAsyncDbConnection AsyncConnection { get; }
+
+    public async ValueTask DisposeAsync()
+    {
+        await AsyncConnection.DisposeAsync().ConfigureAwait(false);
+        _raw.Dispose();
+    }
+}
+```
+
+### The DI scope-disposal trap
+
+If the fixture also hosts the application (e.g. via
+`WebApplicationFactory<TProgram>` for endpoint tests), you'll need to
+register the shared `IAsyncDbConnection` in the test's service
+collection so the application's repositories resolve against it.
+Register as **singleton, not scoped**:
+
+```csharp
+services.AddSingleton<IAsyncDbConnection>(_ => fixture.AsyncConnection);  // ✅ correct
+services.AddScoped<IAsyncDbConnection>(_ => fixture.AsyncConnection);     // ❌ wrong — closes the DB
+```
+
+The reason: `Microsoft.Extensions.DependencyInjection` tracks every
+`IAsyncDisposable` resolved through a scoped factory delegate and adds
+it to the scope's disposal list. End of the first request scope calls
+`DisposeAsync` on the wrapper, which closes the underlying
+`SqliteConnection` — and `:memory:` evaporates with it. The second
+request fails with `SqliteException: 'no such table: ...'`.
+
+Singleton-by-factory still tracks for disposal, but only at host
+shutdown (i.e. fixture teardown), where your own
+`fixture.DisposeAsync()` already closes the connection.
+`SqliteConnection` tolerates the resulting double-dispose, so the two
+disposal paths coexist safely.
+
+The trap does **not** apply to production wiring where the factory
+delegate `new`s a fresh provider connection per scope
+(`new NpgsqlConnection(connStr).AsAsync()`). There, scope disposal
+correctly returns the underlying physical connection to the provider's
+pool — which is what you want. The fix is specifically for **test
+fixtures that share a single kept-alive wrapper** across DI scopes.
+
 ## Custom migration sources
 
 `IMigrationSource` is a small interface:
