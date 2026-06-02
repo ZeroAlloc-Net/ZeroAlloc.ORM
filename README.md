@@ -51,12 +51,12 @@ Connection opens lazily on first `MoveNextAsync`, closes deterministically on `D
 
 ```csharp
 [Command(
-    "INSERT INTO orders (customer_id, total) VALUES (@customerId, @total)",
+    "INSERT INTO orders (customer_id, total) VALUES (@customerId, @total) RETURNING id",
     Kind = CommandKind.Identity)]
 public partial Task<int> InsertOrderAsync(int customerId, decimal total, CancellationToken ct);
 ```
 
-`CommandKind.Identity` appends the provider-aware identity suffix (`SCOPE_IDENTITY()` for SQL Server, `LAST_INSERT_ROWID()` for Sqlite, `RETURNING` for Postgres). More in [docs/cookbook/commands.md](docs/cookbook/commands.md).
+`CommandKind.Identity` runs the INSERT through `ExecuteScalarAsync` and unwraps the first column of the first row into your declared identity type. The user-authored SQL supplies the provider-specific identity-capture clause: `RETURNING <id-column>` (Sqlite 3.35+, Postgres), `SCOPE_IDENTITY()` (SQL Server), `last_insert_rowid()` (Sqlite ;-joined fallback). The generator keeps the SQL string verbatim — provider-agnostic by design. More in [docs/cookbook/commands.md](docs/cookbook/commands.md).
 
 ### 4. Stored procedure with output parameters
 
@@ -142,7 +142,7 @@ The first tuple field is the result-set materialization (here: rows-affected). S
 
 ### Added in v0.4
 
-- **`[Command]` attribute** — non-`SELECT` SQL with three result-shape modes selected via `CommandKind`. `NonQuery` returns rows-affected (`int`), `Scalar` returns the first column of the first row (any materialization-eligible type), `Identity` returns the inserted identity value through provider-aware suffixes (`SCOPE_IDENTITY()` for SQL Server, `LAST_INSERT_ROWID()` for Sqlite, `RETURNING` for Postgres). See [`docs/cookbook/commands.md`](docs/cookbook/commands.md).
+- **`[Command]` attribute** — non-`SELECT` SQL with three result-shape modes selected via `CommandKind`. `NonQuery` returns rows-affected (`int`), `Scalar` runs through `ExecuteScalarAsync` and materializes the first column of the first row, `Identity` is structurally a `Scalar` whose user-authored SQL captures the inserted identity via the provider's idiom (`RETURNING <col>` on Sqlite 3.35+/Postgres, `SCOPE_IDENTITY()` on SQL Server, `;` then `last_insert_rowid()` on legacy Sqlite). The generator passes the SQL string through verbatim — provider-agnostic by design. See [`docs/cookbook/commands.md`](docs/cookbook/commands.md).
 
   ```csharp
   public sealed partial class OrderRepo(IAsyncDbConnection connection)
@@ -153,7 +153,7 @@ The first tuple field is the result-set materialization (here: rows-affected). S
       [Command("SELECT COUNT(*) FROM Orders WHERE CustomerId = @customerId", Kind = CommandKind.Scalar)]
       public partial Task<int> CountByCustomerAsync(int customerId, CancellationToken ct);
 
-      [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@customerId, @total)", Kind = CommandKind.Identity)]
+      [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@customerId, @total) RETURNING Id", Kind = CommandKind.Identity)]
       public partial Task<int> InsertAsync(int customerId, decimal total, CancellationToken ct);
   }
   ```
