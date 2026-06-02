@@ -1658,20 +1658,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return EmitShape.Unknown;
         }
 
-        // 2. VALUES tuple parse. The parser's TupleCount tells us how many
-        //    `(...)` row-tuples the SQL contains; we want exactly one (the
-        //    generator's chunk-multiplication adds the others at runtime). Zero
-        //    matches and the multi-row case both report via ZAO071 with the
-        //    actual TupleCount so the adopter sees the cardinality.
+        // 2. VALUES tuple parse. The parser returns a fail-reason enum so we
+        //    can map each failure mode to a human-readable sub-reason for
+        //    ZAO071. Passing the bare TupleCount as the message arg (the
+        //    previous shape) produced confusing messages like "saw 1, expected
+        //    exactly one" when the parser actually meant "VALUES present but
+        //    no @placeholders" — the new sub-reasons disambiguate.
         var valuesResult = BulkInsertValuesParser.TryParse(sql);
         if (!valuesResult.Success)
         {
+            var reasonText = valuesResult.FailReason switch
+            {
+                BulkInsertParseFailReason.NoValuesClause =>
+                    "no VALUES clause found",
+                BulkInsertParseFailReason.MultipleRowTuples =>
+                    $"{valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)} row tuples in a single VALUES clause",
+                BulkInsertParseFailReason.MalformedTuple =>
+                    "VALUES clause present but no @placeholders found (literal values or unsupported expression?)",
+                // Defensive default — None means Success, which we already
+                // filtered out above. Any new fail-reason added without a
+                // switch arm falls through here so the diagnostic still fires.
+                _ => $"parser failure (TupleCount = {valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)})",
+            };
+
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO071",
                 Location: methodLocation,
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                     method.Name,
-                    valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)))));
+                    reasonText))));
             return EmitShape.Unknown;
         }
 
@@ -1808,28 +1823,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         || identityResolution.Kind == ConventionKind.SingleArgCtor
                         || identityResolution.Kind == ConventionKind.StaticFactory)
                     {
-                        // Primary path: resolution.Factory is a 1-arg method/ctor
-                        // (SingleArgCtor always sets this; StaticFactory always
-                        // sets this; [ValueObject] sets it ONLY when the user
-                        // declared `static T From(TPrim)` on the wrapper).
+                        // ResolveIdentityUnderlyingReaderForFactory accepts:
+                        //   - SingleArgCtor / StaticFactory (always set resolution.Factory)
+                        //   - [ValueObject] with explicit `static T From(TPrim)` (Factory set)
+                        //   - [ValueObject] ctor-only shape (Factory null, Value carries
+                        //     the underlying primitive — generalized in v1.3.1).
                         identityReaderMethod = ResolveIdentityUnderlyingReaderForFactory(identityResolution);
-
-                        // Fallback for [ValueObject] structs that follow the
-                        // `public TPrim Value { get; }` + plain ctor convention
-                        // WITHOUT declaring a `From` factory. TryValueObject
-                        // leaves resolution.Factory null in that shape, but
-                        // resolution.Value carries the underlying property —
-                        // we read its type and apply the same identity-primitive
-                        // filter ResolveIdentityUnderlyingReaderForFactory uses.
-                        // This keeps `record OrderId(decimal Value)`-style
-                        // mismatches rejected.
-                        if (identityReaderMethod is null
-                            && identityResolution.Kind == ConventionKind.ValueObject
-                            && identityResolution.Value?.Type is { } voUnderlying
-                            && IsIdentityPrimitive(voUnderlying))
-                        {
-                            identityReaderMethod = PrimitiveCatalog.GetScalarReaderMethod(voUnderlying);
-                        }
 
                         if (identityReaderMethod is not null)
                         {
@@ -2006,6 +2005,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // outside the identity set. Mirrors ResolveUnderlyingReaderForFactory's
     // factory-parameter inspection but layered with the identity-primitive
     // filter so a `record OrderId(decimal Value)` would be rejected.
+    //
+    // v1.3.1 — also accepts [ValueObject] structs that follow the
+    // `public TPrim Value { get; }` + plain ctor convention WITHOUT
+    // declaring a `static T From(TPrim)` factory. TryValueObject leaves
+    // resolution.Factory null in that shape, but resolution.Value carries
+    // the underlying property — we read its type and apply the same
+    // identity-primitive filter. Previously the BulkInsert classifier
+    // carried this fallback as a local workaround (commit e523ce0);
+    // moving it into the shared helper makes the single-row
+    // [Command(Kind = Identity)] classifier accept ctor-only VOs too.
     private static string? ResolveIdentityUnderlyingReaderForFactory(ConventionResult resolution)
     {
         ITypeSymbol? underlying = resolution.Factory switch
@@ -2013,6 +2022,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             IMethodSymbol m when m.Parameters.Length == 1 => m.Parameters[0].Type,
             _ => null,
         };
+
+        // Ctor-only [ValueObject] fallback — no Factory method but Value
+        // property carries the wrapped primitive. Only ValueObject; we don't
+        // peek at .Value for SingleArgCtor / StaticFactory because their
+        // contract IS the factory method (its absence means the shape isn't
+        // applicable, not that we should infer from a Value property).
+        if (underlying is null
+            && resolution.Kind == ConventionKind.ValueObject
+            && resolution.Value?.Type is { } voUnderlying)
+        {
+            underlying = voUnderlying;
+        }
+
         if (underlying is null || !IsIdentityPrimitive(underlying))
             return null;
         return PrimitiveCatalog.GetScalarReaderMethod(underlying);
@@ -3345,15 +3367,37 @@ public sealed class OrmGenerator : IIncrementalGenerator
             case ConventionKind.ValueObject:
             case ConventionKind.StaticFactory:
                 {
-                    if (resolution.Factory is not IMethodSymbol factory) return null;
                     var typeFqn = resolvedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    var factoryFqn = typeFqn + "." + factory.Name;
-                    return new ConventionInfo(
-                        Kind: (int)resolution.Kind,
-                        FactoryFullName: factoryFqn,
-                        FactoryIsCtor: false,
-                        ValuePropertyName: resolution.Value?.Name,
-                        UnderlyingReader: underlyingReader);
+                    if (resolution.Factory is IMethodSymbol factory)
+                    {
+                        var factoryFqn = typeFqn + "." + factory.Name;
+                        return new ConventionInfo(
+                            Kind: (int)resolution.Kind,
+                            FactoryFullName: factoryFqn,
+                            FactoryIsCtor: false,
+                            ValuePropertyName: resolution.Value?.Name,
+                            UnderlyingReader: underlyingReader);
+                    }
+                    // v1.3.1 — ctor-only [ValueObject] fallback. TryValueObject
+                    // leaves Factory null when the wrapper struct exposes only
+                    // a constructor + Value property (no `static T From(TPrim)`).
+                    // Emit the convention as a constructor invocation
+                    // (`new global::Ns.OrderId(reader)`) so the materialization
+                    // expression matches what positional-record VOs produce.
+                    // StaticFactory shapes still require an explicit factory
+                    // method (its absence is a contract violation, not a
+                    // ctor-only shape we should infer).
+                    if (resolution.Kind == ConventionKind.ValueObject
+                        && resolution.Value is not null)
+                    {
+                        return new ConventionInfo(
+                            Kind: (int)resolution.Kind,
+                            FactoryFullName: typeFqn,
+                            FactoryIsCtor: true,
+                            ValuePropertyName: resolution.Value?.Name,
+                            UnderlyingReader: underlyingReader);
+                    }
+                    return null;
                 }
             case ConventionKind.SingleArgCtor:
                 {
