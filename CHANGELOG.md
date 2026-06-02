@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.1.0...v1.2.0) (2026-06-02)
+
+
+### Features
+
+* **generator:** support Task&lt;IReadOnlyList&lt;T&gt;&gt; as top-level partial return (closes [#102](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/102)) ([#104](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/104)) ([1d5fc2e](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/1d5fc2e25a8126f307bc2ba39f1e26ef56e29943))
+
+
+### Bug Fixes
+
+* **generator:** match partial-method declared accessibility on emit ([#101](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/101)) ([#103](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/103)) ([9a783a5](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/9a783a5ace6df5b2b1a25cf30626974ca6b7bcde))
+
+
+### Documentation
+
+* README CommandKind.Identity wording + cookbook test-fixture lifetime trap ([#100](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/100)) ([f04a171](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f04a1718a62d2daa5898f34ac0d08e5a9570cf95))
+
 ## [1.1.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.0.0...v1.1.0) (2026-06-01)
 
 
