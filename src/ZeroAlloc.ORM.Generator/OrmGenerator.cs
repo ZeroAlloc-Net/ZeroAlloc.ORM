@@ -1808,7 +1808,29 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         || identityResolution.Kind == ConventionKind.SingleArgCtor
                         || identityResolution.Kind == ConventionKind.StaticFactory)
                     {
+                        // Primary path: resolution.Factory is a 1-arg method/ctor
+                        // (SingleArgCtor always sets this; StaticFactory always
+                        // sets this; [ValueObject] sets it ONLY when the user
+                        // declared `static T From(TPrim)` on the wrapper).
                         identityReaderMethod = ResolveIdentityUnderlyingReaderForFactory(identityResolution);
+
+                        // Fallback for [ValueObject] structs that follow the
+                        // `public TPrim Value { get; }` + plain ctor convention
+                        // WITHOUT declaring a `From` factory. TryValueObject
+                        // leaves resolution.Factory null in that shape, but
+                        // resolution.Value carries the underlying property —
+                        // we read its type and apply the same identity-primitive
+                        // filter ResolveIdentityUnderlyingReaderForFactory uses.
+                        // This keeps `record OrderId(decimal Value)`-style
+                        // mismatches rejected.
+                        if (identityReaderMethod is null
+                            && identityResolution.Kind == ConventionKind.ValueObject
+                            && identityResolution.Value?.Type is { } voUnderlying
+                            && IsIdentityPrimitive(voUnderlying))
+                        {
+                            identityReaderMethod = PrimitiveCatalog.GetScalarReaderMethod(voUnderlying);
+                        }
+
                         if (identityReaderMethod is not null)
                         {
                             identityTypeFullName = identityCandidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
