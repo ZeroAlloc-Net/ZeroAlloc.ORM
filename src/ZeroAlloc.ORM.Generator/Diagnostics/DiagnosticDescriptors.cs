@@ -248,4 +248,35 @@ internal static class DiagnosticDescriptors
         "ZAO064", "[StoredProcedure(Batch=...)] is ignored",
         "Method '{0}' has [StoredProcedure(..., Batch = {1})] but stored procedures encapsulate their own batching semantics. The Batch value is ignored. Use BatchMode.Never (the default) or remove the explicit value.",
         DiagnosticSeverity.Info);
+
+    // v1.3 — BulkInsert shape diagnostics (design 2026-06-02).
+    // The five descriptors below classify the BulkInsert misuse modes detected
+    // by the Task 5 classifier. They are declared here so AnalyzerReleases.md
+    // and downstream catalog-completeness checks pick them up ahead of the
+    // emit-path work that actually fires them.
+
+    public static readonly DiagnosticDescriptor ZAO070_BulkInsertSignature = Make(
+        "ZAO070", "BulkInsert method must take exactly one collection parameter",
+        "[Command(Kind = CommandKind.BulkInsert)] method '{0}' must have exactly one IEnumerable<TRow>-shaped collection parameter (IReadOnlyList<T> preferred); saw {1}",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO071_BulkInsertValuesParser = Make(
+        "ZAO071", "BulkInsert SQL must contain exactly one VALUES tuple",
+        "[Command(Kind = CommandKind.BulkInsert)] method '{0}' SQL must contain exactly one VALUES (@placeholder, ...) tuple; the generator's parser found {1}",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO072_BulkInsertPlaceholderUnresolved = Make(
+        "ZAO072", "BulkInsert placeholder doesn't match any TRow property",
+        "[Command(Kind = CommandKind.BulkInsert)] method '{0}': TRow '{1}' has no public property matching VALUES placeholder '@{2}' (case-insensitive name match)",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO073_BulkInsertReturnTypeShape = Make(
+        "ZAO073", "BulkInsert return type must be Task<int> or Task<IReadOnlyList<TIdentity>>",
+        "[Command(Kind = CommandKind.BulkInsert)] method '{0}' return type must be Task<int> (rows-affected sum) or Task<IReadOnlyList<TIdentity>> where TIdentity is int/long/Guid or a [ValueObject] wrapping one of those; saw '{1}'",
+        DiagnosticSeverity.Error);
+
+    public static readonly DiagnosticDescriptor ZAO074_BulkInsertWrongAttribute = Make(
+        "ZAO074", "CommandKind.BulkInsert is ignored on this attribute",
+        "Method '{0}' is annotated with {1} which ignores Kind. CommandKind.BulkInsert only takes effect on [Command]. Change the attribute to [Command] or remove the Kind argument.",
+        DiagnosticSeverity.Info);
 }

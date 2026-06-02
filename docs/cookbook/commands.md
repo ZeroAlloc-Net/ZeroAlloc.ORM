@@ -1,17 +1,20 @@
 # Commands — INSERT / UPDATE / DELETE / scalar aggregates
 
 Add the `[Command]` attribute to a `partial` method to emit a non-query command.
-Three "kinds" cover the most common patterns:
+Four "kinds" cover the most common patterns:
 
-| Kind        | When to use                                                              | Returns                          |
-| ----------- | ------------------------------------------------------------------------ | -------------------------------- |
-| `NonQuery`  | INSERT / UPDATE / DELETE — you want the rows-affected (or none).         | `int` or `void` (via `Task`)     |
-| `Scalar`    | `SELECT COUNT(...)`, `SELECT SUM(...)`, single value from a SELECT.      | `T` or `T?`                      |
-| `Identity`  | `INSERT ... RETURNING` / `SCOPE_IDENTITY()` / `last_insert_rowid()`.     | `int` / `long` / `Guid` / VO     |
+| Kind         | When to use                                                              | Returns                                       |
+| ------------ | ------------------------------------------------------------------------ | --------------------------------------------- |
+| `NonQuery`   | INSERT / UPDATE / DELETE — you want the rows-affected (or none).         | `int` or `void` (via `Task`)                  |
+| `Scalar`     | `SELECT COUNT(...)`, `SELECT SUM(...)`, single value from a SELECT.      | `T` or `T?`                                   |
+| `Identity`   | `INSERT ... RETURNING` / `SCOPE_IDENTITY()` / `last_insert_rowid()`.     | `int` / `long` / `Guid` / VO                  |
+| `BulkInsert` | `INSERT ... VALUES (...), (...), ...` (chunked multi-row).               | `int` rows-affected sum / `IReadOnlyList<TIdentity>` |
 
-The default kind is `NonQuery`. The other two are opt-in via `Kind =
-CommandKind.Scalar` / `CommandKind.Identity`. Pick the kind that matches the
-shape the underlying SQL produces — see the recipes below.
+The default kind is `NonQuery`. The other three are opt-in via `Kind =
+CommandKind.Scalar` / `CommandKind.Identity` / `CommandKind.BulkInsert`.
+Pick the kind that matches the shape the underlying SQL produces — see the
+recipes below. For multi-row INSERTs, see the
+[BulkInsert recipe](bulk-insert.md).
 
 > Looking for full result-set materialisation (lists, rows, multi-tuple)?
 > That's `[Query]` — see [`multi-result-set.md`](multi-result-set.md) and
@@ -188,6 +191,9 @@ zero-typed identity that didn't come from the database.
 
 ## See also
 
+- [`bulk-insert.md`](bulk-insert.md) — `CommandKind.BulkInsert` for
+  multi-row INSERT with chunked `VALUES (...), (...), ...` emit and
+  optional `RETURNING`-based identity capture.
 - [`multi-result-set.md`](multi-result-set.md) — `[Query]` head+lines and other
   tuple-shaped result patterns.
 - [`streaming.md`](streaming.md) — `IAsyncEnumerable<T>` for bounded-memory

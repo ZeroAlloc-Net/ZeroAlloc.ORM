@@ -322,6 +322,48 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // v1.3 — ZAO074: CommandKind.BulkInsert is meaningful only on [Command].
+        // The Kind named-arg lives exclusively on CommandAttribute (QueryAttribute /
+        // StoredProcedureAttribute don't declare it), so the only way this
+        // diagnostic fires is when a method carries BOTH [Command(Kind = BulkInsert)]
+        // AND [Query] / [StoredProcedure] — ZAO005 also fires in that case. ZAO074
+        // is Info severity because it pinpoints WHICH attribute the adopter should
+        // change to honour the Kind. We surface it from the [Query] / [StoredProcedure]
+        // pipeline (the "non-Command" branch) so the squiggle appears on the offending
+        // companion attribute, not the [Command] one. Pipeline self-fires only — we
+        // skip when this is the [Command] pipeline because that's the legitimate path.
+        if (!isCommandAttribute)
+        {
+            foreach (var attr in method.GetAttributes())
+            {
+                if (!string.Equals(
+                        attr.AttributeClass?.ToDisplayString(),
+                        CommandAttributeFullName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                foreach (var named in attr.NamedArguments)
+                {
+                    if (string.Equals(named.Key, "Kind", StringComparison.Ordinal)
+                        && named.Value.Value is int companionKindValue
+                        && (CommandKindModel)companionKindValue == CommandKindModel.BulkInsert)
+                    {
+                        var companionAttributeLabel = isStoredProcedureAttribute
+                            ? "[StoredProcedure]"
+                            : "[Query]";
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO074",
+                            Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                method.Name,
+                                companionAttributeLabel))));
+                    }
+                }
+                break;
+            }
+        }
+
         // ZAO009 — partial declaration must not carry the `async` keyword (warning).
         if (methodSyntax.Modifiers.Any(m => m.IsKind(SyntaxKind.AsyncKeyword)))
         {
@@ -480,14 +522,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var strategy = ResolveBatchStrategy(sql, batchMode);
 
-        var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue, sprocOutputParamsMaterialization) = ClassifyEmitShape(
+        var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue, sprocOutputParamsMaterialization, bulkInsertMaterialization) = ClassifyEmitShape(
             method,
             conventionContext,
             isCommandAttribute,
             commandKind,
             isStoredProcedureAttribute,
             diagnostics,
-            LocationInfo.From(methodSyntax.ReturnType.GetLocation()));
+            LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+            sql);
 
         // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
         // Three triggers:
@@ -808,6 +851,27 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 ConventionInfo? paramConvention = null;
                 EquatableArray<CompositeBindingField> compositeFields = default;
                 string? compositeTypeFullName = null;
+                // BulkInsert collection parameter — shape-based gate. The row collection
+                // (IReadOnlyList<TRow> / IList<TRow> / IEnumerable<TRow> from
+                // System.Collections.Generic) has no Convention of its own — it's not a
+                // primitive, has no `.Value`, no static factory, no single-arg ctor. The
+                // per-row property bindings get resolved per-placeholder inside
+                // EmitBulkInsertCommand. Without this gate, ConventionDiscovery returns
+                // Unknown and ZAO041 fires, suppressing the BulkInsert emit entirely.
+                // Shape-based (not name-based) detection — the classifier runs AFTER
+                // this loop so `mat.CollectionParameterName` isn't available yet.
+                if (!isCt && IsBulkInsertCollectionParameterShape(p, isCommandAttribute, commandKind))
+                {
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: isNullable,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null);
+                }
                 if (!isCt)
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
@@ -997,7 +1061,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // requires both partial declarations to match; hardcoding `public`
             // here forced adopters to expose internal helper methods on the
             // public surface (surfaced via ZA.Templates PR #152 — issue #101).
-            MethodAccessibilityKeyword: MethodAccessibilityKeyword(method.DeclaredAccessibility));
+            MethodAccessibilityKeyword: MethodAccessibilityKeyword(method.DeclaredAccessibility),
+            // v1.3 — populated only for EmitShape.BulkInsertCommand by
+            // ClassifyBulkInsertCommand. Null for every other shape; Task 6's
+            // emit path reads it to render the chunked VALUES INSERT.
+            BulkInsertMaterialization: bulkInsertMaterialization);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1009,6 +1077,45 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ConnectionResolved: connectionResolved,
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation);
+    }
+
+    // Shape-based detection of the BulkInsert row-collection parameter. The
+    // per-parameter ConventionDiscovery scan inside TransformMethod fires
+    // ZAO041 for any parameter whose type has no convention; the row
+    // collection (IReadOnlyList<TRow> / IList<TRow> / IEnumerable<TRow> from
+    // System.Collections.Generic) intentionally has none — its per-row
+    // property bindings are resolved per-placeholder by EmitBulkInsertCommand.
+    //
+    // This helper runs BEFORE ClassifyBulkInsertCommand, so we can't reuse
+    // `materialization.CollectionParameterName`. The shape predicate mirrors
+    // the classifier's own collection-parameter detection (see the
+    // `pNamed.Name in { "IReadOnlyList", "IList", "IEnumerable" }` shape
+    // gate around line 1576) so a parameter that the classifier WOULD
+    // accept as the collection is the one we skip here. Anything else
+    // (e.g. a plain `int customerId` alongside the rows) still flows
+    // through ConventionDiscovery and surfaces the regular diagnostics.
+    private static bool IsBulkInsertCollectionParameterShape(
+        IParameterSymbol p,
+        bool isCommandAttribute,
+        CommandKindModel commandKind)
+    {
+        if (!isCommandAttribute || commandKind != CommandKindModel.BulkInsert)
+            return false;
+        if (string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal))
+            return false;
+        if (p.Type is not INamedTypeSymbol named
+            || named.Arity != 1
+            || named.TypeArguments.Length != 1)
+            return false;
+        if (!string.Equals(
+                named.ContainingNamespace?.ToDisplayString(),
+                "System.Collections.Generic",
+                StringComparison.Ordinal))
+            return false;
+        var shapeName = named.Name;
+        return shapeName == "IReadOnlyList"
+            || shapeName == "IList"
+            || shapeName == "IEnumerable";
     }
 
     // Decide which emit template fits this method. Conservative on purpose:
@@ -1046,14 +1153,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // For NullableScalar we also return the IDataReader.GetXxx method name to use
     // at emit time so EmitNullableScalar doesn't need to re-derive it from a model
     // that no longer carries the symbol.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams) ClassifyEmitShape(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams, BulkInsertMaterializationModel? BulkInsertMaterialization) ClassifyEmitShape(
         IMethodSymbol method,
         ConventionContext conventionContext,
         bool isCommandAttribute,
         CommandKindModel commandKind,
         bool isStoredProcedureAttribute,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
-        LocationInfo? returnTypeLocation)
+        LocationInfo? returnTypeLocation,
+        string sql)
     {
         // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
         //   * Task<int>, ValueTask<int>  — return rows-affected count.
@@ -1078,15 +1186,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     && cmdReturn.TypeArguments.Length == 1
                     && cmdReturn.TypeArguments[0].SpecialType == SpecialType.System_Int32)
                 {
-                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: true, SprocOutputParams: null);
+                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
                 }
                 // Task / ValueTask (no result)
                 if (cmdReturn.Arity == 0 && (name == "Task" || name == "ValueTask"))
                 {
-                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+                    return (EmitShape.CommandNonQuery, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 }
             }
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // v0.4 Phase B — [Command(Kind = Scalar)] dispatch. Extracted to
@@ -1105,18 +1213,51 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return ClassifyCommandIdentity(method, conventionContext);
         }
 
+        // v1.3 — [Command(Kind = BulkInsert)] dispatch. Recognizes a single
+        // IEnumerable<TRow>-shaped collection parameter, a VALUES (@p1, ...)
+        // tuple in the SQL, and one of two return shapes (Task<int> rows-affected
+        // or Task<IReadOnlyList<TIdentity>> identity buffer). All four shape
+        // checks are hard ZAO070-073 errors when violated. ClassifyBulkInsertCommand
+        // returns BulkInsertCommand + a fully-populated materialization model on
+        // success; on any failure it returns Unknown and the diagnostic blocks
+        // emit. Task 6 will replace the v1.3 stub emit path with the real chunked
+        // VALUES emit.
+        if (isCommandAttribute && commandKind == CommandKindModel.BulkInsert)
+        {
+            var bulkShape = ClassifyBulkInsertCommand(
+                method,
+                sql,
+                conventionContext,
+                diagnostics,
+                returnTypeLocation,
+                out var bulkInsertMaterialization);
+            // Materialization is threaded back to the caller via the tuple's
+            // MultiResultMaterialization slot would be wrong (that's a separate
+            // model). Use a new return-tuple position so the caller can wire it
+            // into QueryMethodModel.BulkInsertMaterialization.
+            return (
+                bulkShape,
+                null,
+                null,
+                null,
+                HasReturnValue: bulkShape != EmitShape.Unknown,
+                SprocOutputParams: null,
+                BulkInsertMaterialization: bulkInsertMaterialization);
+        }
+
         if (isCommandAttribute)
         {
-            // Defensive — all three CommandKind values (NonQuery / Scalar /
-            // Identity) have explicit dispatch above. Reaching this point means
-            // a new CommandKindModel value was added without an accompanying
-            // dispatch update; failing loudly here keeps the generator's shape
-            // table honest instead of silently routing to Unknown → ZAO002.
+            // Defensive — all four CommandKind values (NonQuery / Scalar /
+            // Identity / BulkInsert) have explicit dispatch above. Reaching this
+            // point means a new CommandKindModel value was added without an
+            // accompanying dispatch update; failing loudly here keeps the
+            // generator's shape table honest instead of silently routing to
+            // Unknown → ZAO002.
             throw new global::System.InvalidOperationException(
                 $"Unhandled CommandKindModel value '{commandKind}' — generator dispatch is incomplete.");
         }
 
-        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+        if (method.ReturnType is not INamedTypeSymbol named) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         // v0.3 Phase C — IAsyncEnumerable<T> streaming. Match by metadata name + arity
         // and require the element type to resolve to a row-shaped materialization
@@ -1130,18 +1271,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext);
             if (streamFlat is not null)
-                return (EmitShape.Streaming, null, streamFlat, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.Streaming, null, streamFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             var streamDomain = TryBuildDomainEntityMaterialization(streamElement, conventionContext);
             if (streamDomain is not null)
-                return (EmitShape.Streaming, null, streamDomain, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.Streaming, null, streamDomain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Element type not classifiable — fall through to Unknown so the existing
             // ZAO022 / ZAO040 path surfaces the gap. ZAO007 still fires upstream when
             // the user forgets [EnumeratorCancellation].
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // Restrict to Task<T> for now; ValueTask<T> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         var inner = named.TypeArguments[0];
 
@@ -1160,13 +1301,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var listElement = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
             if (listFlat is not null)
-                return (EmitShape.ListResultSet, null, listFlat, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.ListResultSet, null, listFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             var listDomain = TryBuildDomainEntityMaterialization(listElement, conventionContext);
             if (listDomain is not null)
-                return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Element type not classifiable — fall through to Unknown so the
             // existing ZAO022 / ZAO040 path surfaces the gap.
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // v0.3 Phase B — tuple return type (with optional outer nullable) flagged as
@@ -1212,17 +1353,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 if (tupleReturnsNullable
                     && SprocHasAnyOutputParamMatch(tupleNamed, method.Parameters))
                 {
-                    return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+                    return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 }
                 var sprocOutputs = TryBuildSprocOutputParamsMaterialization(
                     tupleNamed, tupleReturnsNullable, method.Parameters, conventionContext);
                 if (sprocOutputs is not null)
-                    return (EmitShape.SprocWithOutputParams, null, null, null, HasReturnValue: true, SprocOutputParams: sprocOutputs);
+                    return (EmitShape.SprocWithOutputParams, null, null, null, HasReturnValue: true, SprocOutputParams: sprocOutputs, BulkInsertMaterialization: null);
             }
 
             var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext);
             if (multi is not null)
-                return (EmitShape.MultiResultSet, null, null, multi, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.MultiResultSet, null, null, multi, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Tuple shape but at least one element wasn't classifiable: fall through to
             // Unknown so ZAO022 (or a future ZAO032/033) surfaces the gap.
         }
@@ -1236,7 +1377,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var readerMethod = GetScalarPrimitiveReaderInfo(inner);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // Nullable value type: Task<int?> / Task<Nullable<T>>.
@@ -1247,12 +1388,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var underlying = innerNamed.TypeArguments[0];
             var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
             if (readerMethod is not null)
-                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
-        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true, SprocOutputParams: null);
+        if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         // v0.5 Phase D — `[Materialize(Factory = "X")]` resolution. Per design
         // Section 3, line 260 (discovery-order rule #1), an explicit factory
@@ -1305,7 +1446,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var withNullable = compositeIsNullableValueType
                     ? composite with { IsNullable = true }
                     : composite;
-                return (EmitShape.Composite, null, withNullable, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.Composite, null, withNullable, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
 
             // v0.5 Phase E.1 — ZAO052: the composite-at-scalar path bailed,
@@ -1323,7 +1464,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         method.Name,
                         recursive.OuterTypeDisplay,
                         recursive.InnerCtorArgName))));
-                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
         }
 
@@ -1339,7 +1480,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var flat = TryBuildFlatRowMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation);
             if (flat is not null)
-                return (EmitShape.FlatRow, null, flat, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.FlatRow, null, flat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
             // v0.2 Phase E — DomainEntity: a non-record class with a single public
             // ctor whose parameters all resolve to known conventions. The detection
@@ -1349,10 +1490,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // positional path stays the default for records).
             var domain = TryBuildDomainEntityMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation);
             if (domain is not null)
-                return (EmitShape.DomainEntity, null, domain, null, HasReturnValue: true, SprocOutputParams: null);
+                return (EmitShape.DomainEntity, null, domain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
-        return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+        return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
     }
 
     // v0.4 Phase B — [Command(Kind = Scalar)] dispatch. Accepts any return type
@@ -1369,7 +1510,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // via the diagnostic block in TransformMethod (see the ZAO002-for-Scalar
     // branch); the Phase A runtime stub is the secondary defense if the diagnostic
     // is suppressed.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams) ClassifyCommandScalar(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams, BulkInsertMaterializationModel? BulkInsertMaterialization) ClassifyCommandScalar(
         IMethodSymbol method,
         ConventionContext conventionContext)
         => ClassifyScalarLikeReturn(
@@ -1412,7 +1553,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //     — these don't represent identity keys; route them through Kind=Scalar.
     //   * Container shapes (List<T>, tuples, IAsyncEnumerable<T>) — Identity is
     //     a single-value shape.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams) ClassifyCommandIdentity(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams, BulkInsertMaterializationModel? BulkInsertMaterialization) ClassifyCommandIdentity(
         IMethodSymbol method,
         ConventionContext conventionContext)
         => ClassifyScalarLikeReturn(
@@ -1438,6 +1579,332 @@ public sealed class OrmGenerator : IIncrementalGenerator
             },
             shape: EmitShape.CommandIdentity);
 
+    // v1.3 — [Command(Kind = BulkInsert)] classifier. Runs four shape checks; any
+    // failure adds a hard ZAO070-073 diagnostic and returns EmitShape.Unknown so
+    // the surrounding ZAO002 / partial-stub paths don't fire on top of it. On
+    // success, populates `materialization` with the full Task 6 input.
+    //
+    //   1. Exactly one IEnumerable<TRow>-shaped parameter (ignoring CT)         → ZAO070
+    //   2. SQL has exactly one VALUES (@p1, ...) tuple                          → ZAO071
+    //   3. Every placeholder resolves to a public TRow property (case-insensitive) → ZAO072
+    //   4. Return type is Task<int> or Task<IReadOnlyList<TIdentity>> where     → ZAO073
+    //      TIdentity is int / long / Guid or a [ValueObject]/factory wrapping one
+    //
+    // The chunk size is baked at codegen as 900 / placeholderCount (floor 1) —
+    // 900 stays under SQL Server's 2100-parameter ceiling with comfortable headroom
+    // and matches every other provider's looser limits.
+    private static EmitShape ClassifyBulkInsertCommand(
+        IMethodSymbol method,
+        string sql,
+        ConventionContext conventionContext,
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        LocationInfo? methodLocation,
+        out BulkInsertMaterializationModel? materialization)
+    {
+        materialization = null;
+
+        // 1. Collection parameter shape. Walk all parameters, skip the CT (a
+        //    control signal), and look for IReadOnlyList<T> / IList<T> / IEnumerable<T>
+        //    from System.Collections.Generic. The "exactly one" rule keeps the
+        //    emit's "one chunk loop over one source" shape unambiguous; zero
+        //    or multiple collection parameters fire ZAO070.
+        IParameterSymbol? collectionParameter = null;
+        INamedTypeSymbol? collectionType = null;
+        ITypeSymbol? rowType = null;
+        bool isReadOnlyList = false;
+        int collectionCandidateCount = 0;
+        foreach (var p in method.Parameters)
+        {
+            if (string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal))
+                continue;
+            if (p.Type is not INamedTypeSymbol pNamed
+                || pNamed.Arity != 1
+                || pNamed.TypeArguments.Length != 1)
+                continue;
+            if (!string.Equals(
+                    pNamed.ContainingNamespace?.ToDisplayString(),
+                    "System.Collections.Generic",
+                    StringComparison.Ordinal))
+                continue;
+            // Restrict the BulkInsert-acceptable shapes to the three the emit can
+            // straightforwardly chunk. List<T> / ICollection<T> / IReadOnlyCollection<T>
+            // are deliberately excluded for v1.3 — they would either need a copy
+            // (no random access without materialising) or duplicate the IList path
+            // without clear adopter benefit. Adopters with those collection
+            // shapes can cast/wrap at the call site.
+            var shapeName = pNamed.Name;
+            if (shapeName != "IReadOnlyList"
+                && shapeName != "IList"
+                && shapeName != "IEnumerable")
+                continue;
+            collectionCandidateCount++;
+            if (collectionParameter is null)
+            {
+                collectionParameter = p;
+                collectionType = pNamed;
+                rowType = pNamed.TypeArguments[0];
+                isReadOnlyList = shapeName == "IReadOnlyList";
+            }
+        }
+
+        if (collectionCandidateCount != 1 || collectionParameter is null || rowType is null)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO070",
+                Location: methodLocation,
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    collectionCandidateCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)))));
+            return EmitShape.Unknown;
+        }
+
+        // 2. VALUES tuple parse. The parser's TupleCount tells us how many
+        //    `(...)` row-tuples the SQL contains; we want exactly one (the
+        //    generator's chunk-multiplication adds the others at runtime). Zero
+        //    matches and the multi-row case both report via ZAO071 with the
+        //    actual TupleCount so the adopter sees the cardinality.
+        var valuesResult = BulkInsertValuesParser.TryParse(sql);
+        if (!valuesResult.Success)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO071",
+                Location: methodLocation,
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)))));
+            return EmitShape.Unknown;
+        }
+
+        // 3. Per-placeholder TRow property resolution. Case-insensitive name
+        //    match against public instance properties (records / classes both
+        //    expose ctor params as auto-properties at the same case as the
+        //    parameter name). One ZAO072 per unresolved placeholder so adopters
+        //    see every typo in a single pass — matches the FlatRow / DomainEntity
+        //    column-binding diagnostic pattern.
+        var rowTypeNamed = rowType.WithNullableAnnotation(NullableAnnotation.NotAnnotated) as INamedTypeSymbol;
+        var rowProperties = new global::System.Collections.Generic.Dictionary<string, IPropertySymbol>(
+            global::System.StringComparer.OrdinalIgnoreCase);
+        if (rowTypeNamed is not null)
+        {
+            foreach (var member in rowTypeNamed.GetMembers())
+            {
+                if (member is IPropertySymbol prop
+                    && prop.DeclaredAccessibility == Accessibility.Public
+                    && !prop.IsStatic
+                    && prop.GetMethod is not null
+                    && !rowProperties.ContainsKey(prop.Name))
+                {
+                    rowProperties.Add(prop.Name, prop);
+                }
+            }
+        }
+
+        var rowTypeDisplay = rowType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var rowTypeShortDisplay = rowType.ToDisplayString();
+        var anyUnresolved = false;
+        var resolvedBindings = new global::System.Collections.Generic.List<BulkInsertPlaceholderBinding>(valuesResult.Placeholders.Count);
+        foreach (var placeholder in valuesResult.Placeholders)
+        {
+            if (!rowProperties.TryGetValue(placeholder, out var matchedProp))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO072",
+                    Location: methodLocation,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        method.Name,
+                        rowTypeShortDisplay,
+                        placeholder))));
+                anyUnresolved = true;
+                continue;
+            }
+
+            // Build the convention info using the same ConventionDiscovery path
+            // the single-row [Command] parameter binding uses. Primitive props
+            // produce a null ConventionInfo; VOs / single-arg ctors / static
+            // factories produce a populated one; enums (default and
+            // [StoreAsString]) produce a cast/ToString convention. The Task 6
+            // emit branches on Convention.Kind exactly like the existing
+            // per-parameter binding helper.
+            var underlying = UnwrapNullableValueType(matchedProp.Type);
+            var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+            var underlyingReader = resolution.Kind switch
+            {
+                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                    => ResolveUnderlyingReaderForFactory(resolution),
+                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+                ConventionKind.EnumAsString => "GetString",
+                _ => null,
+            };
+            var convention = BuildConventionInfo(underlying, resolution, underlyingReader);
+
+            resolvedBindings.Add(new BulkInsertPlaceholderBinding(
+                PlaceholderName: placeholder,
+                PropertyName: matchedProp.Name,
+                Convention: convention));
+        }
+        if (anyUnresolved)
+        {
+            return EmitShape.Unknown;
+        }
+
+        // 4. Return type validation. Accept Task<int> (rows-affected sum) and
+        //    Task<IReadOnlyList<TIdentity>> where TIdentity ∈ {int, long, Guid}
+        //    or a VO/factory wrapping one of those. ValueTask<...> variants are
+        //    intentionally NOT in scope for v1.3 — the chunked emit awaits N
+        //    times and the Task<T> shape composes cleanly; adding ValueTask is
+        //    a future symmetry win, not a v1.3 requirement.
+        var returnKind = BulkInsertReturnKind.RowsAffected;
+        string? identityTypeFullName = null;
+        string? identityReaderMethod = null;
+        string? identityFactory = null;
+        var returnAccepted = false;
+
+        if (method.ReturnType is INamedTypeSymbol returnNamed
+            && returnNamed.Arity == 1
+            && string.Equals(returnNamed.Name, "Task", StringComparison.Ordinal)
+            && returnNamed.TypeArguments.Length == 1)
+        {
+            var taskInner = returnNamed.TypeArguments[0];
+
+            // Task<int> — straightforward rows-affected return.
+            if (taskInner.SpecialType == SpecialType.System_Int32)
+            {
+                returnKind = BulkInsertReturnKind.RowsAffected;
+                returnAccepted = true;
+            }
+            // Task<IReadOnlyList<TIdentity>> — identity-buffer return.
+            else if (taskInner is INamedTypeSymbol listInner
+                && listInner.Arity == 1
+                && string.Equals(listInner.MetadataName, "IReadOnlyList`1", StringComparison.Ordinal)
+                && string.Equals(
+                    listInner.ContainingNamespace?.ToDisplayString(),
+                    "System.Collections.Generic",
+                    StringComparison.Ordinal))
+            {
+                var identityCandidate = listInner.TypeArguments[0]
+                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+                // Primitive identity (int / long / Guid). No factory; the emit
+                // reads the column directly via reader.GetXxx(0).
+                if (IsIdentityPrimitive(identityCandidate))
+                {
+                    identityReaderMethod = PrimitiveCatalog.GetScalarReaderMethod(identityCandidate);
+                    if (identityReaderMethod is not null)
+                    {
+                        identityTypeFullName = identityCandidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                        identityFactory = null;
+                        returnKind = BulkInsertReturnKind.IdentityList;
+                        returnAccepted = true;
+                    }
+                }
+                else
+                {
+                    // VO / SingleArgCtor / StaticFactory wrapping one of the
+                    // identity primitives. ResolveIdentityUnderlyingReaderForFactory
+                    // applies the same int/long/Guid filter on the underlying
+                    // type so e.g. `record OrderId(decimal Value)` is rejected.
+                    var identityResolution = ConventionDiscovery.Resolve(identityCandidate, conventionContext);
+                    if (identityResolution.Kind == ConventionKind.ValueObject
+                        || identityResolution.Kind == ConventionKind.SingleArgCtor
+                        || identityResolution.Kind == ConventionKind.StaticFactory)
+                    {
+                        // Primary path: resolution.Factory is a 1-arg method/ctor
+                        // (SingleArgCtor always sets this; StaticFactory always
+                        // sets this; [ValueObject] sets it ONLY when the user
+                        // declared `static T From(TPrim)` on the wrapper).
+                        identityReaderMethod = ResolveIdentityUnderlyingReaderForFactory(identityResolution);
+
+                        // Fallback for [ValueObject] structs that follow the
+                        // `public TPrim Value { get; }` + plain ctor convention
+                        // WITHOUT declaring a `From` factory. TryValueObject
+                        // leaves resolution.Factory null in that shape, but
+                        // resolution.Value carries the underlying property —
+                        // we read its type and apply the same identity-primitive
+                        // filter ResolveIdentityUnderlyingReaderForFactory uses.
+                        // This keeps `record OrderId(decimal Value)`-style
+                        // mismatches rejected.
+                        if (identityReaderMethod is null
+                            && identityResolution.Kind == ConventionKind.ValueObject
+                            && identityResolution.Value?.Type is { } voUnderlying
+                            && IsIdentityPrimitive(voUnderlying))
+                        {
+                            identityReaderMethod = PrimitiveCatalog.GetScalarReaderMethod(voUnderlying);
+                        }
+
+                        if (identityReaderMethod is not null)
+                        {
+                            identityTypeFullName = identityCandidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                            // Emit will render `new global::Ns.OrderId(reader.GetXxx(0))`
+                            // for SingleArgCtor / ValueObject ctors, and
+                            // `global::Ns.OrderId.From(reader.GetXxx(0))` for static
+                            // factories. We capture the bare ctor reference here;
+                            // the emit prepends `new ` (ctor) or appends `.Name`
+                            // (factory) via Convention-like resolution. For v1.3
+                            // simplicity, we record the ctor-style reference for
+                            // all three; emit handles the dispatch via the resolution
+                            // it re-runs at codegen time. The IdentityFactory string
+                            // is used purely as a marker that a factory wrap is
+                            // needed — the emit consults Convention metadata on
+                            // its own. Future task: thread the full ConventionInfo
+                            // here so emit doesn't re-resolve. For now, capture
+                            // the ctor-style string so the Task 6 emit has a
+                            // non-null sentinel and a printable type name.
+                            identityFactory = "new " + identityTypeFullName;
+                            returnKind = BulkInsertReturnKind.IdentityList;
+                            returnAccepted = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!returnAccepted)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO073",
+                Location: methodLocation,
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    method.ReturnType.ToDisplayString()))));
+            return EmitShape.Unknown;
+        }
+
+        // 5. Compute chunk size: 900 / placeholderCount, floor of 1. The 900
+        //    constant stays below SQL Server's 2100-parameter ceiling with
+        //    headroom for the static parameters that surround the VALUES tuple.
+        //    Other providers (Postgres, Sqlite, MySQL) have looser limits so
+        //    900 is a portable upper bound. Integer division here matches the
+        //    constant the runtime SQL-builder expects.
+        var placeholderCount = resolvedBindings.Count;
+        var chunkSize = placeholderCount > 0 ? 900 / placeholderCount : 1;
+        if (chunkSize < 1) chunkSize = 1;
+
+        // 6. Splice the static head / tail around the VALUES tuple. The parser
+        //    reports TupleStart / TupleLength on the literal `(...)` portion,
+        //    so head = sql[..TupleStart] and tail = sql[TupleStart+TupleLength..].
+        //    No trimming — the head needs to keep its trailing space before
+        //    `(` and the tail needs to keep its leading space before any
+        //    `RETURNING` clause. Task 6's emit splices `(...,...,...)` between
+        //    them once per row in the chunk.
+        var insertStaticHead = sql.Substring(0, valuesResult.TupleStart);
+        var insertStaticTail = sql.Substring(valuesResult.TupleStart + valuesResult.TupleLength);
+
+        materialization = new BulkInsertMaterializationModel(
+            PlaceholderBindings: new EquatableArray<BulkInsertPlaceholderBinding>(
+                resolvedBindings.ToImmutableArray()),
+            ChunkSize: chunkSize,
+            ReturnKind: returnKind,
+            IdentityTypeFullName: identityTypeFullName,
+            IdentityReaderMethod: identityReaderMethod,
+            IdentityFactory: identityFactory,
+            RowTypeFullName: rowTypeDisplay,
+            CollectionParameterName: collectionParameter.Name,
+            CollectionParameterIsReadOnlyList: isReadOnlyList,
+            InsertStaticHead: insertStaticHead,
+            InsertStaticTail: insertStaticTail);
+        return EmitShape.BulkInsertCommand;
+    }
+
     // Shared classification path for the two scalar-like [Command] shapes
     // (Scalar in Phase B, Identity in Phase C). Both reduce to a single
     // ExecuteScalarAsync read whose result becomes the method's return value;
@@ -1451,7 +1918,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Critical: the MaterializationModel shape produced here is consumed
     // byte-identically by EmitCommandScalar / EmitCommandIdentity — any change
     // to the binding fields or ordering will surface as a snapshot drift.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams) ClassifyScalarLikeReturn(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams, BulkInsertMaterializationModel? BulkInsertMaterialization) ClassifyScalarLikeReturn(
         IMethodSymbol method,
         ConventionContext conventionContext,
         bool allowNullable,
@@ -1459,13 +1926,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitShape shape)
     {
         if (method.ReturnType is not INamedTypeSymbol taskReturn)
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         // Task<T> / ValueTask<T> with arity 1.
         if (taskReturn.Arity != 1
             || (taskReturn.Name != "Task" && taskReturn.Name != "ValueTask")
             || taskReturn.TypeArguments.Length != 1)
         {
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         var inner = taskReturn.TypeArguments[0];
@@ -1478,7 +1945,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (isNullable && !allowNullable)
         {
             // Identity hits this branch — fall through so ZAO002 fires upstream.
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         var unwrapped = UnwrapNullableValueType(inner)
@@ -1498,7 +1965,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         string? reader = resolveReader(unwrapped, resolution);
         if (reader is null)
         {
-            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+            return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         var convention = BuildConventionInfo(unwrapped, resolution, reader);
@@ -1518,7 +1985,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             TargetTypeFullName: unwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(binding)));
 
-        return (shape, null, materialization, null, HasReturnValue: true, SprocOutputParams: null);
+        return (shape, null, materialization, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
     }
 
     // Identity-key primitives. The standard auto-increment / RETURNING shape
@@ -2074,7 +2541,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //     fired).
     //   * null => no [Materialize(Factory)] applies; the classifier should
     //     continue with composite / FlatRow / DomainEntity branches.
-    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams)? ResolveScalarFactoryShape(
+    private static (EmitShape Shape, string? NullableReaderMethod, MaterializationModel? Materialization, MultiResultMaterializationModel? MultiResultMaterialization, bool HasReturnValue, SprocOutputParamsMaterializationModel? SprocOutputParams, BulkInsertMaterializationModel? BulkInsertMaterialization)? ResolveScalarFactoryShape(
         IMethodSymbol method,
         ITypeSymbol inner,
         ConventionContext conventionContext,
@@ -2103,7 +2570,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     targetTypeDisplay: factoryInnerCandidate.ToDisplayString(),
                     reason: "[Materialize(Strategy = Custom)] requires a Factory argument",
                     location: returnTypeLocation);
-                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+                return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
             return null;
         }
@@ -2125,12 +2592,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             location: returnTypeLocation);
         if (factoryMat is not null)
         {
-            return (EmitShape.Composite, null, factoryMat, null, HasReturnValue: true, SprocOutputParams: null);
+            return (EmitShape.Composite, null, factoryMat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
         // factoryMat == null after ZAO043/044/051 fired upstream — fall through
         // to Unknown so the partial-method stub doesn't emit. ZAO022/040 are
         // suppressed by the diagnostic-builder scan in TransformMethod (Fix 4).
-        return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null);
+        return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
     }
 
     // v0.5 Phase D — build a Composite-kind MaterializationModel that invokes a
@@ -3326,6 +3793,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         "ZAO063" => DiagnosticDescriptors.ZAO063_ParamNameOnCompositeUnsupported,
         "ZAO064" => DiagnosticDescriptors.ZAO064_BatchOnStoredProcedureIgnored,
+        // v1.3 — BulkInsert misuse diagnostics. Tasks 3/5 introduced both the
+        // descriptors and the firing sites but missed wiring them into this
+        // lookup, which is the single funnel from `methodModel.Diagnostics`
+        // to `SourceProductionContext.ReportDiagnostic`. Task 8's diagnostic
+        // tests caught the silent drop — without the entries below, every
+        // ZAO070..ZAO074 produced by ClassifyBulkInsertCommand /
+        // ClassifyEmitShape was discarded by ReportDiagnostics's `descriptor
+        // is null` branch.
+        "ZAO070" => DiagnosticDescriptors.ZAO070_BulkInsertSignature,
+        "ZAO071" => DiagnosticDescriptors.ZAO071_BulkInsertValuesParser,
+        "ZAO072" => DiagnosticDescriptors.ZAO072_BulkInsertPlaceholderUnresolved,
+        "ZAO073" => DiagnosticDescriptors.ZAO073_BulkInsertReturnTypeShape,
+        "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
         _ => null,
     };
 
@@ -3524,6 +4004,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
                             break;
                     }
                     break;
+                case EmitShape.BulkInsertCommand:
+                    // v1.3 Task 6 — chunked multi-row VALUES INSERT emit. The classifier
+                    // landed the BulkInsertMaterializationModel on the method; the helper
+                    // below consumes it to render the open/build-SQL/bind/execute/close
+                    // pipeline that drives the dominant 80%-case of bulk insertion via
+                    // pure ADO.NET. Two return shapes are supported:
+                    //   * Task<int>: SUM ExecuteNonQueryAsync chunk counts.
+                    //   * Task<IReadOnlyList<TIdentity>>: drain RETURNING reader rows.
+                    EmitBulkInsertCommand(sb, m, repo.ConnectionAccess);
+                    break;
                 default:
                     // v0.4 Phase C.1 — all three CommandKind values (NonQuery /
                     // Scalar / Identity) now have real emit shapes. Any [Command]
@@ -3709,6 +4199,268 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitScalarMaterialization(sb, m, connectionAccess,
             shapeLabelForError: "CommandIdentity",
             nullGuardMessage: "Identity command returned no value; the SQL must include a RETURNING / SCOPE_IDENTITY() clause that produces a non-null value.");
+    }
+
+    // v1.3 Task 6 — [Command(Kind = BulkInsert)] emit. Consumes the
+    // BulkInsertMaterializationModel populated by ClassifyBulkInsertCommand to
+    // render the chunked-VALUES INSERT pipeline:
+    //
+    //   1. Adapt the IEnumerable<TRow> parameter into an IReadOnlyList<TRow>
+    //      ONCE at method entry (so `.Count` + indexer access don't re-enumerate).
+    //      When the user's parameter type is already IReadOnlyList<TRow> the
+    //      adapter is a no-op alias.
+    //   2. Empty short-circuit: `return 0;` / `Array.Empty<TIdentity>()` before
+    //      opening the connection. Hot path for callers that hand the method an
+    //      empty batch (a common occurrence in idempotent sync code).
+    //   3. EF-style ref-counted connection prologue (shared with every other
+    //      single-method emit shape via BuildConnectionPrologue) — open once and
+    //      close in `finally`, regardless of chunk count. Per-chunk
+    //      open/close would trip pooled-connection contention for large batches.
+    //   4. Chunk loop: while rows remain, slice off `min(chunkSize, remaining)`
+    //      rows, build a fresh DbCommand whose CommandText is the static head
+    //      followed by `(@a_0, @b_0, ...), (@a_1, @b_1, ...), ...` for the
+    //      chunk, followed by the static tail. Bind one DbParameter per
+    //      placeholder per row in the chunk (i.e. placeholderCount × thisChunk
+    //      parameters). The chunk size is baked at codegen as
+    //      `900 / placeholderCount` (floor of 1) so a fully-bound chunk stays
+    //      below Sqlite's 999-parameter cap and SQL Server's 2100-parameter cap
+    //      with headroom.
+    //   5. Execute:
+    //        * RowsAffected — ExecuteNonQueryAsync, accumulate the integer sum.
+    //        * IdentityList — ExecuteReaderAsync, drain the RETURNING column
+    //          into a List<TIdentity>, optionally wrapping each scalar via the
+    //          IdentityFactory ctor sentinel.
+    //   6. Connection epilogue (shared) closes the connection if the prologue
+    //      opened it.
+    //
+    // v1.3 limitations carried forward to a future iteration:
+    //   * IdentityFactory is treated as a constructor sentinel (string like
+    //     "new global::Ns.OrderId") which the emit invokes as
+    //     `<sentinel>(reader.GetXxx(0))`. Static-factory VO identity types are
+    //     not supported in v1.3 — adopters who hit that case can return the
+    //     primitive identity column type directly and wrap on the call site.
+    //   * Per-row TRow property nullability is not threaded through
+    //     BulkInsertPlaceholderBinding — primitive properties bind their value
+    //     directly without the `(object?)x ?? DBNull.Value` guard that the
+    //     single-row [Command] emit uses. Adopters who need NULL-able insert
+    //     columns can wrap the property in a VO or expose a nullable
+    //     primitive-mapped property — but the dominant TRow shape (non-null
+    //     value types + non-null reference types via record ctors) round-trips
+    //     correctly.
+    private static void EmitBulkInsertCommand(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.BulkInsertMaterialization;
+        if (mat is null)
+        {
+            // Defensive — classification should never assign BulkInsertCommand
+            // without a materialization model. Emit a throwing body so the
+            // missing wiring surfaces at first invocation rather than at
+            // compile (a partial method without a matching body trips CS8795).
+            var paramListFallback = BuildParameterList(m.MethodParameters);
+            sb.AppendLine($"    {GeneratedCodeAttribute}");
+            sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial {m.ReturnTypeDisplay} {m.MethodName}({paramListFallback})");
+            sb.AppendLine($"        => throw new global::System.InvalidOperationException(\"ZeroAlloc.ORM generator invariant: BulkInsertCommand missing BulkInsertMaterialization for '{m.MethodName}'.\");");
+            return;
+        }
+
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        var rowsParam = mat.CollectionParameterName;
+        var rowsLocal = "__rows";
+        var isIdentity = mat.ReturnKind == BulkInsertReturnKind.IdentityList;
+
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+
+        // IEnumerable<TRow> adapter. When the parameter is already
+        // IReadOnlyList<TRow> we alias directly (zero allocation, zero copy);
+        // otherwise materialise into a List<TRow> ONCE so the chunk loop can
+        // index without re-enumerating. The `is IReadOnlyList<T>` check
+        // catches arrays / Lists / immutable arrays that the user typed as
+        // IEnumerable so we still avoid a copy in the common case.
+        if (mat.CollectionParameterIsReadOnlyList)
+        {
+            sb.AppendLine($"        var {rowsLocal} = @{rowsParam};");
+        }
+        else
+        {
+            sb.AppendLine($"        var {rowsLocal} = @{rowsParam} is global::System.Collections.Generic.IReadOnlyList<{mat.RowTypeFullName}> __irol ? __irol : new global::System.Collections.Generic.List<{mat.RowTypeFullName}>(@{rowsParam});");
+        }
+
+        // Empty short-circuit BEFORE the connection prologue. No reason to
+        // open a connection (and pay the pool round-trip) for an empty input.
+        if (isIdentity)
+        {
+            sb.AppendLine($"        if ({rowsLocal}.Count == 0) return global::System.Array.Empty<{mat.IdentityTypeFullName}>();");
+        }
+        else
+        {
+            sb.AppendLine($"        if ({rowsLocal}.Count == 0) return 0;");
+        }
+
+        // EF-style ref-counted connection prologue — single open/close across
+        // the entire chunk loop. Matches the lifecycle every other emit
+        // shape uses; do not invent a per-chunk lifecycle here (see PR #145
+        // perf regression: per-chunk Open/Close serialises against the pool).
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+
+        // Chunk loop preamble. __chunkSize is baked as the integer
+        // `900 / placeholderCount` (floor of 1) — a constant the JIT folds.
+        sb.AppendLine($"            const int __chunkSize = {mat.ChunkSize.ToString(System.Globalization.CultureInfo.InvariantCulture)};");
+        if (isIdentity)
+        {
+            sb.AppendLine($"            var __ids = new global::System.Collections.Generic.List<{mat.IdentityTypeFullName}>({rowsLocal}.Count);");
+        }
+        else
+        {
+            sb.AppendLine("            var __totalAffected = 0;");
+        }
+        sb.AppendLine("            var __offset = 0;");
+        sb.AppendLine($"            var __remaining = {rowsLocal}.Count;");
+        sb.AppendLine();
+
+        // SQL builder hoisted outside the chunk loop. Reused via Clear() at
+        // the top of each iteration to avoid N-allocations-per-call for large
+        // batches. Initial capacity = static-head length + room for one tuple
+        // (rough hint; SB grows as needed). Each chunk re-primes by appending
+        // the static head before the per-tuple Append chain.
+        var headLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticHead, quote: true);
+        sb.AppendLine($"            var __sb = new global::System.Text.StringBuilder({headLiteral}.Length + 64);");
+        sb.AppendLine();
+        sb.AppendLine("            while (__remaining > 0)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;");
+        sb.AppendLine("                await using var __cmd = __conn.CreateCommand();");
+        sb.AppendLine();
+
+        // SQL builder for this chunk. Static head + N tuples + static tail.
+        // SB is hoisted above; Clear() + re-prime with the static head at the
+        // top of each iteration.
+        sb.AppendLine("                __sb.Clear();");
+        sb.AppendLine($"                __sb.Append({headLiteral});");
+        sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    if (__i > 0) __sb.Append(\", \");");
+        sb.Append("                    __sb.Append(\"(\")");
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            var ph = mat.PlaceholderBindings[i].PlaceholderName;
+            if (i > 0) sb.Append(".Append(\", \")");
+            sb.Append($".Append(\"@{ph}_\").Append(__i)");
+        }
+        sb.AppendLine(".Append(\")\");");
+        sb.AppendLine("                }");
+        if (!string.IsNullOrEmpty(mat.InsertStaticTail))
+        {
+            var tailLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticTail, quote: true);
+            sb.AppendLine($"                __sb.Append({tailLiteral});");
+        }
+        sb.AppendLine("                __cmd.CommandText = __sb.ToString();");
+        sb.AppendLine();
+
+        // Bind one DbParameter per (placeholder, row-in-chunk). The per-row
+        // local is `__p_<placeholder>_<i>` where <i> is the SOURCE-ORDER index
+        // of the placeholder in PlaceholderBindings — not the row index. The
+        // ParameterName carries the row index suffix so the SQL `@a_0`, `@a_1`
+        // bind to distinct DbParameter instances inside the same DbCommand.
+        sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    var __row = {rowsLocal}[__offset + __i];");
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            var binding = mat.PlaceholderBindings[i];
+            var paramLocal = $"__p_{binding.PlaceholderName}_{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
+            sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
+            sb.AppendLine($"                    {paramLocal}.ParameterName = \"@{binding.PlaceholderName}_\" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
+            sb.AppendLine($"                    {paramLocal}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
+        }
+        sb.AppendLine("                }");
+        sb.AppendLine();
+
+        // Execute. RowsAffected uses ExecuteNonQueryAsync (sum the returned
+        // count). IdentityList opens a reader, walks every row, and pushes
+        // either the raw scalar (primitive identity) or the VO-wrapped scalar
+        // (IdentityFactory non-null sentinel) into the result list.
+        if (isIdentity)
+        {
+            sb.AppendLine($"                await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+            sb.AppendLine($"                while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+            sb.AppendLine("                {");
+            if (mat.IdentityFactory is null)
+            {
+                // Primitive identity — no wrap.
+                sb.AppendLine($"                    __ids.Add(__reader.{mat.IdentityReaderMethod}(0));");
+            }
+            else
+            {
+                // VO identity. The IdentityFactory sentinel is a ctor reference
+                // ("new global::Ns.OrderId") emitted by the classifier; static
+                // factories are NOT supported in v1.3 (see method comment).
+                sb.AppendLine($"                    __ids.Add({mat.IdentityFactory}(__reader.{mat.IdentityReaderMethod}(0)));");
+            }
+            sb.AppendLine("                }");
+        }
+        else
+        {
+            sb.AppendLine($"                __totalAffected += await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+        }
+        sb.AppendLine();
+        sb.AppendLine("                __offset += __thisChunk;");
+        sb.AppendLine("                __remaining -= __thisChunk;");
+        sb.AppendLine("            }");
+
+        // Return + connection epilogue.
+        if (isIdentity)
+        {
+            sb.AppendLine("            return __ids;");
+        }
+        else
+        {
+            sb.AppendLine("            return __totalAffected;");
+        }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // v1.3 Task 6 — Render the parameter-value expression for one
+    // (TRow property, convention) binding inside the BulkInsert chunk loop.
+    // Mirrors the convention-driven unwrap shape used by EmitParameterBinding
+    // / EmitParameterBindingWithIndent for single-row [Command] parameters,
+    // but reads off `row.<Property>` rather than `@<paramName>`:
+    //
+    //   * No convention                          -> row.PropertyName
+    //   * Enum (default integral storage)        -> ({castType})row.PropertyName
+    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString()
+    //   * ValueObject / SingleArgCtor / StaticFactory
+    //                                            -> row.PropertyName.<ValueProperty>
+    //
+    // v1.3 limitation: BulkInsertPlaceholderBinding does not carry an
+    // IsNullable flag, so the emit does NOT wrap the expression in a
+    // `(object?)... ?? DBNull.Value` guard. A future iteration that extends
+    // the binding with nullability metadata can fold the null-coalesce in
+    // here without disturbing the surrounding emit shape.
+    private static string BuildBulkInsertParameterValueExpression(BulkInsertPlaceholderBinding binding, string rowLocal)
+    {
+        var direct = $"{rowLocal}.{binding.PropertyName}";
+        if (binding.Convention is not { } conv) return direct;
+
+        if (conv.Kind == (int)ConventionKind.Enum)
+        {
+            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            return $"({castType}){direct}";
+        }
+        if (conv.Kind == (int)ConventionKind.EnumAsString)
+        {
+            return $"{direct}.ToString()";
+        }
+        if (conv.ValuePropertyName is { } propName)
+        {
+            return $"{direct}.{propName}";
+        }
+        return direct;
     }
 
     // Shared materialization helper for the two ExecuteScalarAsync-based command

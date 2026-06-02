@@ -31,3 +31,8 @@ ZAO061  | ZeroAlloc.ORM | Error    | [StoredProcedure] name is empty
 ZAO062  | ZeroAlloc.ORM | Warning  | Named-tuple field does not match any parameter
 ZAO063  | ZeroAlloc.ORM | Error    | [Param(Name = ...)] override is not supported on composite parameters
 ZAO064  | ZeroAlloc.ORM | Info     | [StoredProcedure(Batch=...)] is ignored
+ZAO070  | ZeroAlloc.ORM | Error    | BulkInsert method must take exactly one collection parameter
+ZAO071  | ZeroAlloc.ORM | Error    | BulkInsert SQL must contain exactly one VALUES tuple
+ZAO072  | ZeroAlloc.ORM | Error    | BulkInsert placeholder doesn't match any TRow property
+ZAO073  | ZeroAlloc.ORM | Error    | BulkInsert return type must be Task<int> or Task<IReadOnlyList<TIdentity>>
+ZAO074  | ZeroAlloc.ORM | Info     | CommandKind.BulkInsert is ignored on this attribute

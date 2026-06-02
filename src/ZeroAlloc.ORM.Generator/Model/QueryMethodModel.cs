@@ -45,6 +45,15 @@ internal enum EmitShape
     //     those) — narrower than Scalar's full primitive/enum range, matching the
     //     identity-key idiom across providers.
     CommandIdentity,
+    /// <summary>
+    /// v1.3 — [Command(Kind = BulkInsert)] methods. Chunked multi-row INSERT
+    /// via the SQL-standard VALUES (…), (…), … pattern. Method takes one
+    /// IReadOnlyList&lt;TRow&gt; parameter (or IList/IEnumerable; the
+    /// IEnumerable case materializes once at method entry); return type is
+    /// Task&lt;int&gt; or Task&lt;IReadOnlyList&lt;TIdentity&gt;&gt;. Chunk size
+    /// = 900 / placeholderCount baked at codegen.
+    /// </summary>
+    BulkInsertCommand,
     // v0.4 Phase E — [StoredProcedure] methods returning a named tuple whose
     // field names match (case-insensitive) at least one C# parameter on the
     // method. The matching tuple positions emit Direction = ParameterDirection.Output
@@ -95,7 +104,83 @@ internal enum CommandKindModel
     NonQuery,
     Scalar,
     Identity,
+    BulkInsert,  // NEW — must keep numeric values in sync with public CommandKind
 }
+
+// v1.3 — Return-shape selector for [Command(Kind = BulkInsert)]. The classifier
+// picks one of these based on the method's return type (Task<int> vs
+// Task<IReadOnlyList<TIdentity>>); Task 6's emit branches on the value to either
+// SUM ExecuteNonQueryAsync chunk-counts or accumulate RETURNING-clause reader rows.
+internal enum BulkInsertReturnKind
+{
+    RowsAffected,
+    IdentityList,
+}
+
+// v1.3 — One VALUES placeholder ↔ one TRow property binding. Captured by the
+// classifier so the emit produces `cmd.Parameters.Add(...)` rows in the order
+// the SQL author wrote them.
+//
+//   PlaceholderName  — bare placeholder identifier (without the leading `@`).
+//                      The runtime SQL uses `@{PlaceholderName}_{rowIndex}` for
+//                      per-row uniqueness inside a chunk.
+//   PropertyName     — the TRow property the placeholder resolves to (PascalCase,
+//                      matched case-insensitively against PlaceholderName).
+//   Convention       — non-null when the property type is a VO / SingleArgCtor /
+//                      StaticFactory / Enum / EnumAsString; the emit calls
+//                      `.Value` (or casts to underlying / `.ToString()`) before
+//                      assigning to DbParameter.Value. Null for primitive
+//                      properties — the emit path mirrors the single-row
+//                      [Command] parameter-binding shape.
+internal sealed record BulkInsertPlaceholderBinding(
+    string PlaceholderName,
+    string PropertyName,
+    ConventionInfo? Convention);
+
+// v1.3 — Materialization plan for an EmitShape.BulkInsertCommand method. Populated
+// by ClassifyBulkInsertCommand when all four shape checks pass (parameter shape,
+// VALUES tuple parse, placeholder resolution, return-type shape); null otherwise.
+//
+//   PlaceholderBindings              — one per VALUES placeholder, in source order.
+//   ChunkSize                        — 900 / placeholderCount, integer division,
+//                                      floor of 1. Baked at codegen so the emit
+//                                      can render the loop bound as a constant.
+//   ReturnKind                       — RowsAffected (Task<int>) or IdentityList
+//                                      (Task<IReadOnlyList<TIdentity>>).
+//   IdentityTypeFullName             — globally-qualified TIdentity type. Null
+//                                      when ReturnKind == RowsAffected.
+//   IdentityReaderMethod             — IDataReader.GetXxx for the underlying
+//                                      identity primitive (int → GetInt32 etc.).
+//                                      Null when ReturnKind == RowsAffected.
+//   IdentityFactory                  — `new global::Ns.OrderId` (ctor reference)
+//                                      when TIdentity is a VO wrapping a primitive;
+//                                      null when TIdentity is itself the primitive.
+//                                      Used by the emit as
+//                                      `IdentityFactory(reader.GetXxx(0))`.
+//   RowTypeFullName                  — TRow's globally-qualified name.
+//   CollectionParameterName          — C# name of the IEnumerable<TRow> parameter.
+//   CollectionParameterIsReadOnlyList — true when the parameter is
+//                                      IReadOnlyList<TRow> (allows `.Count` and
+//                                      indexer access in the chunked emit
+//                                      without materialising a copy). False for
+//                                      IList/IEnumerable, which Task 6 will
+//                                      materialise at method entry.
+//   InsertStaticHead                 — SQL prefix up to (but not including) the
+//                                      VALUES tuple — e.g. `INSERT INTO T(a,b) VALUES `.
+//   InsertStaticTail                 — SQL suffix after the VALUES tuple — typically
+//                                      empty or `" RETURNING Id"` / `" ; SELECT ..."`.
+internal sealed record BulkInsertMaterializationModel(
+    EquatableArray<BulkInsertPlaceholderBinding> PlaceholderBindings,
+    int ChunkSize,
+    BulkInsertReturnKind ReturnKind,
+    string? IdentityTypeFullName,
+    string? IdentityReaderMethod,
+    string? IdentityFactory,
+    string RowTypeFullName,
+    string CollectionParameterName,
+    bool CollectionParameterIsReadOnlyList,
+    string InsertStaticHead,
+    string InsertStaticTail);
 
 // Per-method emit input. Type-scoped fields (ContainingTypeName, Namespace,
 // ConnectionAccess, ConnectionResolved, ContainingTypePartial, ContainingTypeLocation)
@@ -157,7 +242,13 @@ internal sealed record QueryMethodModel(
     //   ProtectedAndInternal -> "private protected"   (C# operator)
     //   Private              -> "private"
     // Captured at TransformMethod time; never null.
-    string MethodAccessibilityKeyword);
+    string MethodAccessibilityKeyword,
+    // v1.3 — materialization plan for [Command(Kind = BulkInsert)]. Set when
+    // Shape == EmitShape.BulkInsertCommand; null for every other emit shape.
+    // Carries the per-placeholder property bindings, chunk size, return-shape
+    // selector (RowsAffected / IdentityList), and the static SQL head/tail
+    // around the VALUES tuple. Task 6's emit reads it directly.
+    BulkInsertMaterializationModel? BulkInsertMaterialization = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
