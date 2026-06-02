@@ -11,6 +11,7 @@ ZeroAlloc.ORM.CommandAttribute.Kind.get -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandAttribute.Kind.init -> void
 ZeroAlloc.ORM.CommandAttribute.Sql.get -> string!
 ZeroAlloc.ORM.CommandKind
+ZeroAlloc.ORM.CommandKind.BulkInsert = 3 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Identity = 2 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.NonQuery = 0 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Scalar = 1 -> ZeroAlloc.ORM.CommandKind

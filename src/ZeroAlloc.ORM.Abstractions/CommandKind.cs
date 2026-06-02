@@ -20,4 +20,17 @@ public enum CommandKind
     /// for SQL Server) and the generator emits a scalar materialization of the resulting value.
     /// </summary>
     Identity,
+
+    /// <summary>
+    /// Multi-row INSERT via the SQL-standard <c>INSERT … VALUES (…), (…), …</c>
+    /// pattern. The decorated method takes one collection parameter
+    /// (<see cref="IReadOnlyList{T}"/> / <see cref="IList{T}"/> /
+    /// <see cref="IEnumerable{T}"/>) and returns either <c>Task&lt;int&gt;</c>
+    /// (rows-affected sum across chunks) or
+    /// <c>Task&lt;IReadOnlyList&lt;TIdentity&gt;&gt;</c> (identity values from
+    /// <c>RETURNING &lt;col&gt;</c>). The generator auto-chunks the input to
+    /// stay under provider parameter-count limits (Sqlite 999, SQL Server 2100,
+    /// Postgres ~32k). See <c>docs/cookbook/bulk-insert.md</c>.
+    /// </summary>
+    BulkInsert = 3,
 }
