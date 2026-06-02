@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.2.0...v1.3.0) (2026-06-02)
+
+
+### Features
+
+* CommandKind.BulkInsert -- chunked multi-row INSERT for v1.3 ([#106](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/106)) ([16e7dad](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/16e7dadadbfca0535f2dfc6a62753b9c95c0b9f4))
+
 ## [1.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.1.0...v1.2.0) (2026-06-02)
 
 
