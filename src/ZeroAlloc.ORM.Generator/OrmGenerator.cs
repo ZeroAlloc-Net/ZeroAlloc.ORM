@@ -1286,14 +1286,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var inner = named.TypeArguments[0];
 
-        // v1.2 — Task<IReadOnlyList<TRow>>: bare top-level list return. Single
-        // result set drained into a buffered List<TRow>. Distinct from
-        // MultiResultSet (which uses a tuple shape with List as one element kind)
-        // and from Streaming (IAsyncEnumerable, yield-based, no buffering).
-        // Element materialization reuses the FlatRow / DomainEntity models so
-        // positional records and named-column classes both work. Issue #102.
+        // v1.2 — bare top-level list return. Single result set drained into a
+        // buffered List<TRow>. Accepted shapes: Task<IReadOnlyList<T>> (v1.2,
+        // issue #102), Task<List<T>>, Task<IList<T>> (v1.3.1, follow-up to
+        // PR #106). All three target types accept the emit's `var __list =
+        // new List<T>(); … return __list;` body via implicit conversion.
+        // Distinct from MultiResultSet (tuple shape) and from Streaming
+        // (IAsyncEnumerable, yield-based). Element materialization reuses
+        // the FlatRow / DomainEntity models so positional records and
+        // named-column classes both work.
         if (inner is INamedTypeSymbol listInner
-            && string.Equals(listInner.MetadataName, "IReadOnlyList`1", StringComparison.Ordinal)
+            && listInner.MetadataName is "IReadOnlyList`1" or "List`1" or "IList`1"
             && listInner.Arity == 1
             && listInner.TypeArguments.Length == 1
             && string.Equals(listInner.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
@@ -1301,10 +1304,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var listElement = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
             var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
             if (listFlat is not null)
+            {
+                // EmitListResultSet does not recurse into composite InnerColumns
+                // the way EmitFlatRow does, so a composite-bearing element type
+                // would generate broken member reads at emit (e.g. `__reader.(1)`
+                // with no GetX method on the inner column). Reject here so the
+                // method falls through to ZAO022 alongside the other unsupported
+                // shapes. Applies uniformly across IReadOnlyList<T>, List<T>,
+                // and IList<T> — closes a pre-existing gap in the v1.2 path.
+                if (HasCompositeBinding(listFlat.Columns))
+                    return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 return (EmitShape.ListResultSet, null, listFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+            }
             var listDomain = TryBuildDomainEntityMaterialization(listElement, conventionContext);
             if (listDomain is not null)
+            {
+                // Same composite-recursion gap applies to DomainEntity bindings.
+                if (HasCompositeBinding(listDomain.Columns))
+                    return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+            }
             // Element type not classifiable — fall through to Unknown so the
             // existing ZAO022 / ZAO040 path surfaces the gap.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
@@ -5080,6 +5099,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         foreach (var col in columns)
         {
             if (col.InnerColumns.Length > 0 && col.IsNullable) return true;
+        }
+        return false;
+    }
+
+    // v1.3.1 — does any column in this materialization carry a composite ctor
+    // parameter (nullable or not)? Used by the top-level ListResultSet
+    // classifier (IReadOnlyList<T> / List<T> / IList<T>) to reject
+    // composite-bearing element types: EmitListResultSet does not recurse into
+    // InnerColumns the way EmitFlatRow does, so a composite would emit broken
+    // member reads (e.g. `__reader.(N)` with no GetX method on the inner
+    // column). Rejection here routes the method to ZAO022 instead.
+    private static bool HasCompositeBinding(EquatableArray<ColumnBinding> columns)
+    {
+        foreach (var col in columns)
+        {
+            if (col.InnerColumns.Length > 0) return true;
         }
         return false;
     }
