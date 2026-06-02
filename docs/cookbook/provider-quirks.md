@@ -81,6 +81,18 @@ Sqlite returns the rows-affected count correctly through
 `ExecuteNonQueryAsync` for plain `DELETE` / `UPDATE` statements — no
 special handling needed on the `[Command(Kind = NonQuery)]` path.
 
+### `BulkInsert` parameter cap
+
+Sqlite's default per-statement parameter cap is **999**
+(`SQLITE_MAX_VARIABLE_NUMBER`). `CommandKind.BulkInsert` chunks at
+`900 / placeholderCount` rows per chunk — for a 2-column INSERT that's 450
+rows per chunk; for a 10-column INSERT, 90 rows. The 900-parameter budget
+deliberately stays under the 999 cap so the emit works on the default
+Sqlite build without needing to recompile the engine with a raised
+`SQLITE_MAX_VARIABLE_NUMBER`. See
+[`bulk-insert.md`](bulk-insert.md#chunking-semantics) for the chunking
+behaviour and per-chunk atomicity caveat.
+
 ## PostgreSQL (Npgsql)
 
 The primary integration target (Testcontainers fixture in CI).
@@ -170,6 +182,19 @@ historically preferred `$1` / `$2` positional placeholders, but every
 modern Npgsql release accepts the `@name` form and normalises internally.
 No adopter-side change required.
 
+### `BulkInsert` parameter cap
+
+Postgres' per-statement parameter cap is **65535** (an `int16` index on
+the wire protocol). `CommandKind.BulkInsert`'s 900-parameter budget leaves
+significant headroom: for a 2-column INSERT, ZA.ORM chunks at 450 rows
+where Postgres would happily accept ~32k. Chunking therefore rarely fires
+for typical schemas, and when it does it's a conservative-by-design
+choice (the budget is portable across all four providers, not Postgres-
+tuned). A provider-aware chunk size that reads the cap from the
+connection is a backlog item. See
+[`bulk-insert.md`](bulk-insert.md#per-provider-notes) for the full
+per-provider table.
+
 ## SQL Server
 
 Notes only — no integration fixture in v1.0. Snapshot tests cover the
@@ -231,6 +256,19 @@ bind by name; output parameters surface through the named-tuple
 convention. The named-tuple convention is identical across providers
 because the abstraction lives at the ADO.NET surface.
 
+### `BulkInsert` parameter cap
+
+SQL Server's per-statement parameter cap is **2100**.
+`CommandKind.BulkInsert`'s 900-parameter budget stays well under this:
+for a 2-column INSERT, ZA.ORM chunks at 450 rows where SqlClient would
+accept ~1050. Chunking is conservative on SQL Server by design — the
+budget is portable across all four providers, not SQL-Server-tuned.
+SQL Server is snapshot-only in the v1.3 integration suite; raise a
+backlog item if you measure the extra round-trips on a high-cap
+provider hurting throughput. See
+[`bulk-insert.md`](bulk-insert.md#per-provider-notes) for the full
+per-provider table.
+
 ## MySQL
 
 Notes only — no integration fixture in v1.0. Snapshot tests cover the
@@ -269,6 +307,19 @@ MySQL `DECIMAL` columns surface as CLR `decimal` directly through both
 official providers; no factory needed. `MEDIUMTEXT`-backed financial
 columns (a legacy pattern) need `[Materialize(Factory)]` with a `string`
 parameter — same shape as Sqlite's decimal-as-text recipe.
+
+### `BulkInsert` parameter cap
+
+MySQL has no documented per-statement parameter cap separate from the
+overall `max_allowed_packet` size — a 16 MiB default in modern releases,
+configurable per server. Standard multi-row `VALUES (...), (...), ...` is
+supported on both MySql.Data and MySqlConnector.
+`CommandKind.BulkInsert` chunks at `900 / placeholderCount` regardless,
+which keeps individual statements small enough to fit comfortably inside
+the default packet size for any realistic row shape. MySQL is
+snapshot-only in the v1.3 integration suite. See
+[`bulk-insert.md`](bulk-insert.md#per-provider-notes) for the full
+per-provider table.
 
 ## Cross-provider tips
 
@@ -317,6 +368,8 @@ are left open for the caller to manage. This is provider-independent.
   decimal-as-text on Sqlite (and on TEXT-backed Postgres columns).
 - [`multi-result-set.md`](multi-result-set.md) — `BatchMode.Auto`
   branching on `CanCreateBatch`.
+- [`bulk-insert.md`](bulk-insert.md) — `CommandKind.BulkInsert` chunking
+  semantics and the 900-parameter portable budget rationale.
 - [`streaming.md`](streaming.md) — provider-side cursor lifetimes for
   `IAsyncEnumerable<T>` consumption.
 
