@@ -851,6 +851,27 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 ConventionInfo? paramConvention = null;
                 EquatableArray<CompositeBindingField> compositeFields = default;
                 string? compositeTypeFullName = null;
+                // BulkInsert collection parameter — shape-based gate. The row collection
+                // (IReadOnlyList<TRow> / IList<TRow> / IEnumerable<TRow> from
+                // System.Collections.Generic) has no Convention of its own — it's not a
+                // primitive, has no `.Value`, no static factory, no single-arg ctor. The
+                // per-row property bindings get resolved per-placeholder inside
+                // EmitBulkInsertCommand. Without this gate, ConventionDiscovery returns
+                // Unknown and ZAO041 fires, suppressing the BulkInsert emit entirely.
+                // Shape-based (not name-based) detection — the classifier runs AFTER
+                // this loop so `mat.CollectionParameterName` isn't available yet.
+                if (!isCt && IsBulkInsertCollectionParameterShape(p, isCommandAttribute, commandKind))
+                {
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: isNullable,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null);
+                }
                 if (!isCt)
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
@@ -1056,6 +1077,45 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ConnectionResolved: connectionResolved,
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation);
+    }
+
+    // Shape-based detection of the BulkInsert row-collection parameter. The
+    // per-parameter ConventionDiscovery scan inside TransformMethod fires
+    // ZAO041 for any parameter whose type has no convention; the row
+    // collection (IReadOnlyList<TRow> / IList<TRow> / IEnumerable<TRow> from
+    // System.Collections.Generic) intentionally has none — its per-row
+    // property bindings are resolved per-placeholder by EmitBulkInsertCommand.
+    //
+    // This helper runs BEFORE ClassifyBulkInsertCommand, so we can't reuse
+    // `materialization.CollectionParameterName`. The shape predicate mirrors
+    // the classifier's own collection-parameter detection (see the
+    // `pNamed.Name in { "IReadOnlyList", "IList", "IEnumerable" }` shape
+    // gate around line 1576) so a parameter that the classifier WOULD
+    // accept as the collection is the one we skip here. Anything else
+    // (e.g. a plain `int customerId` alongside the rows) still flows
+    // through ConventionDiscovery and surfaces the regular diagnostics.
+    private static bool IsBulkInsertCollectionParameterShape(
+        IParameterSymbol p,
+        bool isCommandAttribute,
+        CommandKindModel commandKind)
+    {
+        if (!isCommandAttribute || commandKind != CommandKindModel.BulkInsert)
+            return false;
+        if (string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal))
+            return false;
+        if (p.Type is not INamedTypeSymbol named
+            || named.Arity != 1
+            || named.TypeArguments.Length != 1)
+            return false;
+        if (!string.Equals(
+                named.ContainingNamespace?.ToDisplayString(),
+                "System.Collections.Generic",
+                StringComparison.Ordinal))
+            return false;
+        var shapeName = named.Name;
+        return shapeName == "IReadOnlyList"
+            || shapeName == "IList"
+            || shapeName == "IEnumerable";
     }
 
     // Decide which emit template fits this method. Conservative on purpose:
