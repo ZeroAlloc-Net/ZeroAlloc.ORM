@@ -1658,20 +1658,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return EmitShape.Unknown;
         }
 
-        // 2. VALUES tuple parse. The parser's TupleCount tells us how many
-        //    `(...)` row-tuples the SQL contains; we want exactly one (the
-        //    generator's chunk-multiplication adds the others at runtime). Zero
-        //    matches and the multi-row case both report via ZAO071 with the
-        //    actual TupleCount so the adopter sees the cardinality.
+        // 2. VALUES tuple parse. The parser returns a fail-reason enum so we
+        //    can map each failure mode to a human-readable sub-reason for
+        //    ZAO071. Passing the bare TupleCount as the message arg (the
+        //    previous shape) produced confusing messages like "saw 1, expected
+        //    exactly one" when the parser actually meant "VALUES present but
+        //    no @placeholders" — the new sub-reasons disambiguate.
         var valuesResult = BulkInsertValuesParser.TryParse(sql);
         if (!valuesResult.Success)
         {
+            var reasonText = valuesResult.FailReason switch
+            {
+                BulkInsertParseFailReason.NoValuesClause =>
+                    "no VALUES clause found",
+                BulkInsertParseFailReason.MultipleRowTuples =>
+                    $"{valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)} row tuples in a single VALUES clause",
+                BulkInsertParseFailReason.MalformedTuple =>
+                    "VALUES clause present but no @placeholders found (literal values or unsupported expression?)",
+                // Defensive default — None means Success, which we already
+                // filtered out above. Any new fail-reason added without a
+                // switch arm falls through here so the diagnostic still fires.
+                _ => $"parser failure (TupleCount = {valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)})",
+            };
+
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO071",
                 Location: methodLocation,
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                     method.Name,
-                    valuesResult.TupleCount.ToString(global::System.Globalization.CultureInfo.InvariantCulture)))));
+                    reasonText))));
             return EmitShape.Unknown;
         }
 

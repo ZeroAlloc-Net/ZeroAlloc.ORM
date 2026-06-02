@@ -46,6 +46,7 @@ public class BulkInsertValuesParserTests
 
         Assert.False(result.Success);
         Assert.Equal(0, result.TupleCount);
+        Assert.Equal(BulkInsertParseFailReason.NoValuesClause, result.FailReason);
     }
 
     [Fact]
@@ -56,6 +57,7 @@ public class BulkInsertValuesParserTests
 
         Assert.False(result.Success);
         Assert.Equal(2, result.TupleCount);
+        Assert.Equal(BulkInsertParseFailReason.MultipleRowTuples, result.FailReason);
     }
 
     [Fact]
@@ -81,5 +83,6 @@ public class BulkInsertValuesParserTests
 
         Assert.False(result.Success);
         Assert.Equal(1, result.TupleCount);
+        Assert.Equal(BulkInsertParseFailReason.MalformedTuple, result.FailReason);
     }
 }

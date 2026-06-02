@@ -4,6 +4,34 @@ using System.Text.RegularExpressions;
 
 namespace ZeroAlloc.ORM.Generator.Model;
 
+// Distinguishes the three failure modes BulkInsertValuesParser can surface.
+// The classifier (OrmGenerator.ClassifyBulkInsertCommand) maps each value to
+// a human-readable sub-reason for ZAO071's message argument. Previously the
+// classifier passed only TupleCount, which produced confusing messages like
+// "saw 1, expected exactly one" when the parser actually meant "VALUES
+// present but no @placeholders". Lives at the namespace level (not nested
+// inside BulkInsertValuesParser) so the classifier can name it without the
+// `BulkInsertValuesParser.` prefix — matches the namespace-level convention
+// used by AttributePipelineKind / CommandKindModel.
+internal enum BulkInsertParseFailReason
+{
+    // Parse succeeded — Success=true.
+    None,
+
+    // SQL contains no "VALUES (...)" token at all (e.g. INSERT…SELECT).
+    NoValuesClause,
+
+    // SQL contains more than one row tuple (e.g. "VALUES (1, 2), (3, 4)").
+    // Incompatible with BulkInsert's auto-multiplication.
+    MultipleRowTuples,
+
+    // VALUES clause is present and looks like a single row tuple, but
+    // the @-placeholder regex didn't match (e.g. literal values
+    // `VALUES (1, 2)`, or an unsupported expression shape the regex
+    // can't tokenise).
+    MalformedTuple,
+}
+
 // Extracts the placeholder list from a [Command(Kind = BulkInsert)] SQL
 // template's VALUES tuple. Exactly one tuple required — multiple tuples
 // means the user already wrote multi-row SQL (which doesn't compose with
@@ -50,7 +78,8 @@ internal static class BulkInsertValuesParser
         int TupleCount,
         int TupleStart,
         int TupleLength,
-        int ValuesClauseStart);   // NEW — for diagnostic Location anchoring
+        int ValuesClauseStart,   // for diagnostic Location anchoring
+        BulkInsertParseFailReason FailReason);
 
     public static Result TryParse(string sql)
     {
@@ -64,7 +93,8 @@ internal static class BulkInsertValuesParser
                 TupleCount: 0,
                 TupleStart: 0,
                 TupleLength: 0,
-                ValuesClauseStart: -1);
+                ValuesClauseStart: -1,
+                FailReason: BulkInsertParseFailReason.NoValuesClause);
         }
 
         // Count comma-separated row tuples after the VALUES keyword. The
@@ -86,7 +116,8 @@ internal static class BulkInsertValuesParser
                 TupleCount: rowTupleCount,
                 TupleStart: 0,
                 TupleLength: 0,
-                ValuesClauseStart: anyValuesMatch.Index);
+                ValuesClauseStart: anyValuesMatch.Index,
+                FailReason: BulkInsertParseFailReason.MultipleRowTuples);
         }
 
         // Exactly one row tuple — try to extract @-placeholders from it.
@@ -103,7 +134,8 @@ internal static class BulkInsertValuesParser
                 TupleCount: 1,
                 TupleStart: 0,
                 TupleLength: 0,
-                ValuesClauseStart: anyValuesMatch.Index);
+                ValuesClauseStart: anyValuesMatch.Index,
+                FailReason: BulkInsertParseFailReason.MalformedTuple);
         }
 
         var inner = placeholderMatch.Groups["inner"].Value;
@@ -125,6 +157,7 @@ internal static class BulkInsertValuesParser
             TupleCount: 1,
             TupleStart: openParen,
             TupleLength: tupleEnd - openParen,
-            ValuesClauseStart: anyValuesMatch.Index);
+            ValuesClauseStart: anyValuesMatch.Index,
+            FailReason: BulkInsertParseFailReason.None);
     }
 }

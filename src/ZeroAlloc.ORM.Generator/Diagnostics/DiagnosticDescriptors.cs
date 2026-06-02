@@ -262,7 +262,7 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO071_BulkInsertValuesParser = Make(
         "ZAO071", "BulkInsert SQL must contain exactly one VALUES tuple",
-        "[Command(Kind = CommandKind.BulkInsert)] method '{0}' SQL must contain exactly one VALUES (@placeholder, ...) tuple; the generator's parser found {1}",
+        "[Command(Kind = CommandKind.BulkInsert)] method '{0}' SQL parse failed: {1}",
         DiagnosticSeverity.Error);
 
     public static readonly DiagnosticDescriptor ZAO072_BulkInsertPlaceholderUnresolved = Make(
