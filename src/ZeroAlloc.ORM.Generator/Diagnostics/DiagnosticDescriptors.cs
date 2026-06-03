@@ -279,4 +279,18 @@ internal static class DiagnosticDescriptors
         "ZAO074", "CommandKind.BulkInsert is ignored on this attribute",
         "Method '{0}' is annotated with {1} which ignores Kind. CommandKind.BulkInsert only takes effect on [Command]. Change the attribute to [Command] or remove the Kind argument.",
         DiagnosticSeverity.Info);
+
+    // v1.5 — IAsyncDbTransaction parameter support. The emit picks the FIRST
+    // IAsyncDbTransaction parameter and assigns `__cmd.Transaction = @<name>;`.
+    // Additional tx parameters are silently dropped; ZAO080 surfaces the latent
+    // misuse so adopters can clean up the signature. Mirrors ZAO006 for
+    // CancellationToken multiplicity.
+    //
+    // MessageArgs:
+    //   {0} = method name
+    //   {1} = the count of IAsyncDbTransaction parameters seen
+    public static readonly DiagnosticDescriptor ZAO080_MultipleTransactionParameters = Make(
+        "ZAO080", "At most one IAsyncDbTransaction parameter",
+        "Method '{0}' has {1} IAsyncDbTransaction parameters; only the first is used.",
+        DiagnosticSeverity.Warning);
 }

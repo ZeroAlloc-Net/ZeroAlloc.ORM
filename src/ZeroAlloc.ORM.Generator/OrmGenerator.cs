@@ -436,6 +436,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO080 — at most one IAsyncDbTransaction parameter (warning).
+        // The emit forwards the FIRST matching parameter to `__cmd.Transaction`
+        // and silently drops the rest; surfacing the multiplicity here mirrors
+        // the ZAO006 precedent for CancellationToken.
+        var txParamCount = method.Parameters.Count(p =>
+            string.Equals(p.Type.ToDisplayString(), "System.Data.Async.IAsyncDbTransaction", StringComparison.Ordinal));
+        if (txParamCount > 1)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO080",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    txParamCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
+        }
+
         // ZAO002 — return type must be Task[<T>], ValueTask[<T>], or IAsyncEnumerable<T>.
         if (!IsSupportedReturnType(method.ReturnType))
         {
@@ -3894,6 +3910,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO072" => DiagnosticDescriptors.ZAO072_BulkInsertPlaceholderUnresolved,
         "ZAO073" => DiagnosticDescriptors.ZAO073_BulkInsertReturnTypeShape,
         "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
+        "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
         _ => null,
     };
 
