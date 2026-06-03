@@ -1347,22 +1347,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
             if (listFlat is not null)
             {
-                // EmitListResultSet does not recurse into composite InnerColumns
-                // the way EmitFlatRow does, so a composite-bearing element type
-                // would generate broken member reads at emit (e.g. `__reader.(1)`
-                // with no GetX method on the inner column). Reject here so the
-                // method falls through to ZAO022 alongside the other unsupported
-                // shapes. Applies uniformly across IReadOnlyList<T>, List<T>,
-                // and IList<T> — closes a pre-existing gap in the v1.2 path.
-                if (HasCompositeBinding(listFlat.Columns))
+                // v1.6 — EmitListResultSet now recurses into non-nullable
+                // composite InnerColumns (mirroring EmitFlatRow), so only
+                // NULLABLE composites still need rejection here. Nullable
+                // composites require hoisted-locals adaptation for the
+                // per-iteration while-body emit (deferred to v1.7+); they
+                // continue to route to ZAO022 via this guard. Non-nullable
+                // composites now pass through to emit. Applies uniformly
+                // across IReadOnlyList<T>, List<T>, and IList<T>.
+                if (HasNullableCompositeColumn(listFlat.Columns))
                     return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 return (EmitShape.ListResultSet, null, listFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
             var listDomain = TryBuildDomainEntityMaterialization(listElement, conventionContext);
             if (listDomain is not null)
             {
-                // Same composite-recursion gap applies to DomainEntity bindings.
-                if (HasCompositeBinding(listDomain.Columns))
+                // Same nullable-composite gap applies to DomainEntity bindings.
+                if (HasNullableCompositeColumn(listDomain.Columns))
                     return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
@@ -5186,22 +5187,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
-    // v1.3.1 — does any column in this materialization carry a composite ctor
-    // parameter (nullable or not)? Used by the top-level ListResultSet
-    // classifier (IReadOnlyList<T> / List<T> / IList<T>) to reject
-    // composite-bearing element types: EmitListResultSet does not recurse into
-    // InnerColumns the way EmitFlatRow does, so a composite would emit broken
-    // member reads (e.g. `__reader.(N)` with no GetX method on the inner
-    // column). Rejection here routes the method to ZAO022 instead.
-    private static bool HasCompositeBinding(EquatableArray<ColumnBinding> columns)
-    {
-        foreach (var col in columns)
-        {
-            if (col.InnerColumns.Length > 0) return true;
-        }
-        return false;
-    }
-
     // v0.5 Phase C — emit the FlatRow / DomainEntity body using hoisted
     // locals when one or more nested composites are nullable. The shape:
     //
@@ -6017,10 +6002,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
             hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "                ");
         }
         sb.AppendLine($"                __list.Add(new {mat.TargetTypeFullName}(");
+        var ordinal = 0;
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? "));" : ",";
+            // v1.6 — composite ctor parameter: expand into nested
+            // `new T(reader.GetXxx(ord), ...)` construction spanning N
+            // consecutive ordinals. Mirrors EmitFlatRow lines 5158-5163.
+            // Positional FlatRow path advances the cursor by N; column-name
+            // DomainEntity path uses the per-inner hoisted ordinal locals
+            // captured by EmitOrdinalHoistsForColumns.
+            if (col.InnerColumns.Length > 0)
+            {
+                if (useColumnNames)
+                {
+                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(sb, col, hoistedOrdinals![i]!, "                    ", trailing);
+                }
+                else
+                {
+                    EmitNestedCompositeConstruction(sb, col, ordinal, "                    ", trailing);
+                    ordinal += col.InnerColumns.Length;
+                }
+                continue;
+            }
             string ordinalExpr;
             if (useColumnNames)
             {
@@ -6028,7 +6033,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             else
             {
-                ordinalExpr = $"{i}";
+                ordinalExpr = $"{ordinal}";
             }
             var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
             if (col.Convention is { } conv && conv.FactoryFullName is not null)
@@ -6054,6 +6059,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 expr = readExpr;
             }
             sb.AppendLine($"                    {expr}{trailing}");
+            ordinal++;
         }
         sb.AppendLine("            }");
         sb.AppendLine("            return __list;");
