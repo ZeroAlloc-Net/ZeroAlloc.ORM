@@ -21,6 +21,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
+    private const string IAsyncDbTransactionFullName = "System.Data.Async.IAsyncDbTransaction";
+    private const string IAsyncDbTransactionSimpleName = "IAsyncDbTransaction";
     private const string GeneratorVersion = "0.1.0";
     private const string GeneratedCodeAttribute =
         "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
@@ -440,8 +442,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // The emit forwards the FIRST matching parameter to `__cmd.Transaction`
         // and silently drops the rest; surfacing the multiplicity here mirrors
         // the ZAO006 precedent for CancellationToken.
-        var txParamCount = method.Parameters.Count(p =>
-            string.Equals(p.Type.ToDisplayString(), "System.Data.Async.IAsyncDbTransaction", StringComparison.Ordinal));
+        var txParamCount = method.Parameters.Count(p => IsIAsyncDbTransaction(p.Type));
         if (txParamCount > 1)
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -849,7 +850,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Select(p =>
             {
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
-                var isTx = string.Equals(p.Type.ToDisplayString(), "System.Data.Async.IAsyncDbTransaction", StringComparison.Ordinal);
+                var isTx = IsIAsyncDbTransaction(p.Type);
                 var paramNameOverride = ReadParamNameOverride(p);
                 // Nullability detection mirrors the FlatRow column-binding logic:
                 // either an annotated nullable reference type (`string?`) or the
@@ -3856,6 +3857,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
+    private static bool IsIAsyncDbTransaction(ITypeSymbol type)
+    {
+        // Mirror of IsIAsyncDbConnection — same two-tier match for the same reason.
+        // Snapshot test compilations that don't transitively reference AdoNet.Async
+        // see the parameter type as an error-symbol whose display string is the
+        // simple name; we still want detection to succeed there.
+        var display = type.ToDisplayString();
+        if (string.Equals(display, IAsyncDbTransactionFullName, StringComparison.Ordinal))
+            return true;
+        if (string.Equals(display, IAsyncDbTransactionSimpleName, StringComparison.Ordinal))
+        {
+            var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+            return ns is "" or "<global namespace>" or "System.Data.Async";
+        }
+        return false;
+    }
+
     private static bool IsPrimaryConstructorParameter(IParameterSymbol p)
     {
         foreach (var syntaxRef in p.DeclaringSyntaxReferences)
@@ -6259,7 +6277,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? ("@" + p.Name);
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -6317,7 +6335,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks, one per inner ctor argument. The sentinel comment pins
@@ -6450,7 +6468,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
@@ -6744,7 +6762,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks (see EmitCompositeParameterBinding). The sentinel comment
