@@ -21,6 +21,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
+    private const string IAsyncDbTransactionFullName = "System.Data.Async.IAsyncDbTransaction";
+    private const string IAsyncDbTransactionSimpleName = "IAsyncDbTransaction";
     private const string GeneratorVersion = "0.1.0";
     private const string GeneratedCodeAttribute =
         "[global::System.CodeDom.Compiler.GeneratedCode(\"ZeroAlloc.ORM.Generator\", \"" + GeneratorVersion + "\")]";
@@ -436,6 +438,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name))));
         }
 
+        // ZAO080 — at most one IAsyncDbTransaction parameter (warning).
+        // The emit forwards the FIRST matching parameter to `__cmd.Transaction`
+        // and silently drops the rest; surfacing the multiplicity here mirrors
+        // the ZAO006 precedent for CancellationToken.
+        var txParamCount = method.Parameters.Count(p => IsIAsyncDbTransaction(p.Type));
+        if (txParamCount > 1)
+        {
+            diagnostics.Add(new DiagnosticInfo(
+                DescriptorId: "ZAO080",
+                Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
+                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                    method.Name,
+                    txParamCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
+        }
+
         // ZAO002 — return type must be Task[<T>], ValueTask[<T>], or IAsyncEnumerable<T>.
         if (!IsSupportedReturnType(method.ReturnType))
         {
@@ -833,6 +850,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Select(p =>
             {
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
+                var isTx = IsIAsyncDbTransaction(p.Type);
                 var paramNameOverride = ReadParamNameOverride(p);
                 // Nullability detection mirrors the FlatRow column-binding logic:
                 // either an annotated nullable reference type (`string?`) or the
@@ -860,12 +878,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // Unknown and ZAO041 fires, suppressing the BulkInsert emit entirely.
                 // Shape-based (not name-based) detection — the classifier runs AFTER
                 // this loop so `mat.CollectionParameterName` isn't available yet.
+                // v1.5 — IAsyncDbTransaction parameter. Like CancellationToken, it's a
+                // control signal, not a SQL value. Skip Convention discovery and the
+                // SQL-binding emit; the per-method body forwards the parameter to the
+                // command/connection plumbing (next task threads it through emit).
+                // Shape-based detection mirrors the CT precedent: a single
+                // ToDisplayString equality check, no symbol lookup required.
+                if (isTx)
+                {
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        IsTransaction: true,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: isNullable,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null);
+                }
                 if (!isCt && IsBulkInsertCollectionParameterShape(p, isCommandAttribute, commandKind))
                 {
                     return new ParameterInfo(
                         p.Name,
                         p.Type.ToDisplayString(parameterDisplayFormat),
                         IsCancellationToken: false,
+                        IsTransaction: false,
                         ParamNameOverride: paramNameOverride,
                         IsNullable: isNullable,
                         Convention: null,
@@ -1005,6 +1043,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     p.Name,
                     p.Type.ToDisplayString(parameterDisplayFormat),
                     isCt,
+                    IsTransaction: false,
                     paramNameOverride,
                     isNullable,
                     paramConvention,
@@ -1014,6 +1053,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
             .FirstOrDefault(p => p.IsCancellationToken)?.Name;
+        var transactionParameterName = methodParameters
+            .FirstOrDefault(p => p.IsTransaction)?.Name;
 
         // Fully-qualified, includes `?` for nullable reference types so the emitted
         // partial signature matches the user's partial declaration verbatim.
@@ -1035,6 +1076,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MultiResultMaterialization: multiResultMaterialization,
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
+            TransactionParameterName: transactionParameterName,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
             // [Query] pipeline passes (false, NonQuery); [Command] passes (true, kind).
             // Threading both explicitly (no defaults) keeps the call site self-documenting
@@ -3815,6 +3857,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
+    private static bool IsIAsyncDbTransaction(ITypeSymbol type)
+    {
+        // Mirror of IsIAsyncDbConnection — same two-tier match for the same reason.
+        // Snapshot test compilations that don't transitively reference AdoNet.Async
+        // see the parameter type as an error-symbol whose display string is the
+        // simple name; we still want detection to succeed there.
+        var display = type.ToDisplayString();
+        if (string.Equals(display, IAsyncDbTransactionFullName, StringComparison.Ordinal))
+            return true;
+        if (string.Equals(display, IAsyncDbTransactionSimpleName, StringComparison.Ordinal))
+        {
+            var ns = type.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+            return ns is "" or "<global namespace>" or "System.Data.Async";
+        }
+        return false;
+    }
+
     private static bool IsPrimaryConstructorParameter(IParameterSymbol p)
     {
         foreach (var syntaxRef in p.DeclaringSyntaxReferences)
@@ -3869,6 +3928,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO072" => DiagnosticDescriptors.ZAO072_BulkInsertPlaceholderUnresolved,
         "ZAO073" => DiagnosticDescriptors.ZAO073_BulkInsertReturnTypeShape,
         "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
+        "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
         _ => null,
     };
 
@@ -4122,6 +4182,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("}");
     }
 
+    // v1.5 — emits `<targetVar>.Transaction = @<paramName>;` immediately after a
+    // CreateCommand() / CreateBatch() line, but only when the method declares an
+    // IAsyncDbTransaction parameter. When TransactionParameterName is null
+    // the emit is a no-op — preserves byte-identical output for the
+    // dominant case where no tx is threaded.
+    //
+    // The default targetVar is "__cmd" for the 13 command-site call sites.
+    // Batch emit sites pass "__batch" explicitly — IAsyncDbBatch exposes its
+    // own `Transaction` property and must participate in the same transaction
+    // as command-shaped methods.
+    private static void EmitTransactionAssignment(StringBuilder sb, QueryMethodModel m, string indent, string targetVar = "__cmd")
+    {
+        if (m.TransactionParameterName is null) return;
+        sb.Append(indent).Append(targetVar).Append(".Transaction = @").Append(m.TransactionParameterName).AppendLine(";");
+    }
+
     // v0.4 Phase D — emit the `__cmd.CommandText = ...;` line plus, for stored
     // procedures, the immediately-following `__cmd.CommandType = StoredProcedure;`
     // line. Centralizes the sproc/query branch so every single-command emit shape
@@ -4164,6 +4240,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
@@ -4197,6 +4274,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         if (m.HasReturnValue)
@@ -4395,6 +4473,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            {");
         sb.AppendLine("                var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;");
         sb.AppendLine("                await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "                ");
         sb.AppendLine();
 
         // SQL builder for this chunk. Static head + N tuples + static tail.
@@ -4598,6 +4677,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ", outputParamNames);
 
@@ -4854,6 +4934,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
@@ -4983,6 +5064,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5049,6 +5131,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5452,6 +5535,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5674,6 +5758,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5913,6 +5998,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6000,6 +6086,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6158,6 +6245,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitMultiResultSetJoinedBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
         sb.AppendLine($"{indent}await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, indent);
         BuildCommandTextAssignment(sb, m, "__cmd", indent);
         EmitParameterBindingWithIndent(sb, m, indent);
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6170,6 +6258,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitBatchSetupWithIndent(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements, string indent)
     {
         sb.AppendLine($"{indent}await using var __batch = __conn.CreateBatch();");
+        EmitTransactionAssignment(sb, m, indent, "__batch");
         for (var i = 0; i < statements.Length; i++)
         {
             var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
@@ -6188,7 +6277,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? ("@" + p.Name);
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -6246,7 +6335,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks, one per inner ctor argument. The sentinel comment pins
@@ -6341,6 +6430,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6356,6 +6446,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitBatchSetup(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements)
     {
         sb.AppendLine("            await using var __batch = __conn.CreateBatch();");
+        EmitTransactionAssignment(sb, m, "            ", "__batch");
         for (var i = 0; i < statements.Length; i++)
         {
             var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
@@ -6377,7 +6468,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
@@ -6671,7 +6762,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken) continue;
+            if (p.IsCancellationToken || p.IsTransaction) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks (see EmitCompositeParameterBinding). The sentinel comment

@@ -36,3 +36,4 @@ ZAO071  | ZeroAlloc.ORM | Error    | BulkInsert SQL must contain exactly one VAL
 ZAO072  | ZeroAlloc.ORM | Error    | BulkInsert placeholder doesn't match any TRow property
 ZAO073  | ZeroAlloc.ORM | Error    | BulkInsert return type must be Task<int> or Task<IReadOnlyList<TIdentity>>
 ZAO074  | ZeroAlloc.ORM | Info     | CommandKind.BulkInsert is ignored on this attribute
+ZAO080  | ZeroAlloc.ORM | Warning  | At most one IAsyncDbTransaction parameter

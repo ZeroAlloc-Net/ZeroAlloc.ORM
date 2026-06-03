@@ -164,6 +164,7 @@ internal sealed record ParameterInfo(
     string Name,
     string TypeDisplay,
     bool IsCancellationToken,
+    bool IsTransaction,
     string? ParamNameOverride = null,
     bool IsNullable = false,
     ConventionInfo? Convention = null,

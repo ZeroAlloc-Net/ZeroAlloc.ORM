@@ -198,6 +198,7 @@ internal sealed record QueryMethodModel(
     MultiResultMaterializationModel? MultiResultMaterialization,
     EquatableArray<ParameterInfo> MethodParameters,
     string? CancellationTokenParameterName,
+    string? TransactionParameterName,
     EquatableArray<DiagnosticInfo> Diagnostics,
     // v0.4 Phase A — true when the source method is annotated with [Command]; false
     // when [Query] (the Query case is implicit). Drives the EmitShape.CommandNonQuery
