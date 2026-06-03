@@ -1,0 +1,19 @@
+﻿{
+  Diagnostics: [
+    {
+      Location: : (14,19)-(14,48),
+      Message: Method 'ListOrdersAsync' has return type 'System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<TestApp.OrderRow>>' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.,
+      Severity: Info,
+      WarningLevel: 1,
+      Descriptor: {
+        Id: ZAO022,
+        Title: Return type shape not yet supported in v0.1,
+        HelpLink: https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO022.md,
+        MessageFormat: Method '{0}' has return type '{1}' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.,
+        Category: ZeroAlloc.ORM,
+        DefaultSeverity: Info,
+        IsEnabledByDefault: true
+      }
+    }
+  ]
+}
