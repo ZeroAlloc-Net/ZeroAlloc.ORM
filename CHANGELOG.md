@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.5.0...v1.6.0) (2026-06-03)
+
+
+### Features
+
+* **generator:** recurse into composite InnerColumns for list result sets ([#115](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/115)) ([e1240bb](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e1240bb40b5188dd8aaabdca0a19e3f2a2ebc06d))
+
 ## [1.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.4.0...v1.5.0) (2026-06-03)
 
 
