@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.3.0...v1.4.0) (2026-06-02)
+
+
+### Features
+
+* accept Task&lt;List&lt;T&gt;&gt; and Task&lt;IList&lt;T&gt;&gt; as top-level partial return shapes ([#109](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/109)) ([2952d6e](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/2952d6ea07ea2e9e98f49d7536caf95598e6bb89))
+
 ## [1.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.2.0...v1.3.0) (2026-06-02)
 
 
