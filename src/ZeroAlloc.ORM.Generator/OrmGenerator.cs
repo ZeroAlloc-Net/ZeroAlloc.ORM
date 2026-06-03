@@ -4147,6 +4147,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("}");
     }
 
+    // v1.5 — emits `<targetVar>.Transaction = @<paramName>;` immediately after a
+    // CreateCommand() / CreateBatch() line, but only when the method declares an
+    // IAsyncDbTransaction parameter. When TransactionParameterName is null
+    // the emit is a no-op — preserves byte-identical output for the
+    // dominant case where no tx is threaded.
+    //
+    // The default targetVar is "__cmd" for the 13 command-site call sites.
+    // Batch emit sites pass "__batch" explicitly — IAsyncDbBatch exposes its
+    // own `Transaction` property and must participate in the same transaction
+    // as command-shaped methods.
+    private static void EmitTransactionAssignment(StringBuilder sb, QueryMethodModel m, string indent, string targetVar = "__cmd")
+    {
+        if (m.TransactionParameterName is null) return;
+        sb.Append(indent).Append(targetVar).Append(".Transaction = @").Append(m.TransactionParameterName).AppendLine(";");
+    }
+
     // v0.4 Phase D — emit the `__cmd.CommandText = ...;` line plus, for stored
     // procedures, the immediately-following `__cmd.CommandType = StoredProcedure;`
     // line. Centralizes the sproc/query branch so every single-command emit shape
@@ -4189,6 +4205,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
@@ -4222,6 +4239,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         if (m.HasReturnValue)
@@ -4420,6 +4438,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            {");
         sb.AppendLine("                var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;");
         sb.AppendLine("                await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "                ");
         sb.AppendLine();
 
         // SQL builder for this chunk. Static head + N tuples + static tail.
@@ -4623,6 +4642,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ", outputParamNames);
 
@@ -4879,6 +4899,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
@@ -5008,6 +5029,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5074,6 +5096,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5477,6 +5500,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5699,6 +5723,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -5938,6 +5963,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6025,6 +6051,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6183,6 +6210,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitMultiResultSetJoinedBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
         sb.AppendLine($"{indent}await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, indent);
         BuildCommandTextAssignment(sb, m, "__cmd", indent);
         EmitParameterBindingWithIndent(sb, m, indent);
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6195,6 +6223,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitBatchSetupWithIndent(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements, string indent)
     {
         sb.AppendLine($"{indent}await using var __batch = __conn.CreateBatch();");
+        EmitTransactionAssignment(sb, m, indent, "__batch");
         for (var i = 0; i < statements.Length; i++)
         {
             var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
@@ -6366,6 +6395,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
@@ -6381,6 +6411,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void EmitBatchSetup(StringBuilder sb, QueryMethodModel m, ImmutableArray<string> statements)
     {
         sb.AppendLine("            await using var __batch = __conn.CreateBatch();");
+        EmitTransactionAssignment(sb, m, "            ", "__batch");
         for (var i = 0; i < statements.Length; i++)
         {
             var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
