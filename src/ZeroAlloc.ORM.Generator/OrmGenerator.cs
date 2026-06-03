@@ -1036,6 +1036,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ToImmutableArray();
         var cancellationTokenParameterName = methodParameters
             .FirstOrDefault(p => p.IsCancellationToken)?.Name;
+        var transactionParameterName = methodParameters
+            .FirstOrDefault(p => p.IsTransaction)?.Name;
 
         // Fully-qualified, includes `?` for nullable reference types so the emitted
         // partial signature matches the user's partial declaration verbatim.
@@ -1057,6 +1059,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MultiResultMaterialization: multiResultMaterialization,
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
+            TransactionParameterName: transactionParameterName,
             Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
             // [Query] pipeline passes (false, NonQuery); [Command] passes (true, kind).
             // Threading both explicitly (no defaults) keeps the call site self-documenting
