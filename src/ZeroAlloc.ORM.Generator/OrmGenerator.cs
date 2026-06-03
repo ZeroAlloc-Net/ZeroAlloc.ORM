@@ -833,6 +833,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Select(p =>
             {
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
+                var isTx = string.Equals(p.Type.ToDisplayString(), "System.Data.Async.IAsyncDbTransaction", StringComparison.Ordinal);
                 var paramNameOverride = ReadParamNameOverride(p);
                 // Nullability detection mirrors the FlatRow column-binding logic:
                 // either an annotated nullable reference type (`string?`) or the
@@ -860,12 +861,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // Unknown and ZAO041 fires, suppressing the BulkInsert emit entirely.
                 // Shape-based (not name-based) detection — the classifier runs AFTER
                 // this loop so `mat.CollectionParameterName` isn't available yet.
+                // v1.5 — IAsyncDbTransaction parameter. Like CancellationToken, it's a
+                // control signal, not a SQL value. Skip Convention discovery and the
+                // SQL-binding emit; the per-method body forwards the parameter to the
+                // command/connection plumbing (next task threads it through emit).
+                // Shape-based detection mirrors the CT precedent: a single
+                // ToDisplayString equality check, no symbol lookup required.
+                if (isTx)
+                {
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        IsTransaction: true,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: isNullable,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null);
+                }
                 if (!isCt && IsBulkInsertCollectionParameterShape(p, isCommandAttribute, commandKind))
                 {
                     return new ParameterInfo(
                         p.Name,
                         p.Type.ToDisplayString(parameterDisplayFormat),
                         IsCancellationToken: false,
+                        IsTransaction: false,
                         ParamNameOverride: paramNameOverride,
                         IsNullable: isNullable,
                         Convention: null,
@@ -1005,6 +1026,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     p.Name,
                     p.Type.ToDisplayString(parameterDisplayFormat),
                     isCt,
+                    IsTransaction: false,
                     paramNameOverride,
                     isNullable,
                     paramConvention,
