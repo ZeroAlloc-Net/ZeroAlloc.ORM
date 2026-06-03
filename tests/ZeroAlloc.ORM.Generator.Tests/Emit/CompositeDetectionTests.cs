@@ -74,39 +74,11 @@ public class CompositeDetectionTests
         Assert.Contains("// EmitShape: FlatRow with nested composite (flattened columns: 3)", generated, System.StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Task_of_List_of_composite_row_emits_ZAO022()
-    {
-        // v0.5 Phase A (post-review Fix 11) — locks the deferral of composite-bearing
-        // top-level list shapes. Originally the outer `Task<List<T>>` shape itself was
-        // unsupported; as of v1.3.1, List<T> / IList<T> / IReadOnlyList<T> are accepted
-        // outer shapes, but composite-bearing element rows still fall through to
-        // ZAO022 because EmitListResultSet doesn't recurse into InnerColumns the way
-        // EmitFlatRow does. The diagnostic now fires from the FlatRow-composite-guard
-        // in the ListResultSet classifier rather than from an outer-shape mismatch.
-        // Composite materialization at single-row position still works
-        // (CompositeNestedTests pins that).
-        var source = """
-            using System.Collections.Generic;
-            using System.Data.Async;
-            using System.Threading;
-            using System.Threading.Tasks;
-            using ZeroAlloc.ORM;
-
-            namespace TestApp;
-
-            public readonly record struct Money(decimal Amount, string Currency);
-            public sealed record OrderRow(int Id, Money Total);
-
-            public sealed partial class Repo(IAsyncDbConnection connection)
-            {
-                [Query("SELECT Id, Amount, Currency FROM Orders")]
-                public partial Task<List<OrderRow>> GetOrdersAsync(CancellationToken ct);
-            }
-            """;
-        var result = GeneratorHarness.RunGenerator(source);
-        var diagnostics = result.Results[0].Diagnostics;
-
-        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO022", System.StringComparison.Ordinal));
-    }
+    // Note: a third test here previously asserted that
+    // `Task<List<OrderRow>>` where OrderRow embeds a non-nullable Money
+    // composite emitted ZAO022. That assertion was retired in v1.6:
+    // EmitListResultSet now recurses into composite InnerColumns, so the
+    // non-nullable case materializes correctly. The nullable-composite
+    // path is still deferred to ZAO022 and is pinned by
+    // ListResultSetTests.ListResultSet_with_Nullable_Composite_still_rejected.
 }
