@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.4.0...v1.5.0) (2026-06-03)
+
+
+### Features
+
+* IAsyncDbTransaction parameter support on [Command]/[Query] partial methods (v1.5) ([#111](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/111)) ([a42f784](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a42f784af3330f1d5e28e549acff2639cdcecfe7))
+
 ## [1.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.3.0...v1.4.0) (2026-06-02)
 
 
