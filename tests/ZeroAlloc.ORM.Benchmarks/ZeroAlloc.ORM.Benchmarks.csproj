@@ -31,7 +31,7 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <!-- Dapper.AOT generates interceptors that replace standard Dapper call
          sites at build time. The interceptors-preview namespace below opts in
          to the C# preview feature the generator uses to rewrite Dapper calls.
