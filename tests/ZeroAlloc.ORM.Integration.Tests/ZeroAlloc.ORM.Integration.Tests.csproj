@@ -29,7 +29,7 @@
     <PackageReference Include="xunit.v3" Version="3.2.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageReference Include="FluentAssertions" Version="8.10.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
     <!-- v0.6 Phase A — Postgres integration fixture via Testcontainers.
          Real-provider coverage for the integration substrate (CanCreateBatch
          forwarding, native NUMERIC, CREATE PROCEDURE round-trips) — resolves
