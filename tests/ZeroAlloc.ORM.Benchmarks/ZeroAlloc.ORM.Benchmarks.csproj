@@ -32,6 +32,10 @@
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <!-- CVE-2025-6965 / GHSA-2m69-gcr7-jv3q: override the vulnerable native SQLite
+         binary (SQLitePCLRaw.lib.e_sqlite3 2.1.11, SQLite < 3.50.2) pulled in
+         transitively by Microsoft.Data.Sqlite. 3.50.3 ships SQLite 3.50.3. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
     <!-- Dapper.AOT generates interceptors that replace standard Dapper call
          sites at build time. The interceptors-preview namespace below opts in
          to the C# preview feature the generator uses to rewrite Dapper calls.
