@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.0...v1.6.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **deps:** pin SQLitePCLRaw.lib.e_sqlite3 to 3.50.3 (CVE-2025-6965) ([#125](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/125)) ([8386b8d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/8386b8d522e8a3e5945f785f0345f614a48483dd))
+
 ## [1.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.5.0...v1.6.0) (2026-06-03)
 
 
