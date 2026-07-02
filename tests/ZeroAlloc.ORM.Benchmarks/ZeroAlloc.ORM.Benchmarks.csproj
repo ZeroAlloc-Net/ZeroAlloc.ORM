@@ -47,7 +47,7 @@
          only triggers Sqlite workloads. Run Postgres locally with
          `dotnet run -c Release [args] *Postgres*` (Docker required). -->
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.13.0" />
   </ItemGroup>
 
   <PropertyGroup>
