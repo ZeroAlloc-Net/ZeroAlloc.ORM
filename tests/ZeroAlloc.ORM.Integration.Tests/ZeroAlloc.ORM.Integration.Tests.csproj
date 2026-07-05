@@ -40,7 +40,7 @@
          deferrals accumulated from v0.3 (CLN3), v0.4 (sproc integration),
          v0.5 (Materialize factory on a non-Sqlite decimal provider). -->
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.13.0" />
     <!-- ZA.ValueObjects supplies the [ValueObject] attribute + its source generator
          (fills in Value, From, ToString, equality). Required by v0.2 round-trip tests. -->
     <PackageReference Include="ZeroAlloc.ValueObjects" Version="$(ZeroAllocValueObjectsVersion)" />
