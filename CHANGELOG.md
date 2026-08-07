@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.1...v1.6.2) (2026-08-07)
+
+
+### Tests
+
+* **aot:** restore the ZA.Telemetry collision smoke (v0.6-CLN1) ([#161](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/161)) ([f655b11](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f655b110c0a76e9c3f6a39b386ecac5435b1e788))
+
 ## [1.6.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.0...v1.6.1) (2026-06-24)
 
 
