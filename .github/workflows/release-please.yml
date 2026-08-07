@@ -11,8 +11,60 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
+
+  # Publishing lives here rather than in a workflow listening for
+  # `release: published`. A release created with GITHUB_TOKEN does not trigger
+  # other workflows — GitHub suppresses that cascade to prevent recursive runs —
+  # so pack-push.yml silently stopped firing after v1.6.0, and v1.6.1 and v1.6.2
+  # were tagged, announced and never published. Nothing failed; the workflow
+  # simply never ran. Dispatching pack-push.yml from here would not help either,
+  # since the same restriction applies to workflow_dispatch via GITHUB_TOKEN.
+  # Running in the same job graph avoids the cross-workflow event entirely.
+  #
+  # pack-push.yml is kept for manual rescue via workflow_dispatch.
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release -p:Version=${{ needs.release-please.outputs.version }}
+
+      # Test step intentionally omitted: the build-test workflow already validates
+      # every push to main with the full test suite (75+ tests). Re-running them here
+      # would (a) duplicate work and (b) trip a Verify.NET path-resolution edge case
+      # on two snapshot tests when MSBuild's Version is set explicitly. This job's
+      # role is to pack + push, not re-validate.
+
+      - name: Pack
+        run: |
+          dotnet pack src/ZeroAlloc.ORM.Abstractions/ZeroAlloc.ORM.Abstractions.csproj --no-build -c Release -p:PackageVersion=${{ needs.release-please.outputs.version }} -o ./artifacts
+          dotnet pack src/ZeroAlloc.ORM/ZeroAlloc.ORM.csproj --no-build -c Release -p:PackageVersion=${{ needs.release-please.outputs.version }} -o ./artifacts
+          dotnet pack src/ZeroAlloc.ORM.Generator/ZeroAlloc.ORM.Generator.csproj --no-build -c Release -p:PackageVersion=${{ needs.release-please.outputs.version }} -o ./artifacts
+          dotnet pack src/ZeroAlloc.TypeConversions/ZeroAlloc.TypeConversions.csproj --no-build -c Release -p:PackageVersion=${{ needs.release-please.outputs.version }} -o ./artifacts
+
+      - name: Push to NuGet
+        run: dotnet nuget push ./artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
