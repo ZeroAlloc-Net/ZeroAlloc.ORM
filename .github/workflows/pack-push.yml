@@ -1,17 +1,22 @@
 name: Pack and Push
 
-# Fires when release-please publishes a GitHub release for a tag (e.g. v0.1.0).
-# Mirrors the proven AdoNet.Async + ZA.Mediator release workflow: build once, then pack
-# each v0.1 package explicitly so the published set stays auditable.
+# Manual rescue only. The automatic path lives in release-please.yml's `publish`
+# job, which runs in the same job graph as the release itself.
 #
-# GitHub-limitation note: releases created by `googleapis/release-please-action`
-# using the default GITHUB_TOKEN do NOT fire `release` events on other workflows
-# (recursive-run protection). Use the `workflow_dispatch` manual trigger to publish
-# such releases. Future option: swap release-please's token for a PAT to unblock
-# the automatic path.
+# This workflow used to listen for `release: published`. That trigger can never
+# fire here: releases created by `googleapis/release-please-action` with the
+# default GITHUB_TOKEN do not raise events on other workflows (recursive-run
+# protection). The limitation was known and documented, with the manual trigger
+# as the intended workaround — but a publish step that must be remembered every
+# release eventually is not, and v1.6.1 and v1.6.2 were both tagged, announced
+# and never published. Nothing failed; the workflow simply never ran.
+#
+# The dead trigger is removed rather than left in place, because a trigger that
+# looks automatic is what made those two releases look fine.
+#
+# Build once, then pack each package explicitly so the published set stays
+# auditable. --skip-duplicate makes re-runs safe.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -34,15 +39,13 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Extract version from tag or workflow input
+      # workflow_dispatch is the only trigger, so the version always comes from the
+      # input. The old tag branch read github.event.release, which cannot be
+      # populated any more.
+      - name: Read version from workflow input
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          else
-            TAG="${{ github.event.release.tag_name }}"
-            VERSION="${TAG#v}"
-          fi
+          VERSION="${{ inputs.version }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Release version: $VERSION"
 
