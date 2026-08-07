@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.2...v1.6.3) (2026-08-07)
+
+
+### Bug Fixes
+
+* **ci:** publish from release-please instead of a release event ([#166](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/166)) ([130844e](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/130844e387b9b59599c7badb5e68d4bb7f9247c2))
+
 ## [1.6.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.1...v1.6.2) (2026-08-07)
 
 
