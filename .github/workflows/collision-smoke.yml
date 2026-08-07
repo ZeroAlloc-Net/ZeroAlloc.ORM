@@ -11,6 +11,12 @@ name: Collision Smoke
 # PublishAot=true on linux-x64 and runs the native binary — any new
 # IL2026/IL2046/IL3050 surfaced by the publish-time trimmer fails the job,
 # and a non-zero exit from the runtime check fails the workflow.
+#
+# The second job covers ZA.ORM × ZA.Telemetry (v0.6-CLN1). That pairing was
+# deferred in v0.6 Phase C because ZA.Telemetry's proxy dropped nullable
+# annotations on Task<T?> (CS8613/CS8603); ZA.Telemetry 1.4.1 fixed it. That
+# failure was a compile error, so the build step carries most of the signal —
+# but it is published and run for the same trimmer and runtime coverage.
 
 on:
   push:
@@ -56,3 +62,38 @@ jobs:
         run: |
           ls -lh ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
           file ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
+
+  telemetry-collision-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/ZeroAlloc.ORM.TelemetryCollision.AotSmoke.csproj
+
+      - name: Publish AOT (linux-x64)
+        # PublishAot=true is set inside the csproj itself — see the note on the
+        # job above for why it is not passed on the command line.
+        run: |
+          dotnet publish tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/ZeroAlloc.ORM.TelemetryCollision.AotSmoke.csproj \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -o ./telemetry-collision-out
+
+      - name: Run AOT-published telemetry collision smoke
+        run: |
+          chmod +x ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+          ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+
+      - name: Report binary size
+        run: |
+          ls -lh ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+          file ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke

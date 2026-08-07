@@ -231,17 +231,23 @@ Both generators are AOT-safe by design:
 - ZA.Telemetry emits a closed proxy class — no reflection, no
   `MakeGenericType`, static `ActivitySource` / `Meter` field initializers.
 
-Composing the two under `<PublishAot>true</PublishAot>` is expected to
-produce no IL2026 / IL3050 warnings. An automated AOT collision smoke test
-(`tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke`) that would gate this
-composition end-to-end on every PR is **deferred** — the v0.6 attempt
-surfaced a ZA.Telemetry-side nullable-annotation bug in its
-`InstrumentGenerator` (CS8613 / CS8603 on `Task<T?>` return types through
-the generated proxy). The smoke will be re-attempted once ZA.Telemetry
-ships a generator update that preserves nullable annotations across the
-`[Instrument]` boundary (tracked as v0.6-CLN1 in the backlog). The
-conceptual composition pattern documented above is unaffected — only the
-automated AOT verification is pending.
+Composing the two under `<PublishAot>true</PublishAot>` produces no
+IL2026 / IL3050 warnings, and this is **verified on every PR** rather than
+asserted: `tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke` composes
+`[Instrument]` with `[Query]`, is published with `PublishAot=true` on
+linux-x64 by the `Collision Smoke` workflow, and the native binary is run.
+Trimmer warnings are escalated to errors in that project, so a regression in
+either generator fails the build rather than degrading silently at runtime.
+
+The smoke was deferred through v0.6 and v0.7: the original attempt surfaced a
+ZA.Telemetry-side bug where `InstrumentGenerator` dropped the nullable
+annotation on `Task<T?>` return types, so the generated proxy no longer
+implemented the interface (CS8613 / CS8603). That was fixed upstream in
+**ZA.Telemetry 1.4.1**
+([ZeroAlloc.Telemetry#29](https://github.com/ZeroAlloc-Net/ZeroAlloc.Telemetry/issues/29)),
+which is the floor this smoke references. The `Task<OrderRow?>` method in the
+smoke is deliberately routed through the interface — that call is what failed
+to compile before the fix, so it is the assertion that keeps it fixed.
 
 ## Diagnostics
 
