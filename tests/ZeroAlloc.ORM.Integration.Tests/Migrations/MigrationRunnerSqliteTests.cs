@@ -4,7 +4,7 @@ using System.Data.Async;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using ZeroAlloc.ORM.Migrations;
 

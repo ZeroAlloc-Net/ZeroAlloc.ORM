@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Threading;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests;

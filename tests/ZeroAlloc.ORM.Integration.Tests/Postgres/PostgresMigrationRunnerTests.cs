@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
+using AwesomeAssertions;
 using Npgsql;
 using Xunit;
 using ZeroAlloc.ORM.Migrations;

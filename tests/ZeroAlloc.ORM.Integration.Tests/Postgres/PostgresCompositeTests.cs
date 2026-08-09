@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using ZeroAlloc.ORM;
 

@@ -1,5 +1,5 @@
 using System.Data;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;

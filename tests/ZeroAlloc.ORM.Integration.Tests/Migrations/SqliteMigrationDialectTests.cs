@@ -1,5 +1,5 @@
 using System.Data.Async;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using ZeroAlloc.ORM.Migrations;
 

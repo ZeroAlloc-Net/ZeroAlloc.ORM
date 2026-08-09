@@ -1,5 +1,5 @@
 using System.Data;
-using FluentAssertions;
+using AwesomeAssertions;
 using Npgsql;
 using System.Data.Async;
 using System.Data.Async.Adapters;
