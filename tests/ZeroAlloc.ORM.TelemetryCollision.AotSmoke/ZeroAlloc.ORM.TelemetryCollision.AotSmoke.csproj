@@ -41,7 +41,7 @@
          the source generator as an analyzer, so a single PackageReference covers
          it. 1.4.1 is the floor — it carries the nullable-annotation fix
          (ZeroAlloc.Telemetry#29) that this smoke exists to keep honest. -->
-    <PackageReference Include="ZeroAlloc.Telemetry" Version="1.5.*" />
+    <PackageReference Include="ZeroAlloc.Telemetry" Version="1.6.*" />
   </ItemGroup>
 
   <ItemGroup>
