@@ -1,0 +1,5 @@
+# Verify compares snapshots byte for byte and rejects a carriage return outright,
+# so these have to stay LF in the working tree. Without this, git checks them out
+# CRLF on Windows and every snapshot test fails there while CI stays green.
+*.verified.cs text eol=lf working-tree-encoding=UTF-8
+*.verified.txt text eol=lf working-tree-encoding=UTF-8
