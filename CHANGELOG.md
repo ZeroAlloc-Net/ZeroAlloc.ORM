@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.3...v1.6.4) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** run the tests again on the .NET 10 SDK ([#190](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/190)) ([5076a16](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/5076a16f5a14ec688f8370e87774c848b238f77f))
+
 ## [1.6.3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.2...v1.6.3) (2026-08-07)
 
 
