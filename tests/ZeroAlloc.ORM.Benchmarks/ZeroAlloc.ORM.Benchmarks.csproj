@@ -31,7 +31,7 @@
 
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- CVE-2025-6965 / GHSA-2m69-gcr7-jv3q: override the vulnerable native SQLite
          binary (SQLitePCLRaw.lib.e_sqlite3 2.1.11, SQLite < 3.50.2) pulled in
          transitively by Microsoft.Data.Sqlite. 3.50.3 ships SQLite 3.50.3. -->
@@ -41,13 +41,13 @@
          to the C# preview feature the generator uses to rewrite Dapper calls.
          Dapper itself supplies the QueryFirstOrDefaultAsync<T>() extension. -->
     <PackageReference Include="Dapper" Version="2.1.79" />
-    <PackageReference Include="Dapper.AOT" Version="1.0.52" />
+    <PackageReference Include="Dapper.AOT" Version="1.1.0" />
     <!-- Postgres backend variant (Phase A.4). Gated at runtime via the
          "Postgres" benchmark category - the default `dotnet run` invocation
          only triggers Sqlite workloads. Run Postgres locally with
          `dotnet run -c Release [args] *Postgres*` (Docker required). -->
     <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
   </ItemGroup>
 
   <PropertyGroup>

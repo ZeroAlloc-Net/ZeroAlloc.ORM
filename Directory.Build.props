@@ -41,11 +41,11 @@
   <!-- Analyzer suite, mirroring AdoNet.Async + ZA.Mediator. Skipped on netstandard2.0
        Roslyn-targeting projects where Meziantou's net8+ APIs would fail to load. -->
   <ItemGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
-    <PackageReference Include="Meziantou.Analyzer" Version="3.0.156">
+    <PackageReference Include="Meziantou.Analyzer" Version="3.0.236">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Roslynator.Analyzers" Version="4.16.0">
+    <PackageReference Include="Roslynator.Analyzers" Version="5.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
