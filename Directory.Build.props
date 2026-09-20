@@ -18,7 +18,15 @@
     <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
 
     <!-- Dependency versions (pinned at repo root so all csprojs stay aligned). -->
-    <AdoNetAsyncVersion>1.*</AdoNetAsyncVersion>
+    <!--
+      Floor, not a float. The generator emits IAsyncDataRecord.GetFieldValue<T>
+      for byte[], DateTimeOffset and TimeSpan columns, and that member only
+      exists from AdoNet.Async 1.4.0. A floating 1.* records whatever happened
+      to be latest when the package was built as the dependency floor, which is
+      how 1.6.5 shipped declaring 1.3.3 and left every consumer with such a
+      column unable to compile.
+    -->
+    <AdoNetAsyncVersion>1.4.0</AdoNetAsyncVersion>
     <ZeroAllocValueObjectsVersion>1.*</ZeroAllocValueObjectsVersion>
 
     <!-- NuGet package metadata (applied to every packable csproj). -->
