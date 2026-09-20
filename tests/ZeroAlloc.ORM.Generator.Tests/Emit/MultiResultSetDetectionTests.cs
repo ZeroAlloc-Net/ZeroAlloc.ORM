@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -13,7 +13,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class MultiResultSetDetectionTests
 {
     [Fact]
-    public Task Tuple_with_record_head_and_list_lines_classified_as_MultiResultSet()
+    public void Tuple_with_record_head_and_list_lines_classified_as_MultiResultSet()
     {
         var source =
             "using System.Collections.Generic;\n" +
@@ -32,6 +32,6 @@ public class MultiResultSetDetectionTests
             "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id;\")]\n" +
             "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
             "}\n";
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

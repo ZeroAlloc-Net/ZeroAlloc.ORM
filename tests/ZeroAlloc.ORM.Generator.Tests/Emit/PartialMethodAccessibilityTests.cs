@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -17,7 +17,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class PartialMethodAccessibilityTests
 {
     [Fact]
-    public Task Private_partial_method_emits_private_in_implementation()
+    public void Private_partial_method_emits_private_in_implementation()
     {
         var source = """
             using System.Data.Async;
@@ -34,11 +34,11 @@ public class PartialMethodAccessibilityTests
                 private partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Internal_partial_method_emits_internal_in_implementation()
+    public void Internal_partial_method_emits_internal_in_implementation()
     {
         var source = """
             using System.Data.Async;
@@ -54,6 +54,6 @@ public class PartialMethodAccessibilityTests
                 internal partial Task<int> CountAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

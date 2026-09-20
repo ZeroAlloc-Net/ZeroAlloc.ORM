@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -29,7 +29,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class NullableCompositeTests
 {
     [Fact]
-    public Task Nullable_composite_scalar_emits_all_or_nothing_check()
+    public void Nullable_composite_scalar_emits_all_or_nothing_check()
     {
         // The source-level `#pragma warning disable ZAO050` suppresses the
         // ZAO050 diagnostic in this snapshot so it captures only the emit
@@ -51,11 +51,11 @@ public class NullableCompositeTests
                 public partial Task<Money?> GetTotalAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Nullable_composite_nested_in_flat_row_emits_hoisted_local()
+    public void Nullable_composite_nested_in_flat_row_emits_hoisted_local()
     {
         var source = """
             #pragma warning disable ZAO050
@@ -75,11 +75,11 @@ public class NullableCompositeTests
                 public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Nullable_composite_nested_in_domain_entity_emits_hoisted_local()
+    public void Nullable_composite_nested_in_domain_entity_emits_hoisted_local()
     {
         var source = """
             #pragma warning disable ZAO050
@@ -105,11 +105,11 @@ public class NullableCompositeTests
                 public partial Task<OrderEntity?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Nullable_composite_parameter_emits_DBNull_branch()
+    public void Nullable_composite_parameter_emits_DBNull_branch()
     {
         // v0.5 Phase C.2 (Option A) — `Money? total` parameter unpacks into
         // an `if (@total is null) { all DBNull } else { @total.Value.X }`
@@ -132,6 +132,6 @@ public class NullableCompositeTests
                 public partial Task<int> UpdateAsync(int id, Money? total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

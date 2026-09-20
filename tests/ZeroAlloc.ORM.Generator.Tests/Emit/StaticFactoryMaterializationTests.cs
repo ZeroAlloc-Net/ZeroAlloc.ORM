@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -11,7 +11,7 @@ public class StaticFactoryMaterializationTests
     // only a `static T From(TPrim)` factory. ConventionDiscovery returns StaticFactory
     // and the emit invokes the factory directly: `global::TestApp.Score.From(...)`.
     [Fact]
-    public Task Static_factory_struct_emits_From_call()
+    public void Static_factory_struct_emits_From_call()
     {
         var source = """
             using System.Data.Async;
@@ -36,6 +36,6 @@ public class StaticFactoryMaterializationTests
                 public partial Task<GameRow?> GetFirstAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

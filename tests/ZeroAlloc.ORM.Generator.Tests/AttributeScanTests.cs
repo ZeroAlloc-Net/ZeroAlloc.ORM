@@ -1,13 +1,14 @@
 using System.Threading.Tasks;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests;
 
 public class AttributeScanTests
 {
     [Fact]
-    public Task Annotated_partial_method_produces_partial_file()
+    public void Annotated_partial_method_produces_partial_file()
     {
         var source = """
             using System.Data.Async;
@@ -24,6 +25,6 @@ public class AttributeScanTests
             }
             """;
         var result = GeneratorHarness.RunGenerator(source);
-        return Verify(result);
+        GeneratorSnapshot.Verify(result);
     }
 }

@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -18,7 +18,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CompositeBindingTests
 {
     [Fact]
-    public Task Single_composite_parameter_unpacks_into_two_parameters()
+    public void Single_composite_parameter_unpacks_into_two_parameters()
     {
         var source = """
             using System.Data.Async;
@@ -36,11 +36,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateTotalAsync(Money total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_parameter_alongside_primitive_unpacks_correctly()
+    public void Composite_parameter_alongside_primitive_unpacks_correctly()
     {
         var source = """
             using System.Data.Async;
@@ -58,11 +58,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateAsync(int id, Money total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_parameter_alongside_value_object_unpacks_correctly()
+    public void Composite_parameter_alongside_value_object_unpacks_correctly()
     {
         var source = """
             using System.Data.Async;
@@ -89,11 +89,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateAsync(Money total, OrderId orderId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_with_enum_inner_field_emits_cast_via_underlying()
+    public void Composite_with_enum_inner_field_emits_cast_via_underlying()
     {
         // v0.5 Phase B code-review Fix 3 — the inner enum branch of
         // BuildCompositeFieldValueExpression was previously unexercised by
@@ -118,11 +118,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateTotalAsync(Pricing total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_with_string_enum_inner_field_emits_ToString()
+    public void Composite_with_string_enum_inner_field_emits_ToString()
     {
         // v0.5 Phase B code-review Fix 3 — the inner EnumAsString branch was
         // also unexercised. Pin the `@total.@Tier.ToString()` emit. Combined
@@ -147,11 +147,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateTotalAsync(Pricing total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_with_nullable_string_inner_field_emits_DBNull_coalesce()
+    public void Composite_with_nullable_string_inner_field_emits_DBNull_coalesce()
     {
         // v0.5 Phase B code-review Fix 4 — IsNullable branch of the composite
         // emit helper was previously unexercised. A nullable inner field
@@ -174,11 +174,11 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateTotalAsync(Money total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_with_batch_mode_emits_indexed_locals()
+    public void Composite_with_batch_mode_emits_indexed_locals()
     {
         // v0.5 Phase B code-review Fix 5 — the batch path through
         // EmitBatchCommandParameterBinding short-circuits to the merged
@@ -207,11 +207,11 @@ public class CompositeBindingTests
                 public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetMatchingAsync(Money total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_with_value_object_inner_field_unwraps_via_Value()
+    public void Composite_with_value_object_inner_field_unwraps_via_Value()
     {
         // Layered convention: the OUTER composite is unpacked into
         // `@outer_Amount` and `@outer_Currency`; the INNER `Currency` field
@@ -242,6 +242,6 @@ public class CompositeBindingTests
                 public partial Task<int> UpdateAsync(MoneyWithOrderId outer, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

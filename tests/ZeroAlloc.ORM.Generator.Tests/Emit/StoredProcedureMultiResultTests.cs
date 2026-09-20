@@ -1,8 +1,8 @@
 using System.Linq;
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -16,7 +16,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StoredProcedureMultiResultTests
 {
     [Fact]
-    public Task StoredProcedure_multi_result_tuple_emits_single_command_with_NextResult()
+    public void StoredProcedure_multi_result_tuple_emits_single_command_with_NextResult()
     {
         var source = """
             using System.Collections.Generic;
@@ -37,7 +37,7 @@ public class StoredProcedureMultiResultTests
                     int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]

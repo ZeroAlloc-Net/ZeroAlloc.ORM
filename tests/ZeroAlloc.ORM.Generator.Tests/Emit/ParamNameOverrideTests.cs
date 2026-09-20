@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class ParamNameOverrideTests
 {
     [Fact]
-    public Task Param_name_attribute_overrides_csharp_name()
+    public void Param_name_attribute_overrides_csharp_name()
     {
         var source = """
             using System.Data.Async;
@@ -24,6 +24,6 @@ public class ParamNameOverrideTests
                 public partial Task<int> SearchAsync([Param(Name = "@orderId")] int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

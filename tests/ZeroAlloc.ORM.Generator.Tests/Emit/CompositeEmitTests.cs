@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -13,7 +13,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CompositeEmitTests
 {
     [Fact]
-    public Task Composite_scalar_return_emits_inline_constructor()
+    public void Composite_scalar_return_emits_inline_constructor()
     {
         var source = """
             using System.Data.Async;
@@ -31,11 +31,11 @@ public class CompositeEmitTests
                 public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Composite_scalar_with_value_object_inner_unwraps_via_factory()
+    public void Composite_scalar_with_value_object_inner_unwraps_via_factory()
     {
         // The composite's second ctor parameter is itself a ValueObject (OrderId).
         // Materialization for OrderId is `OrderId.From(reader.GetInt32(N))` per
@@ -66,6 +66,6 @@ public class CompositeEmitTests
                 public partial Task<Money> GetTotalAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

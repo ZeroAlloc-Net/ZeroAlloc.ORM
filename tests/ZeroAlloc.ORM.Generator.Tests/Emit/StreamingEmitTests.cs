@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -12,7 +12,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StreamingEmitTests
 {
     [Fact]
-    public Task IAsyncEnumerable_emits_yield_based_async_iterator()
+    public void IAsyncEnumerable_emits_yield_based_async_iterator()
     {
         var source =
             "using System.Collections.Generic;\n" +
@@ -30,6 +30,6 @@ public class StreamingEmitTests
             "    [Query(\"SELECT Id, CustomerId, Total FROM Orders WHERE CustomerId = @customerId ORDER BY Id\")]\n" +
             "    public partial IAsyncEnumerable<OrderRow> StreamByCustomerAsync(int customerId, [EnumeratorCancellation] CancellationToken ct);\n" +
             "}\n";
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

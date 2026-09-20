@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class NullableScalarTests
 {
     [Fact]
-    public Task Nullable_string_returns_first_row_or_null()
+    public void Nullable_string_returns_first_row_or_null()
     {
         var source = """
             using System.Data.Async;
@@ -24,11 +24,11 @@ public class NullableScalarTests
                 public partial Task<string?> GetNameAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Nullable_int_returns_first_row_or_null()
+    public void Nullable_int_returns_first_row_or_null()
     {
         var source = """
             using System.Data.Async;
@@ -44,6 +44,6 @@ public class NullableScalarTests
                 public partial Task<int?> GetAgeAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

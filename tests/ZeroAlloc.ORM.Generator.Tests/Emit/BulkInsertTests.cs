@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -11,7 +11,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class BulkInsertTests
 {
     [Fact]
-    public Task BulkInsert_Task_int_emits_chunked_NonQuery_pipeline()
+    public void BulkInsert_Task_int_emits_chunked_NonQuery_pipeline()
     {
         var source = """
             using System.Collections.Generic;
@@ -30,11 +30,11 @@ public class BulkInsertTests
                 public partial Task<int> InsertOrdersAsync(IReadOnlyList<OrderRow> orders, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task BulkInsert_Task_IReadOnlyList_int_emits_chunked_ExecuteReader_with_RETURNING()
+    public void BulkInsert_Task_IReadOnlyList_int_emits_chunked_ExecuteReader_with_RETURNING()
     {
         var source = """
             using System.Collections.Generic;
@@ -53,11 +53,11 @@ public class BulkInsertTests
                 public partial Task<IReadOnlyList<int>> InsertOrdersAsync(IReadOnlyList<OrderRow> orders, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task BulkInsert_with_IEnumerable_parameter_emits_buffered_adapter()
+    public void BulkInsert_with_IEnumerable_parameter_emits_buffered_adapter()
     {
         var source = """
             using System.Collections.Generic;
@@ -76,11 +76,11 @@ public class BulkInsertTests
                 public partial Task<int> InsertOrdersAsync(IEnumerable<OrderRow> orders, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task BulkInsert_with_ValueObject_identity_emits_factory_wrap()
+    public void BulkInsert_with_ValueObject_identity_emits_factory_wrap()
     {
         var source = """
             using System.Collections.Generic;
@@ -107,11 +107,11 @@ public class BulkInsertTests
                 public partial Task<IReadOnlyList<OrderId>> InsertOrdersAsync(IReadOnlyList<OrderRow> orders, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task BulkInsert_chunk_size_scales_with_placeholder_count()
+    public void BulkInsert_chunk_size_scales_with_placeholder_count()
     {
         // 10-column row → chunk size 90 (900 / 10).
         var source = """
@@ -131,6 +131,6 @@ public class BulkInsertTests
                 public partial Task<int> InsertWideAsync(IReadOnlyList<WideRow> rows, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

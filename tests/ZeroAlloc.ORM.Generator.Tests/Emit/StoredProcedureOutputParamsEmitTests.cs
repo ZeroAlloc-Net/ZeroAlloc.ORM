@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -27,7 +27,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StoredProcedureOutputParamsEmitTests
 {
     [Fact]
-    public Task SprocWithOutputParams_result_row_plus_int_output_emits_drain_and_readback()
+    public void SprocWithOutputParams_result_row_plus_int_output_emits_drain_and_readback()
     {
         var source = """
             using System.Data.Async;
@@ -46,11 +46,11 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, int newOrderId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task SprocWithOutputParams_result_row_plus_two_outputs_emits_both_readbacks()
+    public void SprocWithOutputParams_result_row_plus_two_outputs_emits_both_readbacks()
     {
         // int + Guid output params on top of a result row. Verifies the per-output
         // readback loop preserves tuple-position ordering across mixed primitive
@@ -74,11 +74,11 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, int newOrderId, Guid traceId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task SprocWithOutputParams_output_only_emits_ExecuteNonQuery()
+    public void SprocWithOutputParams_output_only_emits_ExecuteNonQuery()
     {
         // Task E.3 — every tuple field matches a C# parameter; the procedure has
         // no result set. Emit swaps ExecuteReaderAsync for ExecuteNonQueryAsync;
@@ -100,11 +100,11 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, int newOrderId, int status, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task SprocWithOutputParams_result_row_plus_value_object_output_wraps_factory()
+    public void SprocWithOutputParams_result_row_plus_value_object_output_wraps_factory()
     {
         // Value-object output: the int read back from the parameter is wrapped in
         // the record's positional ctor before being assigned to the tuple slot.
@@ -128,11 +128,11 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, OrderId newOrderId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task SprocWithOutputParams_nullable_int_output_emits_DBNull_guard()
+    public void SprocWithOutputParams_nullable_int_output_emits_DBNull_guard()
     {
         // Phase E review Fix 1 — a nullable output element (`int?
         // OptionalCount`) must emit a DBNull guard in the readback expression.
@@ -160,11 +160,11 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, int? optionalCount, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task SprocWithOutputParams_multi_result_set_plus_output_emits_NextResult_chain()
+    public void SprocWithOutputParams_multi_result_set_plus_output_emits_NextResult_chain()
     {
         // Phase E review Fix 3 — exercise the interleaving of (a) multi-result
         // walks with NextResultAsync chaining between two result positions,
@@ -191,6 +191,6 @@ public class StoredProcedureOutputParamsEmitTests
                     int customerId, int newOrderId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

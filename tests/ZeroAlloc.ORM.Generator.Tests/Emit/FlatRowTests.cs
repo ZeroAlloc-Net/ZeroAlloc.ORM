@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class FlatRowTests
 {
     [Fact]
-    public Task Positional_record_emits_FlatRow_materialization()
+    public void Positional_record_emits_FlatRow_materialization()
     {
         var source = """
             using System.Data.Async;
@@ -26,6 +26,6 @@ public class FlatRowTests
                 public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }
