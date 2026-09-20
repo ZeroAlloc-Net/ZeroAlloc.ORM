@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.6](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.5...v1.6.6) (2026-09-20)
+
+
+### Bug Fixes
+
+* require AdoNet.Async 1.4.0 for the typed sync reader ([#211](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/211)) ([be8efee](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/be8efee8494158f2f56e4d2491a54722813edd5b))
+
+
+### Tests
+
+* make CompileSmokeTests actually bind before asserting ([#213](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/213)) ([bb72321](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/bb72321284995f969c83f1c06c7bd70cfef6a09e))
+
 ## [1.6.5](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.4...v1.6.5) (2026-09-20)
 
 
