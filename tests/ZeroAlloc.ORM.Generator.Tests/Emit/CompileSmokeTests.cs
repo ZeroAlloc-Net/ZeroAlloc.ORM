@@ -1579,7 +1579,7 @@ public class CompileSmokeTests
     {
         var unresolved = compileDiagnostics
             .AsEnumerable()
-            .Where(d => d.Id is "CS0246" or "CS0234")
+            .Where(d => d.Id is "CS0246" or "CS0234" or "CS0012" or "CS1069")
             .Select(d => d.GetMessage(CultureInfo.InvariantCulture))
             .ToArray();
 

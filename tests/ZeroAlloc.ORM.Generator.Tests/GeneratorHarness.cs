@@ -81,6 +81,14 @@ internal static class GeneratorHarness
             // ZeroAllocOrmMaterializationException, which is declared there
             // rather than in Abstractions.
             typeof(ZeroAlloc.ORM.ZeroAllocOrmMaterializationException).Assembly,
+            // System.Data.Common. Emitted code names ConnectionState,
+            // IDbDataParameter, CommandBehavior and friends. The walk below only
+            // sees assemblies this process already loaded, which differs between
+            // machines and configurations -- it happened to be present on a
+            // Windows Debug run and absent on a Linux Release one, so relying on
+            // it made the reference set a property of the host rather than of
+            // the test. Name it explicitly.
+            typeof(System.Data.ConnectionState).Assembly,
         };
         _ = forceLoadAssemblies;
 
