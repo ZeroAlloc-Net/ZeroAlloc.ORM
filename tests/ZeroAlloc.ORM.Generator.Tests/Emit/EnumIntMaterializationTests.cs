@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -11,7 +11,7 @@ public class EnumIntMaterializationTests
     // cast (`(global::TestApp.OrderStatus)__reader.GetInt32(N)`) and the parameter
     // bind unwraps via an `(int)@status` cast. No factory method, no value property.
     [Fact]
-    public Task Enum_column_and_parameter_round_trip_via_int_cast()
+    public void Enum_column_and_parameter_round_trip_via_int_cast()
     {
         var source = """
             using System.Data.Async;
@@ -31,6 +31,6 @@ public class EnumIntMaterializationTests
                 public partial Task<OrderRow?> SearchAsync(OrderStatus status, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

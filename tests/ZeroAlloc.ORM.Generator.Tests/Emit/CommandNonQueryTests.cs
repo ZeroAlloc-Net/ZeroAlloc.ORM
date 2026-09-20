@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -18,7 +18,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CommandNonQueryTests
 {
     [Fact]
-    public Task NonQuery_Task_int_emits_ExecuteNonQuery_with_return()
+    public void NonQuery_Task_int_emits_ExecuteNonQuery_with_return()
     {
         var source = """
             using System.Data.Async;
@@ -34,11 +34,11 @@ public class CommandNonQueryTests
                 public partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task NonQuery_Task_void_emits_ExecuteNonQuery_without_return()
+    public void NonQuery_Task_void_emits_ExecuteNonQuery_without_return()
     {
         var source = """
             using System.Data.Async;
@@ -54,6 +54,6 @@ public class CommandNonQueryTests
                 public partial Task DeleteOrderAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

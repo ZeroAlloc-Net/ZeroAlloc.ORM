@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -21,7 +21,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class ListResultSetTests
 {
     [Fact]
-    public Task ListResultSet_with_FlatRow_record_element_emits_buffered_drain()
+    public void ListResultSet_with_FlatRow_record_element_emits_buffered_drain()
     {
         var source = """
             using System.Collections.Generic;
@@ -41,11 +41,11 @@ public class ListResultSetTests
                     int limit, int offset, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_with_DomainEntity_class_element_emits_named_column_reads()
+    public void ListResultSet_with_DomainEntity_class_element_emits_named_column_reads()
     {
         var source = """
             using System.Collections.Generic;
@@ -69,11 +69,11 @@ public class ListResultSetTests
                 public partial Task<IReadOnlyList<Customer>> ListCustomersAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_Task_List_emits_buffered_list_shape()
+    public void ListResultSet_Task_List_emits_buffered_list_shape()
     {
         var source = """
             using System.Collections.Generic;
@@ -93,11 +93,11 @@ public class ListResultSetTests
                     int limit, int offset, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_Task_IList_emits_buffered_list_shape()
+    public void ListResultSet_Task_IList_emits_buffered_list_shape()
     {
         var source = """
             using System.Collections.Generic;
@@ -117,11 +117,11 @@ public class ListResultSetTests
                     int limit, int offset, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_FlatRow_with_NonNullable_Composite_emits_recursed_construction()
+    public void ListResultSet_FlatRow_with_NonNullable_Composite_emits_recursed_construction()
     {
         // v1.6 — Task<IReadOnlyList<OrderRow>> where OrderRow has a non-nullable
         // Money composite column. Expects emit to include
@@ -145,11 +145,11 @@ public class ListResultSetTests
                 public partial Task<IReadOnlyList<OrderRow>> ListOrdersAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_DomainEntity_with_NonNullable_Composite_emits_recursed_construction()
+    public void ListResultSet_DomainEntity_with_NonNullable_Composite_emits_recursed_construction()
     {
         // v1.6 — same as above but DomainEntity shape (column-name path uses
         // hoisted ordinal locals via EmitNestedCompositeConstructionByOrdinalNameWithHoisted).
@@ -176,11 +176,11 @@ public class ListResultSetTests
                 public partial Task<IReadOnlyList<Order>> ListOrdersAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task ListResultSet_with_Nullable_Composite_still_rejected()
+    public void ListResultSet_with_Nullable_Composite_still_rejected()
     {
         // v1.6 — nullable composites in list rows are NOT yet supported.
         // The HasNullableCompositeColumn classifier guard still routes them
@@ -204,6 +204,6 @@ public class ListResultSetTests
                 public partial Task<IReadOnlyList<OrderRow>> ListOrdersAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

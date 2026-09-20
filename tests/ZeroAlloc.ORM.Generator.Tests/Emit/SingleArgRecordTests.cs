@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -11,7 +11,7 @@ public class SingleArgRecordTests
     // routes this through SingleArgCtor, so materialization uses `new T(...)` and
     // parameter binding still unwraps via the primary-ctor-synthesized Value property.
     [Fact]
-    public Task Single_arg_record_emits_ctor_and_value_unwrap()
+    public void Single_arg_record_emits_ctor_and_value_unwrap()
     {
         var source = """
             using System.Data.Async;
@@ -31,6 +31,6 @@ public class SingleArgRecordTests
                 public partial Task<OrderRow?> GetByIdAsync(OrderId id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

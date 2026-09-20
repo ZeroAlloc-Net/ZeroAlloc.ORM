@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -23,7 +23,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StoredProcedureEmitTests
 {
     [Fact]
-    public Task StoredProcedure_Task_int_emits_CommandType_and_ExecuteScalar()
+    public void StoredProcedure_Task_int_emits_CommandType_and_ExecuteScalar()
     {
         var source = """
             using System.Data.Async;
@@ -39,11 +39,11 @@ public class StoredProcedureEmitTests
                 public partial Task<int> GetCountAsync(int customerId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task StoredProcedure_Task_record_emits_CommandType_and_ExecuteReader()
+    public void StoredProcedure_Task_record_emits_CommandType_and_ExecuteReader()
     {
         var source = """
             using System.Data.Async;
@@ -61,11 +61,11 @@ public class StoredProcedureEmitTests
                 public partial Task<OrderRow?> GetOrderAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task StoredProcedure_Task_domain_entity_emits_CommandType_and_GetOrdinal()
+    public void StoredProcedure_Task_domain_entity_emits_CommandType_and_GetOrdinal()
     {
         var source = """
             using System.Data.Async;
@@ -92,6 +92,6 @@ public class StoredProcedureEmitTests
                 public partial Task<CustomerRow?> GetCustomerAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

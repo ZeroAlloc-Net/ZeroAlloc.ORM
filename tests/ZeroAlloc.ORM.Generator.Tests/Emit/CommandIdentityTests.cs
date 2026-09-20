@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -21,7 +21,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CommandIdentityTests
 {
     [Fact]
-    public Task Identity_Task_int_emits_ExecuteScalar_with_int_cast()
+    public void Identity_Task_int_emits_ExecuteScalar_with_int_cast()
     {
         var source = """
             using System.Data.Async;
@@ -37,11 +37,11 @@ public class CommandIdentityTests
                 public partial Task<int> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Identity_Task_long_emits_ExecuteScalar_with_long_cast()
+    public void Identity_Task_long_emits_ExecuteScalar_with_long_cast()
     {
         var source = """
             using System.Data.Async;
@@ -57,11 +57,11 @@ public class CommandIdentityTests
                 public partial Task<long> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Identity_Task_value_object_emits_factory_wrap_around_scalar_cast()
+    public void Identity_Task_value_object_emits_factory_wrap_around_scalar_cast()
     {
         var source = """
             using System.Data.Async;
@@ -79,7 +79,7 @@ public class CommandIdentityTests
                 public partial Task<OrderId> InsertOrderAsync(int cust, decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     // v1.3.1 — [ValueObject] structs that declare only a constructor +
@@ -90,7 +90,7 @@ public class CommandIdentityTests
     // fallback for this shape (commit e523ce0); the helper now handles
     // it directly so the single-row Identity classifier accepts it too.
     [Fact]
-    public Task Identity_Task_ctor_only_ValueObject_emits_factory_wrap()
+    public void Identity_Task_ctor_only_ValueObject_emits_factory_wrap()
     {
         var source = """
             using System.Data.Async;
@@ -114,6 +114,6 @@ public class CommandIdentityTests
                 public partial Task<OrderId> InsertOrderAsync(decimal total, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

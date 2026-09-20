@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -11,7 +11,7 @@ public class DomainEntityMaterializationTests
     // EmitShape.DomainEntity so the emit binds each ctor argument via
     // `__reader.GetOrdinal("ColumnName")` instead of a positional index.
     [Fact]
-    public Task DomainEntity_class_emits_GetOrdinal_keyed_materialization()
+    public void DomainEntity_class_emits_GetOrdinal_keyed_materialization()
     {
         var source = """
             using System.Data.Async;
@@ -36,6 +36,6 @@ public class DomainEntityMaterializationTests
                 public partial Task<Order?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

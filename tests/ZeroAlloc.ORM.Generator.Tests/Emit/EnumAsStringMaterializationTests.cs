@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -13,7 +13,7 @@ public class EnumAsStringMaterializationTests
     // generator (Enum.Parse<T> carries RequiresUnreferencedCode but is safe for
     // closed enum types).
     [Fact]
-    public Task StoreAsString_enum_round_trip_uses_Enum_Parse_and_ToString()
+    public void StoreAsString_enum_round_trip_uses_Enum_Parse_and_ToString()
     {
         var source = """
             using System.Data.Async;
@@ -34,6 +34,6 @@ public class EnumAsStringMaterializationTests
                 public partial Task<OrderRow?> SearchAsync(OrderStatus status, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

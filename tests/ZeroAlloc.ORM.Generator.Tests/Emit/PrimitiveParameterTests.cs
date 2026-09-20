@@ -1,15 +1,15 @@
 using System.Linq;
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class PrimitiveParameterTests
 {
     [Fact]
-    public Task Int_parameter_emits_binding()
+    public void Int_parameter_emits_binding()
     {
         var source = """
             using System.Data.Async;
@@ -25,7 +25,7 @@ public class PrimitiveParameterTests
                 public partial Task<int> SearchAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]

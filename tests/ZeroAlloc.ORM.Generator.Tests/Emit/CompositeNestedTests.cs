@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -20,7 +20,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CompositeNestedTests
 {
     [Fact]
-    public Task FlatRow_with_nested_composite_emits_nested_constructor()
+    public void FlatRow_with_nested_composite_emits_nested_constructor()
     {
         var source = """
             using System.Data.Async;
@@ -39,11 +39,11 @@ public class CompositeNestedTests
                 public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task DomainEntity_with_nested_composite_emits_nested_constructor()
+    public void DomainEntity_with_nested_composite_emits_nested_constructor()
     {
         // Class with a single public ctor — DomainEntity shape. The composite's
         // inner reads route through GetOrdinal(<name>) so column order in the
@@ -71,6 +71,6 @@ public class CompositeNestedTests
                 public partial Task<OrderEntity?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

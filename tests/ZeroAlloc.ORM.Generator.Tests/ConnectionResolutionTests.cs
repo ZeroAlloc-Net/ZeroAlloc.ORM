@@ -1,13 +1,14 @@
 using System.Threading.Tasks;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests;
 
 public class ConnectionResolutionTests
 {
     [Fact]
-    public Task PrimaryCtor_param_resolves()
+    public void PrimaryCtor_param_resolves()
     {
         var source = """
             using System.Data.Async;
@@ -23,11 +24,11 @@ public class ConnectionResolutionTests
                 public partial Task<int> GetAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task PrivateField_resolves()
+    public void PrivateField_resolves()
     {
         var source = """
             using System.Data.Async;
@@ -46,11 +47,11 @@ public class ConnectionResolutionTests
                 public partial Task<int> GetAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Property_resolves()
+    public void Property_resolves()
     {
         var source = """
             using System.Data.Async;
@@ -69,6 +70,6 @@ public class ConnectionResolutionTests
                 public partial Task<int> GetAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

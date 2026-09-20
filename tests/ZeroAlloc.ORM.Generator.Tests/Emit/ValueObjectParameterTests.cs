@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class ValueObjectParameterTests
 {
     [Fact]
-    public Task ValueObject_parameter_unwraps_via_Value_property()
+    public void ValueObject_parameter_unwraps_via_Value_property()
     {
         var source = """
             using System.Data.Async;
@@ -33,6 +33,6 @@ public class ValueObjectParameterTests
                 public partial Task<int> SearchAsync(OrderId id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

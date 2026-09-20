@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class NullableParameterTests
 {
     [Fact]
-    public Task Nullable_int_parameter_uses_DBNull_guard()
+    public void Nullable_int_parameter_uses_DBNull_guard()
     {
         var source = """
             using System.Data.Async;
@@ -24,6 +24,6 @@ public class NullableParameterTests
                 public partial Task<int> SearchAsync(int? customerId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

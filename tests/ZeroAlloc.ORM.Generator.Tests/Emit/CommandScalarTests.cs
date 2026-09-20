@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -21,7 +21,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CommandScalarTests
 {
     [Fact]
-    public Task Scalar_Task_int_emits_ExecuteScalar_with_int_cast()
+    public void Scalar_Task_int_emits_ExecuteScalar_with_int_cast()
     {
         var source = """
             using System.Data.Async;
@@ -37,11 +37,11 @@ public class CommandScalarTests
                 public partial Task<int> CountAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Scalar_Task_decimal_emits_ExecuteScalar_with_decimal_cast()
+    public void Scalar_Task_decimal_emits_ExecuteScalar_with_decimal_cast()
     {
         var source = """
             using System.Data.Async;
@@ -57,11 +57,11 @@ public class CommandScalarTests
                 public partial Task<decimal> GetTotalAsync(int customerId, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Scalar_Task_nullable_decimal_emits_DBNull_guard_and_null_return()
+    public void Scalar_Task_nullable_decimal_emits_DBNull_guard_and_null_return()
     {
         var source = """
             using System.Data.Async;
@@ -77,11 +77,11 @@ public class CommandScalarTests
                 public partial Task<decimal?> GetTotalOrNullAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Scalar_Task_value_object_emits_factory_wrap_around_scalar_cast()
+    public void Scalar_Task_value_object_emits_factory_wrap_around_scalar_cast()
     {
         var source = """
             using System.Data.Async;
@@ -99,7 +99,7 @@ public class CommandScalarTests
                 public partial Task<OrderId> GetMaxIdAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     // v0.4 Phase B code-review Fix 4 — lock in the Enum (default int-backed)
@@ -108,7 +108,7 @@ public class CommandScalarTests
     // Convert.ToInt32. Snapshot pins this so the Fix 3 PrimitiveCatalog
     // consolidation cannot silently drift the emit.
     [Fact]
-    public Task Scalar_Task_int_enum_emits_cast_via_int_underlying()
+    public void Scalar_Task_int_enum_emits_cast_via_int_underlying()
     {
         var source = """
             using System.Data.Async;
@@ -126,7 +126,7 @@ public class CommandScalarTests
                 public partial Task<OrderStatus> GetStatusAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     // v0.4 Phase B code-review Fix 4 + Fix 5 — lock in the EnumAsString scalar
@@ -135,7 +135,7 @@ public class CommandScalarTests
     // Convert.ToString funnel the other branches use, so the "uniform funnel"
     // comment at the top of EmitCommandScalar holds.
     [Fact]
-    public Task Scalar_Task_string_enum_emits_Enum_Parse()
+    public void Scalar_Task_string_enum_emits_Enum_Parse()
     {
         var source = """
             using System.Data.Async;
@@ -154,6 +154,6 @@ public class CommandScalarTests
                 public partial Task<OrderStatus> GetStatusAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

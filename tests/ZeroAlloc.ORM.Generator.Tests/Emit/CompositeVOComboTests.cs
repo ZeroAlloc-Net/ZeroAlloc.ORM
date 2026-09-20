@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -25,7 +25,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class CompositeVOComboTests
 {
     [Fact]
-    public Task FlatRow_with_value_object_outer_and_composite_nested_emits_layered_reads()
+    public void FlatRow_with_value_object_outer_and_composite_nested_emits_layered_reads()
     {
         // VO at the OUTER ctor position (OrderId Id) + composite NESTED
         // (Money Total). The FlatRow path threads through:
@@ -60,11 +60,11 @@ public class CompositeVOComboTests
                 public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task FlatRow_with_value_object_outer_and_nullable_composite_nested_emits_all_or_nothing()
+    public void FlatRow_with_value_object_outer_and_nullable_composite_nested_emits_all_or_nothing()
     {
         // Same layered convention as above plus a nullable composite at the
         // nested position (`Money? Total`). The hoisted-local + all-or-nothing
@@ -99,6 +99,6 @@ public class CompositeVOComboTests
             }
             #pragma warning restore ZAO050
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

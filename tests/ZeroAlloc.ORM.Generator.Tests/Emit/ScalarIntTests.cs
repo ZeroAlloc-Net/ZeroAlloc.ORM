@@ -1,14 +1,14 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 public class ScalarIntTests
 {
     [Fact]
-    public Task Scalar_int_query_emits_ExecuteScalar_call()
+    public void Scalar_int_query_emits_ExecuteScalar_call()
     {
         var source = """
             using System.Data.Async;
@@ -24,6 +24,6 @@ public class ScalarIntTests
                 public partial Task<int> GetOneAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

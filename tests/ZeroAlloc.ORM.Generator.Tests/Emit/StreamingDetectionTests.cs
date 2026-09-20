@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -10,7 +10,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class StreamingDetectionTests
 {
     [Fact]
-    public Task IAsyncEnumerable_return_classified_as_Streaming()
+    public void IAsyncEnumerable_return_classified_as_Streaming()
     {
         var source =
             "using System.Collections.Generic;\n" +
@@ -28,6 +28,6 @@ public class StreamingDetectionTests
             "    [Query(\"SELECT Id, CustomerId, Total FROM Orders ORDER BY Id\")]\n" +
             "    public partial IAsyncEnumerable<OrderRow> StreamAsync([EnumeratorCancellation] CancellationToken ct);\n" +
             "}\n";
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -13,7 +13,7 @@ public class ValueObjectMaterializationTests
     // ConventionDiscovery only needs to see the attribute + Value + From symbols, all
     // of which exist in this source.
     [Fact]
-    public Task ValueObject_record_column_emits_From_factory_call()
+    public void ValueObject_record_column_emits_From_factory_call()
     {
         var source = """
             using System.Data.Async;
@@ -40,6 +40,6 @@ public class ValueObjectMaterializationTests
                 public partial Task<OrderRow?> GetFirstAsync(CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }

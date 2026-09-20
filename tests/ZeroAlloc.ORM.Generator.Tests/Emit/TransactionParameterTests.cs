@@ -1,7 +1,7 @@
 using System.Threading.Tasks;
-using VerifyXunit;
 using Xunit;
-using static VerifyXunit.Verifier;
+
+using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -14,7 +14,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 public class TransactionParameterTests
 {
     [Fact]
-    public Task NonQuery_with_transaction_parameter_emits_cmd_Transaction_assignment()
+    public void NonQuery_with_transaction_parameter_emits_cmd_Transaction_assignment()
     {
         var source = """
             using System.Data.Async;
@@ -30,11 +30,11 @@ public class TransactionParameterTests
                 public partial Task<int> UpdateStatusAsync(int id, string status, IAsyncDbTransaction tx, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Identity_with_transaction_parameter_emits_cmd_Transaction_assignment()
+    public void Identity_with_transaction_parameter_emits_cmd_Transaction_assignment()
     {
         var source = """
             using System.Data.Async;
@@ -50,11 +50,11 @@ public class TransactionParameterTests
                 public partial Task<int> InsertOrderAsync(int customerId, IAsyncDbTransaction tx, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task Query_FlatRow_with_transaction_parameter_emits_cmd_Transaction_assignment()
+    public void Query_FlatRow_with_transaction_parameter_emits_cmd_Transaction_assignment()
     {
         var source = """
             using System.Data.Async;
@@ -72,11 +72,11 @@ public class TransactionParameterTests
                 public partial Task<OrderRow?> ReadOrderAsync(int id, IAsyncDbTransaction tx, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
     [Fact]
-    public Task BulkInsert_with_transaction_parameter_emits_cmd_Transaction_per_chunk()
+    public void BulkInsert_with_transaction_parameter_emits_cmd_Transaction_per_chunk()
     {
         var source = """
             using System.Collections.Generic;
@@ -95,6 +95,6 @@ public class TransactionParameterTests
                 public partial Task<int> InsertOrdersAsync(IReadOnlyList<OrderRow> orders, IAsyncDbTransaction tx, CancellationToken ct);
             }
             """;
-        return Verify(GeneratorHarness.RunGenerator(source));
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 }
