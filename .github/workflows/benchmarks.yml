@@ -1,0 +1,95 @@
+name: Benchmarks
+
+# Benchmark projects compile as part of the solution build, so CI already catches a benchmark
+# that stops compiling. What it never caught is a benchmark that stops *running* -- a broken
+# [GlobalSetup], a filter that matches nothing, a class no entry point reaches. This workflow
+# covers that gap.
+#
+#   smoke (automatic)  one operation per benchmark, no statistics. Proves every benchmark still
+#                      executes. Takes about a minute; the numbers it prints are meaningless.
+#   full  (manual)     real measurements, via "Run workflow". Uploads BenchmarkDotNet.Artifacts.
+#
+# BenchmarkDotNet exits 0 when a filter matches nothing, so the smoke job asserts that at least
+# one benchmark actually ran rather than trusting the exit code.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'Benchmark filter, matched against namespace.type.method'
+        default: '*'
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  smoke:
+    name: smoke
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build tests/ZeroAlloc.ORM.Benchmarks -c Release
+
+      # --iterationCount and friends override whatever job the benchmark classes declare via
+      # attributes. --job Dry does not: it is *added* alongside an attribute-declared job, so a
+      # class carrying [SimpleJob] would still run a full measurement.
+      - name: Run benchmarks (one operation each)
+        run: |
+          set -o pipefail
+          dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release --no-build -- \
+            --filter '*' \
+            --iterationCount 1 --warmupCount 1 --invocationCount 1 --unrollFactor 1 \
+            2>&1 | tee "$RUNNER_TEMP/bench.log"
+
+          executed=$(grep -oE 'executed benchmarks: [0-9]+' "$RUNNER_TEMP/bench.log" | tail -1 | grep -oE '[0-9]+$')
+          echo "executed=${executed:-0}"
+          if [ "${executed:-0}" -eq 0 ]; then
+            echo "::error::No benchmarks ran. The filter matched nothing, or no class is discoverable."
+            exit 1
+          fi
+
+  full:
+    name: full
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build tests/ZeroAlloc.ORM.Benchmarks -c Release
+
+      - name: Run benchmarks
+        run: |
+          dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release --no-build -- \
+            --filter '${{ inputs.filter }}'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmarks
+          path: '**/BenchmarkDotNet.Artifacts/**'
+          if-no-files-found: warn
