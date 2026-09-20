@@ -18,6 +18,13 @@
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Abstractions\ZeroAlloc.ORM.Abstractions.csproj" />
+    <!--
+      The runtime library, for the same reason as AdoNet.Async below: emitted
+      code references ZeroAllocOrmMaterializationException, which lives here.
+      Reaching it only through the generator's ProjectReference is not enough,
+      because that one sets ReferenceOutputAssembly="false".
+    -->
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj" />
     <!-- xunit.v3 runs tests in a separate process; Verify.SourceGenerators
          needs ZeroAlloc.TypeConversions (a transitive dep of the generator)
@@ -36,6 +43,14 @@
          snapshot + compile-smoke tests. Test-only dependency — neither ZA.ORM
          runtime nor the generator references this package. -->
     <PackageReference Include="ZeroAlloc.ValueObjects" Version="$(ZeroAllocValueObjectsVersion)" />
+    <!--
+      Required, not incidental. Without it IAsyncDbConnection cannot bind in the
+      harness compilation, every CompileSmokeTests snippet fails with CS0246,
+      and member lookups on the resulting error types never produce the CS1061
+      those tests assert is absent, so they pass while proving nothing. See
+      Compilation_Binds_The_AdoNet_Surface.
+    -->
+    <PackageReference Include="AdoNet.Async" Version="$(AdoNetAsyncVersion)" />
   </ItemGroup>
 
   <!-- Snapshots are data, not code. Verify's targets excluded them from compilation; without

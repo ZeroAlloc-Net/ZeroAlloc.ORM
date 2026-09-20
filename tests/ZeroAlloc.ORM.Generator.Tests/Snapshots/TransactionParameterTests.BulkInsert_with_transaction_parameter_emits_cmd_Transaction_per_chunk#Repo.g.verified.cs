@@ -7,7 +7,7 @@ namespace TestApp;
 partial class Repo
 {
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<int> InsertOrdersAsync(global::System.Collections.Generic.IReadOnlyList<global::TestApp.OrderRow> @orders, IAsyncDbTransaction @tx, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<int> InsertOrdersAsync(global::System.Collections.Generic.IReadOnlyList<global::TestApp.OrderRow> @orders, global::System.Data.Async.IAsyncDbTransaction @tx, global::System.Threading.CancellationToken @ct)
     {
         var __rows = @orders;
         if (__rows.Count == 0) return 0;

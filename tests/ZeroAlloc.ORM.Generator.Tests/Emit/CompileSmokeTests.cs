@@ -1,4 +1,7 @@
+using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
@@ -27,6 +30,8 @@ public class CompileSmokeTests
         // Filter to errors the generator could be responsible for.
         // Some baseline errors from missing references may be unavoidable in the test harness;
         // verify nothing matches the primary-ctor capture bug pattern (CS1061/CS0103/CS9113).
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -56,6 +61,8 @@ public class CompileSmokeTests
         // Same bug-class filter as Scalar_int_emit_compiles_cleanly: primary-ctor
         // capture/missing-member style errors that would indicate a generator bug
         // rather than a missing reference in the harness.
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -88,6 +95,8 @@ public class CompileSmokeTests
         // in the SQL is a runtime concern (resolved by Phase 6 binding); it doesn't
         // surface as CS1061/CS0103/CS9113 at compile time so the smoke test stays
         // green even though parameter binding hasn't landed yet.
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -145,6 +154,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -170,6 +181,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -196,6 +209,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS1525")
@@ -224,11 +239,55 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
             .ToArray();
         Assert.Empty(bugClass);
+    }
+
+    [Fact]
+    public void Blob_column_emit_binds_against_the_real_reader()
+    {
+        // Regression for the bug that shipped in 1.6.5. The generator emits
+        // IAsyncDataRecord.GetFieldValue<T> for byte[], DateTimeOffset and
+        // TimeSpan columns. That member did not exist until AdoNet.Async
+        // 1.4.0, so the emitted code failed to compile in every real consumer
+        // with a BLOB column, while this test class stayed green because none
+        // of its snippets bound at all.
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record BlobRow(int Id, byte[] Payload, DateTimeOffset At, TimeSpan Took);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Payload, At, Took FROM Blobs WHERE Id = @id")]
+                public partial Task<BlobRow?> GetAsync(int id, CancellationToken ct);
+            }
+            """;
+        var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+
+        AssertSnippetActuallyBound(compileDiagnostics);
+
+        // Assert on every error, not a hand-picked id list: the point is that
+        // the emitted code compiles, and narrowing to known ids is how the
+        // original defect slipped through.
+        var errors = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")
+            .ToArray();
+
+        Assert.True(errors.Length == 0, string.Join("; ", errors));
     }
 
     [Fact]
@@ -252,6 +311,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+
+        AssertSnippetActuallyBound(compileDiagnostics);
 
         var bugClass = compileDiagnostics
             .AsEnumerable()
@@ -287,6 +348,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -316,6 +379,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -350,6 +415,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -386,6 +453,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113")
@@ -415,6 +484,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS0030" or "CS0266")
@@ -445,6 +516,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS0030" or "CS0266")
@@ -479,6 +552,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS0266")
@@ -511,6 +586,8 @@ public class CompileSmokeTests
             "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
             "}\n";
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -542,6 +619,8 @@ public class CompileSmokeTests
             "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
             "}\n";
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -573,6 +652,8 @@ public class CompileSmokeTests
             "    public partial Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetWithLinesAsync(int id, CancellationToken ct);\n" +
             "}\n";
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -605,6 +686,8 @@ public class CompileSmokeTests
             "    public partial IAsyncEnumerable<OrderRow> StreamByCustomerAsync(int customerId, [EnumeratorCancellation] CancellationToken ct);\n" +
             "}\n";
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             // CS8419 (iterator cannot have ref-like locals) and CS4032 (cannot await in
@@ -636,6 +719,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -665,6 +750,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -693,6 +780,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
@@ -720,6 +809,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
@@ -751,6 +842,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
@@ -780,6 +873,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0030" or "CS0266")
@@ -809,6 +904,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS1525")
@@ -838,6 +935,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             // CS8795/CS0759 catch partial-method signature mismatches — e.g. a
@@ -875,6 +974,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             // CS8795/CS0759 catch partial-method signature mismatches; CS8419/CS4032
@@ -906,6 +1007,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             // CS8795/CS0759 catch partial-method signature mismatches in the
@@ -942,6 +1045,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -974,6 +1079,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1008,6 +1115,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1036,6 +1145,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1075,6 +1186,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1104,6 +1217,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1141,6 +1256,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1174,6 +1291,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1206,6 +1325,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759")
@@ -1238,6 +1359,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019")
@@ -1271,6 +1394,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
@@ -1304,6 +1429,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
@@ -1343,6 +1470,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
@@ -1380,6 +1509,8 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
@@ -1417,10 +1548,46 @@ public class CompileSmokeTests
             }
             """;
         var (_, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
         var bugClass = compileDiagnostics
             .AsEnumerable()
             .Where(d => d.Id is "CS1061" or "CS0103" or "CS9113" or "CS8795" or "CS0759" or "CS0019" or "CS0165")
             .ToArray();
         Assert.Empty(bugClass);
     }
+
+    /// <summary>
+    /// Fails if the snippet did not bind against the real ADO.NET surface.
+    /// </summary>
+    /// <remarks>
+    /// Every assertion in this class filters for member-resolution errors such
+    /// as CS1061 and concludes the generator is fine when none appear. That
+    /// reasoning only holds if the snippet compiled against real types. When
+    /// IAsyncDbConnection could not be found, each snippet failed with CS0246,
+    /// the receiver became an error type, and Roslyn suppressed the cascading
+    /// member-lookup diagnostics -- so the filters matched nothing and every
+    /// test passed without checking anything.
+    ///
+    /// That is not hypothetical. Extended_primitive_types_emit_compiles_cleanly
+    /// passed for the entire time the generator emitted
+    /// IAsyncDataRecord.GetFieldValue&lt;byte[]&gt;, a member that did not exist
+    /// until AdoNet.Async 1.4.0 and that failed to compile in every real
+    /// consumer.
+    /// </remarks>
+    private static void AssertSnippetActuallyBound(ImmutableArray<Diagnostic> compileDiagnostics)
+    {
+        var unresolved = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Id is "CS0246" or "CS0234")
+            .Select(d => d.GetMessage(CultureInfo.InvariantCulture))
+            .ToArray();
+
+        Assert.True(
+            unresolved.Length == 0,
+            "The snippet did not bind, so the member-resolution assertions below prove nothing. "
+            + "A reference is missing from GeneratorHarness.BuildReferences: "
+            + string.Join("; ", unresolved));
+    }
+
 }

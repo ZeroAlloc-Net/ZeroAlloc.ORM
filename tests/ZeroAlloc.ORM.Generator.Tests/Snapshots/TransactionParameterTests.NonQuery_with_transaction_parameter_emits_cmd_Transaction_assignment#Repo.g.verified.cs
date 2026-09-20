@@ -7,7 +7,7 @@ namespace TestApp;
 partial class Repo
 {
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<int> UpdateStatusAsync(int @id, string @status, IAsyncDbTransaction @tx, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<int> UpdateStatusAsync(int @id, string @status, global::System.Data.Async.IAsyncDbTransaction @tx, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;

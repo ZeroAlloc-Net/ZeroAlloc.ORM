@@ -69,12 +69,18 @@ internal static class GeneratorHarness
         {
             typeof(ZeroAlloc.ORM.QueryAttribute).Assembly,   // ZeroAlloc.ORM.Abstractions
             typeof(ZeroAlloc.ValueObjects.ValueObjectAttribute).Assembly, // ZA.ValueObjects (Phase C)
-            // AdoNet.Async is force-loaded transitively through the generator's
-            // ProjectReference graph; no explicit touch needed in v0.1. If a future
-            // test references a type that lives only in AdoNet.Async (not also in
-            // the generator), add `typeof(System.Data.Async.IAsyncDbConnection).Assembly`
-            // — that requires a direct ProjectReference to AdoNet.Async from this
-            // test project (currently absent by design).
+            // AdoNet.Async. The previous comment here claimed this was loaded
+            // transitively through the generator's ProjectReference graph and
+            // needed no explicit touch. It was not: the generator is referenced
+            // with ReferenceOutputAssembly="false", System.Data.Async.dll never
+            // reached the test output, and so IAsyncDbConnection never bound in
+            // any harness compilation. Every emitted snippet failed with CS0246
+            // and the CS1061-style assertions downstream matched nothing.
+            typeof(System.Data.Async.IAsyncDbConnection).Assembly,
+            // ZeroAlloc.ORM itself: emitted code throws
+            // ZeroAllocOrmMaterializationException, which is declared there
+            // rather than in Abstractions.
+            typeof(ZeroAlloc.ORM.ZeroAllocOrmMaterializationException).Assembly,
         };
         _ = forceLoadAssemblies;
 
