@@ -1,1 +1,9 @@
 #nullable enable
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SqlServerMigrationDialect(string! lockName = "ZAORM_MIGRATIONS") -> void
+const ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.DefaultLockName = "ZAORM_MIGRATIONS" -> string!
