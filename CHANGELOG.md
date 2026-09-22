@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.7.0...v1.7.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* prefer a PAT for release-please, falling back to GITHUB_TOKEN ([#224](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/224)) ([0995f28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/0995f2887659f91920469f48b99d09b795b1d4a1))
+
 ## [1.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.6...v1.7.0) (2026-09-22)
 
 
