@@ -46,3 +46,10 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build -c Release --verbosity normal
+
+  # ZeroAlloc.ORM published four packages with no API gate at all -- the only
+  # repo in the org with zero coverage. No inputs: the workflow discovers every
+  # packable project under src/ and compares each against its own published
+  # baseline. See ZeroAlloc-Net/.github#30.
+  api-compat:
+    uses: ZeroAlloc-Net/.github/.github/workflows/api-compat.yml@main
