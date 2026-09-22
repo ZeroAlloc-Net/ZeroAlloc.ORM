@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.6...v1.7.0) (2026-09-22)
+
+
+### Features
+
+* add SqlServerMigrationDialect ([#220](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/220)) ([7787e53](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/7787e538d8b21c27354c6e53d4d6531af7f063db))
+
 ## [1.6.6](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.6.5...v1.6.6) (2026-09-20)
 
 
