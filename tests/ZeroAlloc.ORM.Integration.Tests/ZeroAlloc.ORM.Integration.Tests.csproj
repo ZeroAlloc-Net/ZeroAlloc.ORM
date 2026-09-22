@@ -44,7 +44,7 @@
     <!-- SQL Server integration fixture. The 2022 image needs ACCEPT_EULA, which
          Testcontainers.MsSql sets for us. -->
     <PackageReference Include="Testcontainers.MsSql" Version="4.15.0" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.2" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.7" />
     <!-- ZA.ValueObjects supplies the [ValueObject] attribute + its source generator
          (fills in Value, From, ToString, equality). Required by v0.2 round-trip tests. -->
     <PackageReference Include="ZeroAlloc.ValueObjects" Version="$(ZeroAllocValueObjectsVersion)" />
