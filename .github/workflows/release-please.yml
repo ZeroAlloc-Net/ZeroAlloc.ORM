@@ -18,7 +18,18 @@ jobs:
       - uses: googleapis/release-please-action@v5
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer a PAT, fall back to GITHUB_TOKEN when none is configured.
+          #
+          # A release PR opened with GITHUB_TOKEN does not get its checks run normally:
+          # they land in action_required and wait for a human. build-test and the smoke
+          # checks are required here, so the release PR cannot merge until someone
+          # approves each run by hand. 1.7.0 needed exactly that.
+          #
+          # The fallback keeps this safe to merge before the secret exists: an undefined
+          # secret is an empty string, so this resolves to GITHUB_TOKEN and behaves as it
+          # does today. Adding RELEASE_PLEASE_TOKEN switches it over with no further
+          # change. Every other ZeroAlloc repository already uses the PAT.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
 
   # Publishing lives here rather than in a workflow listening for
