@@ -29,4 +29,25 @@ public sealed partial class SqliteScalarTypesRepo(IAsyncDbConnection connection)
 
     [Command("SELECT Ident FROM Typed WHERE Id = @id", Kind = CommandKind.Scalar)]
     public partial Task<Guid?> NullableIdentAsync(int id, CancellationToken ct);
+
+    // #261 — Sqlite can also store dates as a Julian day number, REAL or INTEGER,
+    // and a TimeSpan as a number of days. ExecuteScalar then returns a double or
+    // a long.
+    [Command("SELECT Stamp FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset> NumericStampAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Moment FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime> NumericMomentAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Span FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<TimeSpan> NumericSpanAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Stamp FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset?> NullableNumericStampAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Moment FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime?> NullableNumericMomentAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Span FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<TimeSpan?> NullableNumericSpanAsync(int id, CancellationToken ct);
 }

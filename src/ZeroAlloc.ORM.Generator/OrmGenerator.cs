@@ -5657,6 +5657,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                       or any other byte[], its UTF-8 text through Guid.Parse.
     //                       That last arm allocates the decoded string, but only a
     //                       Guid stored as a text BLOB reaches it.
+    // Sqlite can also store a date as a number, which ExecuteScalar returns as a
+    // double for REAL or a long for INTEGER (#261). GetFieldValue<T> reads both as
+    // a Julian day number, and a TimeSpan as a number of days, so the arms do too:
+    //   * DateTime       <- double or long, the Julian day, Kind Unspecified.
+    //   * DateTimeOffset <- double or long, the Julian day at offset zero, as
+    //                       Microsoft.Data.Sqlite 10 reads it.
+    //   * TimeSpan       <- double or long, TimeSpan.FromDays.
+    // A long is never read as Unix seconds, because the reader path does not.
     // Every other value takes the fallback arm, the cast or Convert.ToDateTime
     // the funnel used before. Type patterns on the boxed value only unbox, so
     // the valid path does not allocate. Each arm's pattern variable is scoped to
@@ -5678,14 +5686,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
             "double" => $"global::System.Convert.ToDouble({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "float" => $"global::System.Convert.ToSingle({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "string" => $"global::System.Convert.ToString({subject}, global::System.Globalization.CultureInfo.InvariantCulture)!",
-            "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
-            "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), var __v => (global::System.DateTimeOffset)__v }})",
-            "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), string __v => global::System.TimeSpan.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), var __v => (global::System.TimeSpan)__v }})",
+            "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), double __v => {FromJulianDay("__v")}, long __v => {FromJulianDay("__v")}, var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
+            "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), long __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), var __v => (global::System.DateTimeOffset)__v }})",
+            "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), string __v => global::System.TimeSpan.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => global::System.TimeSpan.FromDays(__v), long __v => global::System.TimeSpan.FromDays((double)__v), var __v => (global::System.TimeSpan)__v }})",
             "global::System.Guid" => $"({subject} switch {{ global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] {{ Length: 16 }} __v => new global::System.Guid(__v), byte[] __v => global::System.Guid.Parse(global::System.Text.Encoding.UTF8.GetString(__v)), var __v => (global::System.Guid)__v }})",
             // No Convert.ToXxx exists for byte[]; fall back to a direct cast.
             _ => $"({targetType}){subject}",
         };
     }
+
+    // #261 — the DateTime that Microsoft.Data.Sqlite's GetDateTime reads from a
+    // Julian day number. It rounds the day number to whole milliseconds, as
+    // SQLite's own date functions do, and counts them from 0001-01-01T00:00,
+    // which is Julian day 1721425.5, or 148731163200000 ms. That is the same
+    // value as Microsoft.Data.Sqlite's FromJulianDate, which builds it from the
+    // year, month, day and time instead. Kind is Unspecified, as there. checked
+    // turns a day number beyond DateTime's range into an OverflowException
+    // rather than a wrapped, wrong date. `value` is a double or a long.
+    private static string FromJulianDay(string value)
+        => $"new global::System.DateTime(checked(((long)((double){value} * 86400000.0 + 0.5) - 148731163200000L) * global::System.TimeSpan.TicksPerMillisecond))";
 
     // Single-row scalar with null tolerance — distinguishes three cases:
     //   * empty result set         -> null
