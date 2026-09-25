@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.0.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.7.1...v2.0.0) (2026-09-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* [Param(DbType)] now applies to input parameters, where it was previously ignored. A stale or wrong value now takes effect: AnsiString changes how SQL Server converts and seeks, and a DbType that does not fit the value throws at run time. ZAO066 also fails the build for a [Param] Name on a CancellationToken, transaction or BulkInsert collection parameter and for a [Param] DbType on a composite parameter, both silently ignored before.
+* generated code sets DbParameter.ParameterName to the bare name, "id" rather than "@id", and MigrationRunner binds "version", "name" and "applied_at". SQL written with `@` placeholders needs no change on SQLite, PostgreSQL or SQL Server. Code that reads the name back is affected: interceptors, logging or tracing that expect "@id", and lookups such as Parameters["@id"], which Microsoft.Data.Sqlite does not normalise. See docs/migrating-to-v2.md.
+* custom IMigrationDialect implementations must return version, name from SelectAppliedVersionsSql. The history table already stores name, since InsertAppliedVersionSql writes it. A migration source that yields two migrations with the same version is now rejected.
+
+### Features
+
+* emit parameter names without a provider prefix ([#234](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/234)) ([b3b3047](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/b3b3047bcc577dd5ba79c8bca1bb0f4411ff4447)), closes [#219](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/219)
+
+
+### Bug Fixes
+
+* build unique generator hint names from the full type name ([#237](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/237)) ([28ee29d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/28ee29d561343a2f378821d8511b329a2712829f))
+* declare DbType and Size on stored-procedure output parameters ([#246](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/246)) ([7eeea1b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/7eeea1b783551351f1c2d98c40b1c89fd49ea9b1)), closes [#235](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/235)
+* throw on a migration version collision instead of skipping it ([#231](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/231)) ([98d90c5](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/98d90c53f757d1da8d3bbf83d1c49d272492460e)), closes [#230](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/230)
+* wrap generated repositories in their containing partial types ([#240](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/240)) ([425c958](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/425c9582aa59e4ec5705f92387bd60a626dcd8c1)), closes [#238](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/238)
+
 ## [1.7.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.7.0...v1.7.1) (2026-09-22)
 
 
