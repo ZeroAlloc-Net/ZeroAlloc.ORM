@@ -25,6 +25,21 @@ internal static class ScalarNullAssertions
         var wrapped = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
             () => repo.NullValueObjectAsync(CancellationToken.None)).ConfigureAwait(false);
         Assert.Contains("non-nullable 'ZeroAlloc.ORM.Integration.Tests.TotalAmount'", wrapped.Message, StringComparison.Ordinal);
+
+        var status = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.NullEnumAsync(CancellationToken.None)).ConfigureAwait(false);
+        Assert.Equal(
+            "Scalar command 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.NullEnumAsync' returned NULL, " +
+            "but its return type is the non-nullable 'ZeroAlloc.ORM.Integration.Tests.Status'. " +
+            "Declare it as 'ZeroAlloc.ORM.Integration.Tests.Status?' to receive null.",
+            status.Message);
+
+        var identity = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.NullIdentityAsync(CancellationToken.None)).ConfigureAwait(false);
+        Assert.Equal(
+            "Identity command 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.NullIdentityAsync' returned NULL, " +
+            "but its return type is the non-nullable 'int'. The SQL must produce a non-null identity value.",
+            identity.Message);
     }
 
     public static async Task NullableTargetsReceiveNullAsync(ScalarNullRepo repo)

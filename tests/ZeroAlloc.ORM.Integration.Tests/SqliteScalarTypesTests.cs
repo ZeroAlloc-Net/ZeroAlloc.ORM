@@ -86,6 +86,75 @@ public sealed class SqliteScalarTypesTests
     }
 
     [Fact]
+    public async Task Guid_stored_as_a_text_blob_reads_back_as_a_scalar()
+    {
+        // A BLOB that is not 16 bytes holds the Guid's text as UTF-8, which
+        // Microsoft.Data.Sqlite's GetGuid also accepts.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await CreateTableAsync(fx).ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(
+                "INSERT INTO Typed (Id, Stamp, Span, Ident) VALUES (5, '2024-01-02 03:04:05.1234567+02:00', " +
+                "'1.02:03:04.5678901', CAST('6f9619ff-8b86-d011-b42d-00c04fc964ff' AS BLOB));").ConfigureAwait(false);
+            var repo = new SqliteScalarTypesRepo(fx.Connection);
+
+            Assert.Equal(Ident, await repo.IdentAsync(5, CancellationToken.None).ConfigureAwait(false));
+            Assert.Equal(Ident, await repo.NullableIdentAsync(5, CancellationToken.None).ConfigureAwait(false));
+
+            await AssertMatchesReaderAsync(fx, repo, 5).ConfigureAwait(false);
+        }
+    }
+
+    // Microsoft.Data.Sqlite writes and reads these values with InvariantCulture,
+    // so the scalar conversion must parse them the same way whatever the current
+    // culture is. Each value is also written under the culture, as an adopter's
+    // app would.
+    //   * nl-NL uses a comma as its decimal separator; the stored fractional
+    //     seconds use a period.
+    //   * th-TH defaults to the Thai Buddhist calendar, so a current-culture
+    //     DateTimeOffset.Parse reads the year 2024 as 2024 BE, which is 1481 AD.
+    //     This is the case that fails if the conversion drops InvariantCulture.
+    [Theory]
+    [InlineData("nl-NL")]
+    [InlineData("th-TH")]
+    public async Task Text_values_parse_the_same_under_another_culture(string culture)
+    {
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo(culture);
+        try
+        {
+            var fx = new SqliteFixture();
+            await using (fx.ConfigureAwait(false))
+            {
+                await fx.InitializeAsync().ConfigureAwait(false);
+                await CreateTableAsync(fx).ConfigureAwait(false);
+                var repo = new SqliteScalarTypesRepo(fx.Connection);
+                await repo.InsertAsync(6, Stamp, Span, Ident, CancellationToken.None).ConfigureAwait(false);
+                await fx.ExecuteDdlAsync(@"
+                    INSERT INTO Typed (Id, Stamp, Span, Ident) VALUES
+                        (7, '2024-01-02 03:04:05.1234567+02:00', '1.02:03:04.5678901',
+                         '6F9619FF-8B86-D011-B42D-00C04FC964FF');").ConfigureAwait(false);
+
+                foreach (var id in new[] { 6, 7 })
+                {
+                    var stamp = await repo.StampAsync(id, CancellationToken.None).ConfigureAwait(false);
+                    Assert.Equal(Stamp, stamp);
+                    Assert.Equal(Stamp.Offset, stamp.Offset);
+                    Assert.Equal(Span, await repo.SpanAsync(id, CancellationToken.None).ConfigureAwait(false));
+                    Assert.Equal(Ident, await repo.IdentAsync(id, CancellationToken.None).ConfigureAwait(false));
+                    await AssertMatchesReaderAsync(fx, repo, id).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
     public async Task Null_values_read_back_as_null()
     {
         var fx = new SqliteFixture();

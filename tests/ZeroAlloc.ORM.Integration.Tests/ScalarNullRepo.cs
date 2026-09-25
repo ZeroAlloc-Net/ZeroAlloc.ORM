@@ -19,6 +19,14 @@ public sealed partial class ScalarNullRepo(IAsyncDbConnection connection)
     public partial Task<TotalAmount> NullValueObjectAsync(CancellationToken ct);
 
     [Command("SELECT NULL", Kind = CommandKind.Scalar)]
+    public partial Task<Status> NullEnumAsync(CancellationToken ct);
+
+    // An Identity command shares the scalar emit, with its own message: it has
+    // no nullable variant to point at.
+    [Command("SELECT NULL", Kind = CommandKind.Identity)]
+    public partial Task<int> NullIdentityAsync(CancellationToken ct);
+
+    [Command("SELECT NULL", Kind = CommandKind.Scalar)]
     public partial Task<string?> NullableStringAsync(CancellationToken ct);
 
     [Command("SELECT NULL", Kind = CommandKind.Scalar)]

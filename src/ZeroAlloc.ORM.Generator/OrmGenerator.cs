@@ -5649,7 +5649,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Microsoft.Data.Sqlite's GetFieldValue<T> does for the same column:
     //   * DateTimeOffset <- string, DateTimeOffset.Parse with InvariantCulture.
     //   * TimeSpan       <- string, TimeSpan.Parse with InvariantCulture.
-    //   * Guid           <- string, Guid.Parse; or byte[] of 16 bytes, new Guid.
+    //   * Guid           <- string, Guid.Parse; or byte[] of 16 bytes, new Guid;
+    //                       or any other byte[], its UTF-8 text through Guid.Parse.
+    //                       That last arm allocates the decoded string, but only a
+    //                       Guid stored as a text BLOB reaches it.
     // Every other value takes the fallback arm, the cast or Convert.ToDateTime
     // the funnel used before. Type patterns on the boxed value only unbox, so
     // the valid path does not allocate. Each arm's pattern variable is scoped to
@@ -5674,7 +5677,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
             "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), var __v => (global::System.DateTimeOffset)__v }})",
             "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), string __v => global::System.TimeSpan.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), var __v => (global::System.TimeSpan)__v }})",
-            "global::System.Guid" => $"({subject} switch {{ global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] {{ Length: 16 }} __v => new global::System.Guid(__v), var __v => (global::System.Guid)__v }})",
+            "global::System.Guid" => $"({subject} switch {{ global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] {{ Length: 16 }} __v => new global::System.Guid(__v), byte[] __v => global::System.Guid.Parse(global::System.Text.Encoding.UTF8.GetString(__v)), var __v => (global::System.Guid)__v }})",
             // No Convert.ToXxx exists for byte[]; fall back to a direct cast.
             _ => $"({targetType}){subject}",
         };

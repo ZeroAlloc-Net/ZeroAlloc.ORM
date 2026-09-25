@@ -51,7 +51,8 @@ as a 16-byte BLOB. A column read asks the provider for the type through
 `[Command(Kind = Scalar)]` result arrives from `ExecuteScalar` as the raw
 `string` or `byte[]` instead, so the generator parses it the same way:
 `DateTimeOffset.Parse` and `TimeSpan.Parse` with `InvariantCulture`,
-`Guid.Parse` for TEXT, and `new Guid(bytes)` for a 16-byte BLOB. A scalar
+`Guid.Parse` for TEXT, `new Guid(bytes)` for a 16-byte BLOB, and `Guid.Parse`
+over the UTF-8 text of any other BLOB. A scalar
 command and a row query read the same value from the same column.
 
 ### `CanCreateBatch = false`
