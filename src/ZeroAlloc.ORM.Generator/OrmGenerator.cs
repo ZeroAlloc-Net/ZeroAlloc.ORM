@@ -5420,10 +5420,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // because reference-typed unboxing is exact. We route through
         // System.Convert.ToXxx where available — same pattern the existing
         // EmitScalarInt uses — so int/long/short/byte/bool/decimal/double/
-        // float/string/DateTime are tolerant of width promotion. For types
-        // without a Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan) we
-        // fall back to a direct cast; those rarely surface as widened types
-        // from providers anyway.
+        // float/string/DateTime are tolerant of width promotion. DateTimeOffset
+        // and TimeSpan convert from the provider's default temporal types; see
+        // BuildScalarConvertExpression. Guid and byte[] fall back to a direct
+        // cast; those rarely surface as widened types from providers anyway.
         var bang = col.IsNullable ? "" : "!";
         string materialized;
         if (col.Convention is { } conv && conv.FactoryFullName is not null)
@@ -5473,10 +5473,27 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // BIGINT, SUM over decimal columns may surface as either decimal or double
     // depending on the driver. System.Convert.ToXxx absorbs all those
     // permutations through IConvertible without surprising the user; the
-    // existing EmitScalarInt path uses the same pattern. For types lacking a
-    // Convert.ToXxx (Guid, byte[], DateTimeOffset, TimeSpan, custom strings
-    // outside the table) we fall back to a direct cast — those are exact-typed
-    // by providers in practice.
+    // existing EmitScalarInt path uses the same pattern. Guid and byte[] have no
+    // Convert.ToXxx and fall back to a direct cast.
+    //
+    // The temporal types do not always arrive as the target type (#245, #247).
+    // A boxed value carries the provider's default CLR type for the column, and
+    // the reader path never sees that because GetFieldValue<T> asks the provider
+    // for T. Npgsql's defaults differ from the targets: timestamptz is a
+    // DateTime, time is a TimeOnly and date is a DateOnly. The switch arms turn
+    // each into what GetFieldValue<T> returns for that column on the same
+    // provider, so a scalar or output reads the same value as a column does:
+    //   * DateTimeOffset <- DateTime of Kind Utc or Local, the instant with the
+    //     DateTime's offset. Npgsql reads timestamptz as Utc, or as Local under
+    //     its legacy timestamp switch. An Unspecified DateTime, a timestamp
+    //     column, has no instant and falls through to the cast, which throws as
+    //     GetFieldValue<DateTimeOffset> does for such a column.
+    //   * TimeSpan       <- TimeOnly, the time of day.
+    //   * DateTime       <- DateOnly, midnight of Kind Unspecified.
+    // Every other value takes the fallback arm, the cast or Convert.ToDateTime
+    // the funnel used before. Type patterns on the boxed value only unbox, so
+    // the valid path does not allocate. Each arm's pattern variable is scoped to
+    // its arm, so several outputs in one method can reuse the name.
     //
     // `subject` is the expression evaluating to the boxed value (already
     // post-bang where appropriate). The returned expression is suitable to use
@@ -5494,11 +5511,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             "double" => $"global::System.Convert.ToDouble({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "float" => $"global::System.Convert.ToSingle({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "string" => $"global::System.Convert.ToString({subject}, global::System.Globalization.CultureInfo.InvariantCulture)!",
-            "global::System.DateTime" => $"global::System.Convert.ToDateTime({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
-            // No Convert.ToXxx exists for Guid / byte[] / DateTimeOffset /
-            // TimeSpan — fall back to a direct cast. Providers return these as
-            // exact CLR types in practice (Sqlite TimeSpan via Microsoft.Data.Sqlite,
-            // Npgsql DateTimeOffset, etc.).
+            "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
+            "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), var __v => (global::System.DateTimeOffset)__v }})",
+            "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), var __v => (global::System.TimeSpan)__v }})",
+            // No Convert.ToXxx exists for Guid / byte[]; fall back to a direct cast.
             _ => $"({targetType}){subject}",
         };
     }

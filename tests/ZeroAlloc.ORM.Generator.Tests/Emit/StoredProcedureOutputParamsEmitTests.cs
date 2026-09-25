@@ -249,4 +249,31 @@ public class StoredProcedureOutputParamsEmitTests
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void SprocWithOutputParams_temporal_outputs_convert_from_provider_default_types()
+    {
+        // #245, #247 â€” a boxed output carries the provider's default CLR type for
+        // the column, which is not always the tuple element's type: Npgsql hands
+        // back timestamptz as DateTime, time as TimeOnly and date as DateOnly.
+        // Each temporal readback converts those the way GetFieldValue<T> does on
+        // the reader path. The nullable pair pins the DBNull guard around it.
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_Temporal")]
+                public partial Task<(DateTime Day, DateTimeOffset Stamp, TimeSpan Span, DateTimeOffset? MaybeStamp, TimeSpan? MaybeSpan)> TemporalAsync(
+                    DateTime day, DateTimeOffset stamp, TimeSpan span, DateTimeOffset? maybeStamp, TimeSpan? maybeSpan, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

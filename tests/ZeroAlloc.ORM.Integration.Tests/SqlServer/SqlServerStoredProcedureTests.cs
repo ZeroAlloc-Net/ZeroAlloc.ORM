@@ -113,6 +113,52 @@ public sealed class SqlServerStoredProcedureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Temporal_outputs_round_trip()
+    {
+        await ExecuteAsync("""
+            CREATE PROCEDURE dbo.temporal_output_proc
+                @stamp DATETIMEOFFSET(7) OUTPUT,
+                @missing DATETIMEOFFSET(7) OUTPUT,
+                @clock TIME(7) OUTPUT,
+                @late TIME(7) OUTPUT,
+                @day DATE OUTPUT
+            AS
+            BEGIN
+                SET @stamp = '2024-01-02T03:04:05.1234567-05:30';
+                SET @missing = NULL;
+                SET @clock = '13:14:15.1234567';
+                SET @late = '23:59:59.9999999';
+                SET @day = '2024-01-02';
+            END
+            """);
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+        var result = await repo.TemporalOutputsAsync(
+            stamp: default, missing: null, clock: default, late: null, day: default, CancellationToken.None);
+
+        var stamp = new DateTimeOffset(2024, 1, 2, 3, 4, 5, new TimeSpan(-5, -30, 0)).AddTicks(1_234_567);
+        Assert.Equal(stamp, result.Stamp);
+        Assert.Equal(stamp.Offset, result.Stamp.Offset);
+        Assert.Null(result.Missing);
+        Assert.Equal(new TimeSpan(0, 13, 14, 15).Add(TimeSpan.FromTicks(1_234_567)), result.Clock);
+        Assert.Equal(TimeSpan.FromDays(1) - TimeSpan.FromTicks(1), result.Late);
+        Assert.Equal(new DateTime(2024, 1, 2), result.Day);
+    }
+
+    [Fact]
+    public async Task Scalar_datetimeoffset_and_time_round_trip()
+    {
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        var stamp = await repo.ScalarStampAsync(CancellationToken.None);
+        var clock = await repo.ScalarClockAsync(CancellationToken.None);
+
+        Assert.Equal(new DateTimeOffset(2024, 1, 2, 3, 4, 5, TimeSpan.FromHours(2)).AddTicks(1_234_567), stamp);
+        Assert.Equal(TimeSpan.FromHours(2), stamp.Offset);
+        Assert.Equal(new TimeSpan(0, 13, 14, 15).Add(TimeSpan.FromTicks(1_234_567)), clock);
+    }
+
+    [Fact]
     public async Task Nullable_outputs_left_NULL_read_back_as_null()
     {
         await ExecuteAsync("""
