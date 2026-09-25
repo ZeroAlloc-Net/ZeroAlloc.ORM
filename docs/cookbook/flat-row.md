@@ -118,8 +118,20 @@ public sealed partial class CustomerRepository(IAsyncDbConnection connection)
 
 A `DBNull` in a non-nullable column position throws
 `ZeroAllocOrmMaterializationException` with a message naming the offending
-column. The throw is intentional — a silent zero/empty-string default would
-hide schema-drift bugs in production.
+column, the constructor parameter it binds to and that parameter's type:
+
+```text
+Column 'CreatedAt' is NULL, but parameter 'CreatedAt' of 'MyApp.CustomerRow' is the non-nullable type 'System.DateTime'. Declare it as 'System.DateTime?' to receive null.
+```
+
+The throw is intentional — a silent zero/empty-string default would
+hide schema-drift bugs in production. The same check covers enums, value
+objects, the inner columns of a composite such as `Money`, and every row
+shape: a single row, a list, a stream and a multi-result tuple. A composite
+declared nullable (`Money?`) keeps its all-or-nothing rule instead; see
+[composites](composites.md). The provider's own exception is kept as
+`InnerException`, and the check costs nothing on a row without a NULL; see
+[provider quirks](provider-quirks.md#null-semantics).
 
 > Reference-type nullability requires `<Nullable>enable</Nullable>` on the
 > consuming project. Without nullable context, the `?` annotation is

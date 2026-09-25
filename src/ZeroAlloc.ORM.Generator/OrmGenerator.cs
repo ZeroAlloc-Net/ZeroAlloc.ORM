@@ -2328,7 +2328,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 GetterMethod: reader,
                 IsNullable: isNullable,
                 TypeName: unwrappedDisplay,
-                Convention: convention));
+                Convention: convention,
+                // #249 — names the parameter in the NULL-column exception.
+                CtorArgName: p.Name));
         }
 
         return new MaterializationModel(
@@ -3104,7 +3106,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 IsNullable: isNullable,
                 TypeName: unwrappedDisplay,
                 Convention: convention,
-                ColumnName: columnName));
+                ColumnName: columnName,
+                // #249 — names the parameter in the NULL-column exception.
+                CtorArgName: p.Name));
         }
 
         return new MaterializationModel(
@@ -5719,8 +5723,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //
     // For nullable columns we wrap the GetXxx call in an IsDBNull(N) guard so the
     // ctor receives `null` instead of throwing on DBNull. Non-nullable columns are
-    // read directly — if the DB returns NULL there it's a schema/SQL bug surfaced
-    // as an InvalidCastException at runtime.
+    // read directly; if the DB returns NULL there, the provider throws and the
+    // try/catch from EmitNullGuarded turns that into a
+    // ZeroAllocOrmMaterializationException naming the column (#249).
     //
     // No-row case returns null because this shape only triggers for Task<T?>.
     // Parameter binding (e.g. @id <- the `int id` arg) lands in Phase 6; for now
@@ -5775,13 +5780,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
 
+        // #249 — the row is read inside a try whose catch names a NULL column;
+        // see EmitNullGuarded.
+        var body = new StringBuilder();
         if (hasNullableComposite)
         {
-            EmitFlatRowWithHoistedLocals(sb, mat, useNamedOrdinals: false);
+            EmitFlatRowWithHoistedLocals(body, mat, useNamedOrdinals: false);
         }
         else
         {
-            sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+            body.AppendLine($"            return new {mat.TargetTypeFullName}(");
             var cols = mat.Columns;
             var ordinal = 0;
             for (var i = 0; i < cols.Length; i++)
@@ -5794,15 +5802,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // the composite; following columns continue from ord+N.
                 if (col.InnerColumns.Length > 0)
                 {
-                    EmitNestedCompositeConstruction(sb, col, ordinal, "                ", trailing);
+                    EmitNestedCompositeConstruction(body, col, ordinal, "                ", trailing);
                     ordinal += col.InnerColumns.Length;
                     continue;
                 }
                 var expr = BuildPositionalReadExpression(col, ordinal);
-                sb.AppendLine($"                {expr}{trailing}");
+                body.AppendLine($"                {expr}{trailing}");
                 ordinal++;
             }
         }
+        EmitNullGuarded(sb, "            ", CollectNullChecks(mat.Columns, mat.TargetTypeFullName), "__NullColumn", body.ToString());
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -6016,7 +6025,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 // Reuse the hoisted ordinal local instead of calling GetOrdinal
                 // again — v0.3-CLN1 perf footgun avoidance per Phase C.1 plan.
-                readExpr = BuildReadExpressionWithOrdinalLocal(b, ordinalLocalNames[j]!);
+                readExpr = BuildColumnReadExpression(b, ordinalLocalNames[j]!);
             }
             else
             {
@@ -6024,34 +6033,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             sb.AppendLine($"{indent}        {readExpr}{trailing}");
         }
-    }
-
-    // v0.5 Phase C — DomainEntity-style read where the ordinal has already been
-    // hoisted to a local (avoiding GetOrdinal(<name>) duplication across the
-    // IsDBNull + Get reads in the nullable-composite hoisted block). Mirrors
-    // BuildOrdinalNameReadExpression but substitutes an arbitrary ordinal
-    // expression for the inline GetOrdinal(<literal>) call.
-    private static string BuildReadExpressionWithOrdinalLocal(ColumnBinding col, string ordinalExpr)
-    {
-        var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-        if (col.Convention is { } conv && conv.FactoryFullName is not null)
-        {
-            readExpr = conv.Kind switch
-            {
-                (int)ConventionKind.Enum
-                    => $"({conv.FactoryFullName}){readExpr}",
-                (int)ConventionKind.EnumAsString
-                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                _ => conv.FactoryIsCtor
-                    ? $"new {conv.FactoryFullName}({readExpr})"
-                    : $"{conv.FactoryFullName}({readExpr})",
-            };
-        }
-        if (col.IsNullable)
-        {
-            return $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-        }
-        return readExpr;
     }
 
     // Sum the flattened column count for a materialization's binding list. A
@@ -6177,15 +6158,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var ctorOrFactory = mat.FactoryMethodName is { } fac
                 ? $"{mat.TargetTypeFullName}.{fac}"
                 : $"new {mat.TargetTypeFullName}";
-            sb.AppendLine($"            return {ctorOrFactory}(");
+            // #249 — the reads sit inside a try whose catch names a NULL column.
+            var body = new StringBuilder();
+            body.AppendLine($"            return {ctorOrFactory}(");
             var cols = mat.Columns;
             for (var i = 0; i < cols.Length; i++)
             {
                 var col = cols[i];
                 var trailing = i == cols.Length - 1 ? ");" : ",";
                 var readExpr = BuildPositionalReadExpression(col, i);
-                sb.AppendLine($"                {readExpr}{trailing}");
+                body.AppendLine($"                {readExpr}{trailing}");
             }
+            var owner = mat.FactoryMethodName is { } ownerFactory
+                ? mat.TargetTypeFullName + "." + ownerFactory
+                : mat.TargetTypeFullName;
+            EmitNullGuarded(sb, "            ", CollectNullChecks(cols, owner), "__NullColumn", body.ToString());
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
@@ -6298,7 +6285,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var col = cols[i];
             var trailing = i == cols.Length - 1 ? ");" : ",";
             string readExpr = useNamedOrdinals
-                ? BuildReadExpressionWithOrdinalLocal(col, ordinalLocalNames[i]!)
+                ? BuildColumnReadExpression(col, ordinalLocalNames[i]!)
                 : BuildPositionalReadExpression(col, i);
             sb.AppendLine($"{indent}    {readExpr}{trailing}");
         }
@@ -6311,26 +6298,181 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Composite ColumnBindings (InnerColumns non-empty) are NOT supported here —
     // those are flattened by the outer caller (EmitFlatRow / EmitDomainEntity).
     private static string BuildPositionalReadExpression(ColumnBinding col, int ordinal)
+        => BuildColumnReadExpression(col, ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    // The one place a reader column becomes a ctor or factory argument; every row
+    // shape reads through it. A nullable member maps NULL to null. A non-nullable
+    // member is read directly: the NULL case is handled off the hot path by the
+    // try/catch EmitNullGuarded wraps around the row (#249).
+    private static string BuildColumnReadExpression(ColumnBinding col, string ordinalExpr)
     {
-        var readExpr = $"__reader.{col.GetterMethod}({ordinal})";
-        if (col.Convention is { } conv && conv.FactoryFullName is not null)
-        {
-            readExpr = conv.Kind switch
-            {
-                (int)ConventionKind.Enum
-                    => $"({conv.FactoryFullName}){readExpr}",
-                (int)ConventionKind.EnumAsString
-                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                _ => conv.FactoryIsCtor
-                    ? $"new {conv.FactoryFullName}({readExpr})"
-                    : $"{conv.FactoryFullName}({readExpr})",
-            };
-        }
+        var readExpr = ApplyReadConvention(col.Convention, $"__reader.{col.GetterMethod}({ordinalExpr})");
         if (col.IsNullable)
         {
-            return $"__reader.IsDBNull({ordinal}) ? ({col.TypeName}?)null : {readExpr}";
+            return $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
         }
         return readExpr;
+    }
+
+    // Wrap a raw GetXxx read in the column's convention: an enum cast,
+    // Enum.Parse for [StoreAsString], or the value object's ctor or factory.
+    private static string ApplyReadConvention(ConventionInfo? conv, string readExpr)
+    {
+        if (conv is null || conv.FactoryFullName is null)
+        {
+            return readExpr;
+        }
+        return conv.Kind switch
+        {
+            (int)ConventionKind.Enum
+                => $"({conv.FactoryFullName}){readExpr}",
+            (int)ConventionKind.EnumAsString
+                => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
+            _ => conv.FactoryIsCtor
+                ? $"new {conv.FactoryFullName}({readExpr})"
+                : $"{conv.FactoryFullName}({readExpr})",
+        };
+    }
+
+    // ---- #249: NULL in a non-nullable column ------------------------------
+    //
+    // The docs promise ZeroAllocOrmMaterializationException naming the column when
+    // a NULL is read into a non-nullable member. Checking IsDBNull before every
+    // such read cost about 30% on a 1000-row in-memory Sqlite read, so the check
+    // runs only on failure instead. Every provider already throws when a GetXxx
+    // call meets a NULL; the probe for #249 found, for every getter the generator
+    // emits:
+    //
+    //   * SqlClient             -> System.Data.SqlTypes.SqlNullValueException
+    //   * Npgsql                -> System.InvalidCastException
+    //   * Microsoft.Data.Sqlite -> System.InvalidOperationException
+    //
+    // So each row's reads sit in a try whose catch filter calls a generated static
+    // local function. That function returns null unless the exception is one of
+    // those three types and one of the row's non-nullable columns is NULL. Then
+    // it returns the ORM exception, with the provider's as InnerException, and
+    // the catch throws it. Otherwise the filter is false and the original
+    // exception propagates untouched. So a cast error surfaces as itself when no
+    // non-nullable column of the row is NULL; when one is, the NULL column is
+    // reported and the cast error is kept as InnerException.
+    // The valid path runs no extra code: the try costs nothing until a throw.
+    //
+    // The finder re-reads columns of the current row with IsDBNull, so it relies
+    // on a non-sequential reader: the generator never opens one with
+    // CommandBehavior.SequentialAccess.
+
+    // One non-nullable column the finder checks. ColumnName is null for a column
+    // read by position; its name then comes from GetName when the finder runs.
+    private sealed record NullCheck(string? ColumnName, int Ordinal, string Member, string TypeName);
+
+    // The non-nullable columns of a row, in read order. A nullable composite is
+    // skipped: its all-or-nothing check reads IsDBNull itself and throws on a
+    // partial NULL, and its inner reads only run once every column holds a value.
+    private static List<NullCheck> CollectNullChecks(EquatableArray<ColumnBinding> cols, string owner)
+    {
+        var checks = new List<NullCheck>();
+        var ordinal = 0;
+        foreach (var col in cols)
+        {
+            if (col.InnerColumns.Length > 0)
+            {
+                if (!col.IsNullable)
+                {
+                    var compositeOwner = CompositeOwner(col);
+                    for (var j = 0; j < col.InnerColumns.Length; j++)
+                    {
+                        var b = col.InnerColumns[j];
+                        if (!b.IsNullable)
+                            checks.Add(new NullCheck(b.ColumnName, ordinal + j, MemberDisplay(b, compositeOwner), b.TypeName));
+                    }
+                }
+                ordinal += col.InnerColumns.Length;
+                continue;
+            }
+            if (!col.IsNullable)
+                checks.Add(new NullCheck(col.ColumnName, ordinal, MemberDisplay(col, owner), col.TypeName));
+            ordinal++;
+        }
+        return checks;
+    }
+
+    private static string MemberDisplay(ColumnBinding col, string owner)
+        => $"parameter '{col.CtorArgName ?? col.ColumnName}' of '{StripGlobalPrefix(owner)}'";
+
+    // The owner a composite's inner columns bind to: the composite type, or its
+    // `[Materialize(Factory)]` method when the factory builds it.
+    private static string CompositeOwner(ColumnBinding composite)
+        => composite.FactoryMethodName is { } factory
+            ? composite.TypeName + "." + factory
+            : composite.TypeName;
+
+    private static string StripGlobalPrefix(string typeName)
+        => typeName.Replace("global::", string.Empty);
+
+    // Emit `body`, the statements that read one row, inside the #249 try/catch,
+    // followed by its finder. `body` is rendered at `indent`; it moves one level
+    // in. With no non-nullable column there is nothing to find, and the body is
+    // emitted as it is.
+    private static void EmitNullGuarded(
+        StringBuilder sb,
+        string indent,
+        List<NullCheck> checks,
+        string finderName,
+        string body)
+    {
+        if (checks.Count == 0)
+        {
+            sb.Append(body);
+            return;
+        }
+        sb.AppendLine($"{indent}try");
+        sb.AppendLine($"{indent}{{");
+        foreach (var raw in body.TrimEnd('\r', '\n').Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            sb.AppendLine(line.Length == 0 ? string.Empty : "    " + line);
+        }
+        sb.AppendLine($"{indent}}}");
+        sb.AppendLine($"{indent}catch (global::System.Exception __ex) when ({finderName}(__reader, __ex) is {{ }} __nullColumn)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    throw __nullColumn;");
+        sb.AppendLine($"{indent}}}");
+        EmitNullColumnFinder(sb, indent, finderName, checks);
+    }
+
+    // The finder the catch filter calls. A static local function compiles to its
+    // own method, so none of this sits in the hot method's body.
+    private static void EmitNullColumnFinder(StringBuilder sb, string indent, string finderName, List<NullCheck> checks)
+    {
+        sb.AppendLine();
+        sb.AppendLine($"{indent}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+        sb.AppendLine($"{indent}static global::System.Exception? {finderName}(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))");
+        sb.AppendLine($"{indent}        return null;");
+        foreach (var check in checks)
+        {
+            var ordinalExpr = check.ColumnName is { } name
+                ? $"__r.GetOrdinal({SymbolDisplay.FormatLiteral(name, quote: true)})"
+                : check.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.AppendLine($"{indent}    if (__r.IsDBNull({ordinalExpr}))");
+            sb.AppendLine($"{indent}        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({BuildNullColumnMessage(check, ordinalExpr)}, __inner);");
+        }
+        sb.AppendLine($"{indent}    return null;");
+        sb.AppendLine($"{indent}}}");
+    }
+
+    // Worded like the stored-procedure output guard of #244. A column read by
+    // position has no name at compile time, so the message asks the reader.
+    private static string BuildNullColumnMessage(NullCheck check, string ordinalExpr)
+    {
+        var typeDisplay = StripGlobalPrefix(check.TypeName);
+        var rest =
+            $"' is NULL, but {check.Member} is the non-nullable type '{typeDisplay}'. " +
+            $"Declare it as '{typeDisplay}?' to receive null.";
+        return check.ColumnName is { } name
+            ? SymbolDisplay.FormatLiteral("Column '" + name + rest, quote: true)
+            : $"\"Column '\" + __r.GetName({ordinalExpr}) + {SymbolDisplay.FormatLiteral(rest, quote: true)}";
     }
 
     // Multi-arg class materialization. Conceptually identical to EmitFlatRow but each
@@ -6386,9 +6528,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
 
+        // #249 — the row is read inside a try whose catch names a NULL column.
+        var body = new StringBuilder();
         if (hasNullableComposite)
         {
-            EmitFlatRowWithHoistedLocals(sb, mat, useNamedOrdinals: true);
+            EmitFlatRowWithHoistedLocals(body, mat, useNamedOrdinals: true);
         }
         else
         {
@@ -6398,8 +6542,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // one call), but uniform hoisting keeps the emit shape consistent
             // with the nullable-composite path (EmitFlatRowWithHoistedLocals)
             // and avoids the double call on nullable leaf columns.
-            var hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, mat.Columns, "            ");
-            sb.AppendLine($"            return new {mat.TargetTypeFullName}(");
+            var hoistedOrdinals = EmitOrdinalHoistsForColumns(body, mat.Columns, "            ");
+            body.AppendLine($"            return new {mat.TargetTypeFullName}(");
             var cols = mat.Columns;
             for (var i = 0; i < cols.Length; i++)
             {
@@ -6411,16 +6555,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // ordinal local; the outer construction wraps in `new TComposite(...)`.
                 if (col.InnerColumns.Length > 0)
                 {
-                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(sb, col, hoistedOrdinals[i]!, "                ", trailing);
+                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(body, col, hoistedOrdinals[i]!, "                ", trailing);
                     continue;
                 }
                 // Column name comes from the ctor parameter (PascalCased). The hoisted
                 // ordinal local feeds both the IsDBNull guard (for nullable leaves) and
                 // the GetXxx read so GetOrdinal runs once per column per row.
-                var expr = BuildReadExpressionWithOrdinalLocal(col, hoistedOrdinals[i]![0]);
-                sb.AppendLine($"                {expr}{trailing}");
+                var expr = BuildColumnReadExpression(col, hoistedOrdinals[i]![0]);
+                body.AppendLine($"                {expr}{trailing}");
             }
         }
+        EmitNullGuarded(sb, "            ", CollectNullChecks(mat.Columns, mat.TargetTypeFullName), "__NullColumn", body.ToString());
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -6431,26 +6576,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static string BuildOrdinalNameReadExpression(ColumnBinding col)
     {
         var colNameLiteral = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
-        var ordinalExpr = $"__reader.GetOrdinal({colNameLiteral})";
-        var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-        if (col.Convention is { } conv && conv.FactoryFullName is not null)
-        {
-            readExpr = conv.Kind switch
-            {
-                (int)ConventionKind.Enum
-                    => $"({conv.FactoryFullName}){readExpr}",
-                (int)ConventionKind.EnumAsString
-                    => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                _ => conv.FactoryIsCtor
-                    ? $"new {conv.FactoryFullName}({readExpr})"
-                    : $"{conv.FactoryFullName}({readExpr})",
-            };
-        }
-        if (col.IsNullable)
-        {
-            return $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-        }
-        return readExpr;
+        return BuildColumnReadExpression(col, $"__reader.GetOrdinal({colNameLiteral})");
     }
 
     // Emit `new T(__reader.GetOrdinal("A") and friends, ...)` for a composite ctor
@@ -6508,7 +6634,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             var b = inner[j];
             var innerTrailing = j == inner.Length - 1 ? ")" + trailing : ",";
-            var readExpr = BuildReadExpressionWithOrdinalLocal(b, innerOrdinalLocals[j]);
+            var readExpr = BuildColumnReadExpression(b, innerOrdinalLocals[j]);
             sb.AppendLine($"{indent}    {readExpr}{innerTrailing}");
         }
     }
@@ -6632,12 +6758,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // resolution caches the GetOrdinal call into a per-row local so the
         // IsDBNull guard and the GetXxx read share one lookup. Positional
         // FlatRow paths use integer literals directly (no hoist needed).
+        // #249 — each row is read inside a try whose catch names a NULL column.
+        var body = new StringBuilder();
         string[]?[]? hoistedOrdinals = null;
         if (useColumnNames)
         {
-            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "                ");
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(body, cols, "                ");
         }
-        sb.AppendLine($"                __list.Add(new {mat.TargetTypeFullName}(");
+        body.AppendLine($"                __list.Add(new {mat.TargetTypeFullName}(");
         var ordinal = 0;
         for (var i = 0; i < cols.Length; i++)
         {
@@ -6653,11 +6781,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 if (useColumnNames)
                 {
-                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(sb, col, hoistedOrdinals![i]!, "                    ", trailing);
+                    EmitNestedCompositeConstructionByOrdinalNameWithHoisted(body, col, hoistedOrdinals![i]!, "                    ", trailing);
                 }
                 else
                 {
-                    EmitNestedCompositeConstruction(sb, col, ordinal, "                    ", trailing);
+                    EmitNestedCompositeConstruction(body, col, ordinal, "                    ", trailing);
                     ordinal += col.InnerColumns.Length;
                 }
                 continue;
@@ -6671,32 +6799,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 ordinalExpr = $"{ordinal}";
             }
-            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-            if (col.Convention is { } conv && conv.FactoryFullName is not null)
-            {
-                readExpr = conv.Kind switch
-                {
-                    (int)ConventionKind.Enum
-                        => $"({conv.FactoryFullName}){readExpr}",
-                    (int)ConventionKind.EnumAsString
-                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                    _ => conv.FactoryIsCtor
-                        ? $"new {conv.FactoryFullName}({readExpr})"
-                        : $"{conv.FactoryFullName}({readExpr})",
-                };
-            }
-            string expr;
-            if (col.IsNullable)
-            {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-            }
-            else
-            {
-                expr = readExpr;
-            }
-            sb.AppendLine($"                    {expr}{trailing}");
+            var expr = BuildColumnReadExpression(col, ordinalExpr);
+            body.AppendLine($"                    {expr}{trailing}");
             ordinal++;
         }
+        EmitNullGuarded(sb, "                ", CollectNullChecks(cols, mat.TargetTypeFullName), "__NullColumn", body.ToString());
         sb.AppendLine("            }");
         sb.AppendLine("            return __list;");
         BuildConnectionEpilogue(sb, "        ");
@@ -6740,12 +6847,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // hoist GetOrdinal(<name>) into a per-row local so the IsDBNull guard and
         // GetXxx read share the same lookup. Positional reads skip hoisting; the
         // integer literal is already free.
+        // #249 — the row is read inside a try whose catch names a NULL column.
+        // An iterator cannot yield from a try that has a catch, so a guarded row
+        // is read into __row first and yielded after the try.
+        var checks = CollectNullChecks(cols, mat.TargetTypeFullName);
+        var rowTarget = checks.Count > 0 ? "__row = " : "yield return ";
+        if (checks.Count > 0)
+            sb.AppendLine($"                {mat.TargetTypeFullName} __row;");
+        var body = new StringBuilder();
         string[]?[]? hoistedOrdinals = null;
         if (useColumnNames)
         {
-            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "                ");
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(body, cols, "                ");
         }
-        sb.AppendLine($"                yield return new {mat.TargetTypeFullName}(");
+        body.AppendLine($"                {rowTarget}new {mat.TargetTypeFullName}(");
         for (var i = 0; i < cols.Length; i++)
         {
             var col = cols[i];
@@ -6766,30 +6881,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // InvariantCulture call is needed.
                 ordinalExpr = $"{i}";
             }
-            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-            if (col.Convention is { } conv && conv.FactoryFullName is not null)
-            {
-                readExpr = conv.Kind switch
-                {
-                    (int)ConventionKind.Enum
-                        => $"({conv.FactoryFullName}){readExpr}",
-                    (int)ConventionKind.EnumAsString
-                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                    _ => conv.FactoryIsCtor
-                        ? $"new {conv.FactoryFullName}({readExpr})"
-                        : $"{conv.FactoryFullName}({readExpr})",
-                };
-            }
-            string expr;
-            if (col.IsNullable)
-            {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-            }
-            else
-            {
-                expr = readExpr;
-            }
-            sb.AppendLine($"                    {expr}{trailing}");
+            var expr = BuildColumnReadExpression(col, ordinalExpr);
+            body.AppendLine($"                    {expr}{trailing}");
+        }
+        EmitNullGuarded(sb, "                ", checks, "__NullColumn", body.ToString());
+        if (checks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("                yield return __row;");
         }
         sb.AppendLine("            }");
         BuildConnectionEpilogue(sb, "        ");
@@ -7322,6 +7421,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var localName = "__elem" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var declarePrefix = declareLocal ? "var " : string.Empty;
+        // #249 — each row is read inside a try whose catch names a NULL column.
+        // A local assigned inside the try is declared before it.
+        var finderName = "__NullColumn" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
         switch (el.Kind)
         {
             case MultiResultElementKind.Row:
@@ -7338,12 +7440,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     {
                         sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
                     }
+                    var rowChecks = CollectNullChecks(el.Columns, el.ElementTypeName);
+                    var rowPrefix = declarePrefix;
+                    if (rowChecks.Count > 0 && declareLocal)
+                    {
+                        sb.AppendLine($"{indent}{el.ElementTypeName} {localName};");
+                        rowPrefix = string.Empty;
+                    }
+                    var rowBody = new StringBuilder();
                     // v0.3-CLN1 — hoist GetOrdinal(<name>) per column-name-resolved column.
                     var rowHoists = HasAnyColumnName(el.Columns)
-                        ? EmitOrdinalHoistsForColumns(sb, el.Columns, indent)
+                        ? EmitOrdinalHoistsForColumns(rowBody, el.Columns, indent)
                         : null;
-                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new {el.ElementTypeName}(");
-                    EmitColumnReads(sb, el.Columns, indent + "    ", trailing: ");", rowHoists);
+                    rowBody.AppendLine($"{indent}{rowPrefix}{localName} = new {el.ElementTypeName}(");
+                    EmitColumnReads(rowBody, el.Columns, indent + "    ", trailing: ");", rowHoists);
+                    EmitNullGuarded(sb, indent, rowChecks, finderName, rowBody.ToString());
                     break;
                 }
             case MultiResultElementKind.List:
@@ -7351,12 +7462,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
                     sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
                     sb.AppendLine($"{indent}{{");
+                    var listBody = new StringBuilder();
                     // v0.3-CLN1 — hoist GetOrdinal(<name>) per row inside the loop.
                     var listHoists = HasAnyColumnName(el.Columns)
-                        ? EmitOrdinalHoistsForColumns(sb, el.Columns, indent + "    ")
+                        ? EmitOrdinalHoistsForColumns(listBody, el.Columns, indent + "    ")
                         : null;
-                    sb.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
-                    EmitColumnReads(sb, el.Columns, indent + "        ", trailing: "));", listHoists);
+                    listBody.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
+                    EmitColumnReads(listBody, el.Columns, indent + "        ", trailing: "));", listHoists);
+                    EmitNullGuarded(sb, indent + "    ", CollectNullChecks(el.Columns, el.ElementTypeName), finderName, listBody.ToString());
                     sb.AppendLine($"{indent}}}");
                     break;
                 }
@@ -7371,27 +7484,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     {
                         sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
                     }
-                    var readExpr = $"__reader.{el.GetterMethod}(0)";
-                    if (el.Convention is { } conv && conv.FactoryFullName is not null)
-                    {
-                        readExpr = conv.Kind switch
-                        {
-                            (int)ConventionKind.Enum
-                                => $"({conv.FactoryFullName}){readExpr}",
-                            (int)ConventionKind.EnumAsString
-                                => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                            _ => conv.FactoryIsCtor
-                                ? $"new {conv.FactoryFullName}({readExpr})"
-                                : $"{conv.FactoryFullName}({readExpr})",
-                        };
-                    }
+                    var readExpr = ApplyReadConvention(el.Convention, $"__reader.{el.GetterMethod}(0)");
                     if (el.IsNullable)
                     {
                         sb.AppendLine($"{indent}{declarePrefix}{localName} = __reader.IsDBNull(0) ? ({el.ElementTypeName}?)null : {readExpr};");
                     }
                     else
                     {
-                        sb.AppendLine($"{indent}{declarePrefix}{localName} = {readExpr};");
+                        if (declareLocal)
+                            sb.AppendLine($"{indent}{el.ElementTypeName} {localName};");
+                        var scalarChecks = new List<NullCheck>
+                        {
+                            new(ColumnName: null, Ordinal: 0, Member: $"tuple element '{el.TupleFieldName}'", TypeName: el.ElementTypeName),
+                        };
+                        EmitNullGuarded(sb, indent, scalarChecks, finderName, $"{indent}{localName} = {readExpr};");
                     }
                     break;
                 }
@@ -7434,29 +7540,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 ordinalExpr = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
 
-            var readExpr = $"__reader.{col.GetterMethod}({ordinalExpr})";
-            if (col.Convention is { } conv && conv.FactoryFullName is not null)
-            {
-                readExpr = conv.Kind switch
-                {
-                    (int)ConventionKind.Enum
-                        => $"({conv.FactoryFullName}){readExpr}",
-                    (int)ConventionKind.EnumAsString
-                        => $"global::System.Enum.Parse<{conv.FactoryFullName}>({readExpr})",
-                    _ => conv.FactoryIsCtor
-                        ? $"new {conv.FactoryFullName}({readExpr})"
-                        : $"{conv.FactoryFullName}({readExpr})",
-                };
-            }
-            string expr;
-            if (col.IsNullable)
-            {
-                expr = $"__reader.IsDBNull({ordinalExpr}) ? ({col.TypeName}?)null : {readExpr}";
-            }
-            else
-            {
-                expr = readExpr;
-            }
+            var expr = BuildColumnReadExpression(col, ordinalExpr);
             var lineTrailing = isLast ? trailing : ",";
             sb.AppendLine($"{indent}{expr}{lineTrailing}");
         }

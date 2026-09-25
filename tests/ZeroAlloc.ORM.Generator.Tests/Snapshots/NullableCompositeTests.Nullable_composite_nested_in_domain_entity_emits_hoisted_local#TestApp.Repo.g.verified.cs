@@ -24,25 +24,42 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            global::TestApp.Money? __total = default!;
+            try
             {
-                var __Amount_ord = __reader.GetOrdinal("Amount");
-                var __Currency_ord = __reader.GetOrdinal("Currency");
-                var __Amount_isNull = __reader.IsDBNull(__Amount_ord);
-                var __Currency_isNull = __reader.IsDBNull(__Currency_ord);
-                if (__Amount_isNull && __Currency_isNull)
-                    __total = null;
-                else if (__Amount_isNull || __Currency_isNull)
-                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
-                        "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "Amount.isNull=" + __Amount_isNull + ", " + "Currency.isNull=" + __Currency_isNull + ". All-or-nothing required.");
-                else
-                    __total = new global::TestApp.Money(
-                        __reader.GetDecimal(__Amount_ord),
-                        __reader.GetString(__Currency_ord));
+                global::TestApp.Money? __total = default!;
+                {
+                    var __Amount_ord = __reader.GetOrdinal("Amount");
+                    var __Currency_ord = __reader.GetOrdinal("Currency");
+                    var __Amount_isNull = __reader.IsDBNull(__Amount_ord);
+                    var __Currency_isNull = __reader.IsDBNull(__Currency_ord);
+                    if (__Amount_isNull && __Currency_isNull)
+                        __total = null;
+                    else if (__Amount_isNull || __Currency_isNull)
+                        throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
+                            "Nullable composite 'global::TestApp.Money' has mixed-null columns: " + "Amount.isNull=" + __Amount_isNull + ", " + "Currency.isNull=" + __Currency_isNull + ". All-or-nothing required.");
+                    else
+                        __total = new global::TestApp.Money(
+                            __reader.GetDecimal(__Amount_ord),
+                            __reader.GetString(__Currency_ord));
+                }
+                return new global::TestApp.OrderEntity(
+                    __reader.GetInt32(__reader.GetOrdinal("Id")),
+                    __total);
             }
-            return new global::TestApp.OrderEntity(
-                __reader.GetInt32(__reader.GetOrdinal("Id")),
-                __total);
+            catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+            {
+                throw __nullColumn;
+            }
+
+            [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+            {
+                if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                    return null;
+                if (__r.IsDBNull(__r.GetOrdinal("Id")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Id' is NULL, but parameter 'id' of 'TestApp.OrderEntity' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                return null;
+            }
         }
         finally
         {

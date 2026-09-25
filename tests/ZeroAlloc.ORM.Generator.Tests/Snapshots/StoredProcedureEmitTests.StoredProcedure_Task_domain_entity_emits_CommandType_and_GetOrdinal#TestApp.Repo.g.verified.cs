@@ -24,11 +24,30 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            var __Id_ord = __reader.GetOrdinal("Id");
-            var __Name_ord = __reader.GetOrdinal("Name");
-            return new global::TestApp.CustomerRow(
-                __reader.GetInt32(__Id_ord),
-                __reader.GetString(__Name_ord));
+            try
+            {
+                var __Id_ord = __reader.GetOrdinal("Id");
+                var __Name_ord = __reader.GetOrdinal("Name");
+                return new global::TestApp.CustomerRow(
+                    __reader.GetInt32(__Id_ord),
+                    __reader.GetString(__Name_ord));
+            }
+            catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+            {
+                throw __nullColumn;
+            }
+
+            [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+            {
+                if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                    return null;
+                if (__r.IsDBNull(__r.GetOrdinal("Id")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Id' is NULL, but parameter 'Id' of 'TestApp.CustomerRow' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                if (__r.IsDBNull(__r.GetOrdinal("Name")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Name' is NULL, but parameter 'Name' of 'TestApp.CustomerRow' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
+                return null;
+            }
         }
         finally
         {

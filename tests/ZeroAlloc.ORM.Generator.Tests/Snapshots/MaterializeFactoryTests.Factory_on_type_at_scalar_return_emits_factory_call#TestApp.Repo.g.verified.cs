@@ -24,9 +24,28 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Composite scalar query returned no row.");
-            return global::TestApp.Money.FromStorage(
-                __reader.GetString(0),
-                __reader.GetString(1));
+            try
+            {
+                return global::TestApp.Money.FromStorage(
+                    __reader.GetString(0),
+                    __reader.GetString(1));
+            }
+            catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+            {
+                throw __nullColumn;
+            }
+
+            [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+            {
+                if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                    return null;
+                if (__r.IsDBNull(0))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'amountText' of 'TestApp.Money.FromStorage' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
+                if (__r.IsDBNull(1))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'currency' of 'TestApp.Money.FromStorage' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
+                return null;
+            }
         }
         finally
         {

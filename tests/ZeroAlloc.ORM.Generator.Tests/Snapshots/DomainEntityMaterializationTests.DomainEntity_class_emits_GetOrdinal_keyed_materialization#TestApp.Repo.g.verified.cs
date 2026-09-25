@@ -23,13 +23,34 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            var __Id_ord = __reader.GetOrdinal("Id");
-            var __CustomerId_ord = __reader.GetOrdinal("CustomerId");
-            var __Total_ord = __reader.GetOrdinal("Total");
-            return new global::TestApp.Order(
-                __reader.GetInt32(__Id_ord),
-                __reader.GetInt32(__CustomerId_ord),
-                __reader.GetDecimal(__Total_ord));
+            try
+            {
+                var __Id_ord = __reader.GetOrdinal("Id");
+                var __CustomerId_ord = __reader.GetOrdinal("CustomerId");
+                var __Total_ord = __reader.GetOrdinal("Total");
+                return new global::TestApp.Order(
+                    __reader.GetInt32(__Id_ord),
+                    __reader.GetInt32(__CustomerId_ord),
+                    __reader.GetDecimal(__Total_ord));
+            }
+            catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+            {
+                throw __nullColumn;
+            }
+
+            [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+            {
+                if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                    return null;
+                if (__r.IsDBNull(__r.GetOrdinal("Id")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Id' is NULL, but parameter 'id' of 'TestApp.Order' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                if (__r.IsDBNull(__r.GetOrdinal("CustomerId")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'CustomerId' is NULL, but parameter 'customerId' of 'TestApp.Order' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                if (__r.IsDBNull(__r.GetOrdinal("Total")))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Total' is NULL, but parameter 'total' of 'TestApp.Order' is the non-nullable type 'decimal'. Declare it as 'decimal?' to receive null.", __inner);
+                return null;
+            }
         }
         finally
         {
