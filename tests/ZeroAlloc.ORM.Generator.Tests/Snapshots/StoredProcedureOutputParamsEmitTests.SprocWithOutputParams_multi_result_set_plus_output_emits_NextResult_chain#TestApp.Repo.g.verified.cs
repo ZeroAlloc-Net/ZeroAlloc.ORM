@@ -25,6 +25,7 @@ partial class Repo
             var __p_newOrderId = __cmd.CreateParameter();
             __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
+            __p_newOrderId.DbType = global::System.Data.DbType.Int32;
             __cmd.Parameters.Add(__p_newOrderId);
             global::System.Collections.Generic.List<global::TestApp.OrderRow> __elem0 = default!;
             global::TestApp.OrderRow __elem1 = default!;

@@ -95,6 +95,72 @@ public sealed class PostgresStoredProcedureTests
     }
 
     [Fact]
+    public async Task Procedure_with_output_parameters_of_each_type_round_trips()
+    {
+        // v2.0, #235 — the same shape as SqlServerStoredProcedureTests. Every
+        // output now carries a DbType and the text output Size = -1. Npgsql
+        // writes NULL for each OUT argument and fills the parameters from the
+        // row the CALL returns, so the values are unaffected.
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(@"
+            CREATE PROCEDURE output_types_proc(
+                IN seed integer,
+                OUT count integer,
+                OUT label text,
+                OUT total numeric(18,4),
+                OUT rounded numeric,
+                OUT traceid uuid,
+                OUT at timestamp)
+                LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                count := seed * 2;
+                label := repeat('x', 5000);
+                total := 1234.5678;
+                rounded := 1234.5678;
+                traceid := '6f9619ff-8b86-d011-b42d-00c04fc964ff';
+                at := '2024-01-02 03:04:05.123456';
+            END;
+            $$;").ConfigureAwait(false);
+
+        var repo = new StoredProcedureRepo(fx.Connection);
+        var result = await repo.OutputTypesAsync(
+            seed: 21, count: 0, label: "", total: 0m, rounded: 0m,
+            traceid: Guid.Empty, at: default, CancellationToken.None).ConfigureAwait(false);
+
+        result.Count.Should().Be(42);
+        result.Label.Should().Be(new string('x', 5000));
+        result.Total.Should().Be(1234.5678m);
+        result.Rounded.Should().Be(1234.5678m, "Npgsql returns a numeric OUT value exactly without a Scale");
+        result.Traceid.Should().Be(new Guid("6f9619ff-8b86-d011-b42d-00c04fc964ff"));
+        result.At.Should().Be(new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Unspecified).AddTicks(1_234_560));
+    }
+
+    [Fact]
+    public async Task Procedure_with_inout_parameters_sends_and_reads_back()
+    {
+        // v2.0, #235 — [Param(Direction = InputOutput)] sends the argument, so an
+        // INOUT parameter sees it; with the default Output direction Npgsql would
+        // write NULL for it.
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(@"
+            CREATE PROCEDURE input_output_proc(INOUT counter integer, INOUT label text)
+                LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                counter := counter + 1;
+                label := label || '!';
+            END;
+            $$;").ConfigureAwait(false);
+
+        var repo = new StoredProcedureRepo(fx.Connection);
+        var (counter, label) = await repo.InputOutputAsync(41, "hi", CancellationToken.None).ConfigureAwait(false);
+
+        counter.Should().Be(42);
+        label.Should().Be("hi!");
+    }
+
+    [Fact]
     public async Task MultiResultSet_via_function_calls_returns_count_and_rows()
     {
         await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);

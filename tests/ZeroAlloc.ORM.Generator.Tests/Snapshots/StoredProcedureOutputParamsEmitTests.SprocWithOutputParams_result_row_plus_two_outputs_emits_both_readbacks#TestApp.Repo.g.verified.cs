@@ -25,10 +25,12 @@ partial class Repo
             var __p_newOrderId = __cmd.CreateParameter();
             __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
+            __p_newOrderId.DbType = global::System.Data.DbType.Int32;
             __cmd.Parameters.Add(__p_newOrderId);
             var __p_traceId = __cmd.CreateParameter();
             __p_traceId.ParameterName = "traceId";
             __p_traceId.Direction = global::System.Data.ParameterDirection.Output;
+            __p_traceId.DbType = global::System.Data.DbType.Guid;
             __cmd.Parameters.Add(__p_traceId);
             global::TestApp.OrderRow __elem0 = default!;
             await using (var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false))

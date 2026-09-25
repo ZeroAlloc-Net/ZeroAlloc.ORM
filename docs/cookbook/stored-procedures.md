@@ -90,9 +90,12 @@ var (order, newId) = await repo.InsertAsync(customerId: 42, newOrderId: 0, ct)
 // `newId` carries the value the procedure assigned to `@NewOrderId OUTPUT`.
 ```
 
-The argument you pass for an output-bound parameter is used to seed
-`Parameter.Value` before the call; most procedures ignore the seed, but the
-binding is preserved for the rare procedure that uses it as a hint.
+The argument you pass for an output-bound parameter is **not sent**: the
+parameter is bound as `Direction = Output` with no value, and SQL Server and
+PostgreSQL both see `NULL` as its initial value. When the procedure reads the
+initial value, as an `INOUT` or a T-SQL `OUTPUT` parameter that is incremented
+can, mark it `[Param(Direction = ParameterDirection.InputOutput)]`; see
+[Output parameter types and facets](#output-parameter-types-and-facets).
 
 ### Reader-drain semantics
 
@@ -138,6 +141,93 @@ Call site:
 ```csharp
 var (newId, status) = await allocator.AllocateAsync(0, 0, ct).ConfigureAwait(false);
 ```
+
+## Output parameter types and facets
+
+SQL Server checks the type and size of every output parameter before it runs
+the procedure, so the generator declares them for you:
+
+- **`DbType`** comes from the tuple field's type, through the same primitive
+  table the generator uses to read values back. Value objects and enums use
+  the primitive they store as.
+
+  | Tuple field type | `DbType` |
+  |------------------|----------|
+  | `int`, `long`, `short`, `byte`, `bool` | `Int32`, `Int64`, `Int16`, `Byte`, `Boolean` |
+  | `decimal`, `double`, `float` | `Decimal`, `Double`, `Single` |
+  | `string` | `String` |
+  | `byte[]` | `Binary` |
+  | `Guid` | `Guid` |
+  | `DateTime` | `DateTime2` |
+  | `DateTimeOffset`, `TimeSpan` | `DateTimeOffset`, `Time` |
+
+  `DateTime` maps to `DateTime2` because on SQL Server `DbType.DateTime` is the
+  legacy `datetime` type, which rounds a `datetime2` output to 1/300 of a
+  second.
+- **`Size = -1`** for `string` and `byte[]` outputs, which SQL Server reads as
+  `MAX`. It accepts a `-1` parameter for an `NVARCHAR(50)` output too.
+- **No precision or scale.** A guessed scale is as wrong as a missing one, so
+  set it yourself for a `decimal` output. See below.
+
+Override any of these with `[Param]` on the parameter:
+
+```csharp
+// CREATE PROCEDURE dbo.usp_Quote
+//     @customerId INT,
+//     @code VARCHAR(20) OUTPUT,
+//     @total DECIMAL(18,4) OUTPUT,
+//     @attempts INT OUTPUT
+[StoredProcedure("dbo.usp_Quote")]
+public partial Task<(string Code, decimal Total, int Attempts)> QuoteAsync(
+    int customerId,
+    [Param(DbType = DbType.AnsiString, Size = 20)] string code,
+    [Param(Precision = 18, Scale = 4)] decimal total,
+    [Param(Direction = ParameterDirection.InputOutput)] int attempts,
+    CancellationToken ct);
+```
+
+| `[Param]` member | Effect |
+|------------------|--------|
+| `DbType` | Replaces the inferred `DbType`. |
+| `Size` | Replaces the default `-1`. A fixed-length `DbType`, `StringFixedLength` or `AnsiStringFixedLength`, has no default and needs one: `NCHAR(10)` is `Size = 10`. |
+| `Precision`, `Scale` | Set on the parameter. There is no default. |
+| `Direction` | `Output`, the default, or `InputOutput` to send the argument as the initial value. |
+
+### `decimal` outputs need a scale on SQL Server
+
+SqlClient declares a `decimal` output without a scale as scale 0, and the
+value the procedure assigns comes back **rounded to a whole number** without
+an error: `1234.5678` becomes `1235`. Setting `Precision` alone does not help;
+`Scale` does. PostgreSQL returns the value exactly either way.
+
+The generator reports [ZAO065](../diagnostics/ZAO065.md), a **warning**, on a
+`decimal` output without `Scale`. Set `Precision` and `Scale` to match the
+procedure's declaration. A project whose procedures run only on PostgreSQL can
+turn it off with `dotnet_diagnostic.ZAO065.severity = none` in
+`.editorconfig`.
+
+### Facets on input parameters
+
+The same members apply to an input parameter when you write them. SqlClient
+then declares the parameter with that size instead of one derived from each
+value, Npgsql and Microsoft.Data.Sqlite truncate a longer string or byte array
+to a positive `Size`, and `DbType` replaces what the provider would infer. An
+input parameter without them binds exactly as before.
+
+`Direction` applies only to a parameter that a tuple field reads back. No
+facet, `DbType` included, applies to a composite parameter such as `Money`,
+which binds as one parameter per field, and no `[Param]` member applies to a
+`CancellationToken`, transaction or BulkInsert collection parameter.
+[ZAO066](../diagnostics/ZAO066.md) reports each of these, and an output whose
+size SqlClient would reject.
+
+### What `Size = -1` means on each provider
+
+| Provider | `Size = -1` |
+|----------|-------------|
+| SQL Server (Microsoft.Data.SqlClient 7.1) | `MAX`: `NVARCHAR(MAX)`, `VARBINARY(MAX)`. `0` on a variable-length output throws "the Size property has an invalid size of 0". |
+| PostgreSQL (Npgsql 10) | No limit. A positive size truncates an input value; an `OUT` argument is sent as `NULL`, so it has no effect there. |
+| SQLite (Microsoft.Data.Sqlite 10) | No limit. A positive size truncates an input value. SQLite has no stored procedures, and the provider rejects `Direction = Output`. |
 
 ## Recipe 4 — Multi-result-set sproc
 
@@ -214,7 +304,13 @@ notable differences:
 - **PostgreSQL output parameters.** Procedures with OUT parameters work
   through Npgsql via `Parameter.Direction = Output` — same generator emit as
   SQL Server. The caller must pass placeholder values for OUT positions; the
-  CALL command's wire syntax includes them as `NULL` markers.
+  CALL command's wire syntax includes them as `NULL` markers. An `INOUT`
+  parameter that reads its initial value needs
+  `[Param(Direction = ParameterDirection.InputOutput)]`, or it sees `NULL`.
+- **SQL Server output parameters.** SqlClient needs a `DbType` and, for a
+  string or binary output, a non-zero `Size` on every output parameter. The
+  generator sets both; a `decimal` output also needs `[Param(Scale = ...)]`.
+  See [Output parameter types and facets](#output-parameter-types-and-facets).
 - **SQL Server `RETURN value`.** SQL Server sprocs can return an `int` via
   `RETURN value` alongside any result sets. The generator treats the return
   value as **discarded by default**. If you need to capture it, add a tuple
@@ -226,9 +322,9 @@ notable differences:
   [`commands.md`](commands.md#provider-specific-identity-sql).
 - **Sqlite has no native stored procedures.** There's no `CREATE PROCEDURE`
   syntax, and the closest equivalents (views, triggers, table-valued user
-  functions) don't route through `CommandType.StoredProcedure`. Integration
-  tests for `[StoredProcedure]` ship against a Postgres / SQL Server fixture
-  in a future release; v0.4 verifies the emit shape via snapshot tests only.
+  functions) don't route through `CommandType.StoredProcedure`. The
+  `[StoredProcedure]` integration tests run against PostgreSQL and SQL Server
+  containers instead.
 - **MySQL sprocs.** MySQL stored procedures use `CALL proc_name(...)` and
   expose output parameters through MySql.Data / MySqlConnector's
   `Parameter.Direction = Output`. The generator's named-tuple convention
@@ -262,6 +358,10 @@ identifier folding, batch support).
   or whitespace-only procedure name.
 - [ZAO062](../diagnostics/ZAO062.md) — Named-tuple field doesn't match any
   C# parameter — likely typo'd output binding.
+- [ZAO065](../diagnostics/ZAO065.md) — `decimal` output parameter without
+  `[Param(Scale = ...)]`; SQL Server rounds it to a whole number.
+- [ZAO066](../diagnostics/ZAO066.md) — `[Param]` facet or direction that
+  cannot apply to the parameter.
 
 ## See also
 

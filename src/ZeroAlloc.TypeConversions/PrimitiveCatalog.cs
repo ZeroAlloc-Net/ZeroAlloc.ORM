@@ -76,6 +76,42 @@ public static class PrimitiveCatalog
                 $"PrimitiveCatalog.GetScalarCastTypeFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
         };
 
+    // Map an IDataReader.GetXxx method name, as GetScalarReaderMethod returns it, to the
+    // System.Data.DbType member a parameter of that type declares. Returns the member
+    // name ("Int32") for the generator to emit as `global::System.Data.DbType.Int32`.
+    //
+    // Keyed on the reader, not the ITypeSymbol, so value objects and enums map through
+    // the primitive they store as, the same way reads and scalar casts do.
+    //
+    // DateTime maps to DateTime2, not DateTime. On SQL Server DbType.DateTime is the
+    // legacy `datetime`, which rounds to 1/300 s, so a datetime2 output declared that
+    // way loses its fraction. Since Npgsql 6, DbType.DateTime maps to `timestamptz`
+    // and DbType.DateTime2 to `timestamp`, which suits an Unspecified or Local
+    // DateTime, so DateTime2 is the right choice there too.
+    //
+    // Throws for an unrecognized reader, like GetScalarCastTypeFromReader: the table is
+    // populated by GetScalarReaderMethod, so a miss is a generator bug.
+    public static string GetDbTypeNameFromReader(string? readerMethod)
+        => readerMethod switch
+        {
+            "GetInt32" => "Int32",
+            "GetInt64" => "Int64",
+            "GetInt16" => "Int16",
+            "GetByte" => "Byte",
+            "GetBoolean" => "Boolean",
+            "GetDecimal" => "Decimal",
+            "GetDouble" => "Double",
+            "GetFloat" => "Single",
+            "GetString" => "String",
+            "GetDateTime" => "DateTime2",
+            "GetGuid" => "Guid",
+            "GetFieldValue<global::System.DateTimeOffset>" => "DateTimeOffset",
+            "GetFieldValue<global::System.TimeSpan>" => "Time",
+            "GetFieldValue<byte[]>" => "Binary",
+            _ => throw new InvalidOperationException(
+                $"PrimitiveCatalog.GetDbTypeNameFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
+        };
+
     // byte[] is the canonical BLOB carrier in ADO.NET. It is recognized as an
     // array of SpecialType.System_Byte; the array itself has no SpecialType.
     private static bool IsByteArray(ITypeSymbol type)
