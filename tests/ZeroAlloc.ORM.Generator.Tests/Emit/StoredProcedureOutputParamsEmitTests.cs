@@ -138,8 +138,8 @@ public class StoredProcedureOutputParamsEmitTests
         // OptionalCount`) must emit a DBNull guard in the readback expression.
         // Without the guard the direct Convert.ToInt32 call (or the cast
         // fallback for Guid etc.) would throw InvalidCastException when the
-        // procedure leaves the output parameter at DBNull. The `is DBNull ?
-        // null : ...` ternary keeps the contract symmetric with scalar
+        // procedure leaves the output parameter at DBNull. The `is null or
+        // DBNull ? null : ...` ternary keeps the contract symmetric with scalar
         // materialization's null tolerance. Non-nullable output positions
         // throw ZeroAllocOrmMaterializationException on DBNull instead (#244) —
         // the adopter opts in to NULL tolerance by declaring `T?`.
@@ -202,7 +202,8 @@ public class StoredProcedureOutputParamsEmitTests
         // parameter, for a string, a value type, an enum, a string-stored enum
         // and a value object alike. Before, a string silently became "" through
         // Convert.ToString and a value type threw a bare InvalidCastException.
-        // The nullable elements keep their `is DBNull ? null : ...` readback.
+        // The nullable elements keep their `is null or DBNull ? null : ...`
+        // readback.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -220,6 +221,30 @@ public class StoredProcedureOutputParamsEmitTests
                 [StoredProcedure("dbo.usp_Outputs")]
                 public partial Task<(string Label, int Count, Status State, Named Name, OrderId OrderRef, string? Note, int? Maybe)> RunAsync(
                     string label, int count, Status state, Named name, OrderId orderRef, string? note, int? maybe, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public void SprocWithOutputParams_null_guard_names_the_bound_parameter_name_override()
+    {
+        // #244 review — with [Param(Name = "new_id")] the DbParameter is bound as
+        // `new_id`, so the NULL-output message must name `new_id`, the parameter
+        // the procedure declares, not the C# name `newId`.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("dbo.usp_AllocateId")]
+                public partial Task<(int NewId, int? Status)> AllocateAsync(
+                    [Param(Name = "new_id")] int newId, int? status, CancellationToken ct);
             }
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));

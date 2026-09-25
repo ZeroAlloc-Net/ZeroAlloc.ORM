@@ -106,9 +106,12 @@ receives depends on whether you declared it nullable:
   reads back as `null`.
 - **Non-nullable element** (`string`, `int`, an enum, a value object): `NULL`
   throws `ZeroAllocOrmMaterializationException`. The message names the
-  procedure and the output parameter, for example
-  `Stored procedure 'usp_InsertOrder' returned NULL for output parameter
-  'newOrderId', but tuple element 'NewOrderId' is the non-nullable type 'int'.`
+  procedure and the output parameter, as bound, so a `[Param(Name = ...)]`
+  override is the name you see. For example:
+
+  ```text
+  Stored procedure 'usp_InsertOrder' returned NULL for output parameter 'newOrderId', but tuple element 'NewOrderId' is the non-nullable type 'int'. Declare it as 'int?' to receive null.
+  ```
 
 A non-nullable `string` output that is `NULL` **now throws instead of returning
 `""`**; before this change the empty string silently replaced the `NULL`.

@@ -5175,7 +5175,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             else
             {
-                EmitSprocOutputNullGuard(sb, m.ProcedureName, op, paramLocal, "            ");
+                EmitSprocOutputNullGuard(sb, m.ProcedureName, ResolveBoundParameterName(m, op), op, paramLocal, "            ");
                 sb.AppendLine($"            var {local} = {expr};");
             }
         }
@@ -5261,9 +5261,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // wrote the parameter cannot slip through either. The exception type is the
     // one the ORM uses for every other value it cannot materialize, and the
     // message names the procedure, the parameter and the escape hatch.
+    // The name the DbParameter is bound under, so the NULL-output message names
+    // the parameter the procedure declares. Mirrors the binding emit: the
+    // `[Param(Name = ...)]` override wins over the C# name, and the lookup is
+    // case-insensitive like the output-parameter map EmitSprocWithOutputParams
+    // hands to the binding.
+    private static string ResolveBoundParameterName(QueryMethodModel m, SprocOutputParam op)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (string.Equals(p.Name, op.MatchingParameterName, StringComparison.OrdinalIgnoreCase))
+                return p.ParamNameOverride ?? p.Name;
+        }
+        return op.MatchingParameterName;
+    }
+
     private static void EmitSprocOutputNullGuard(
         StringBuilder sb,
         string procedureName,
+        string boundParameterName,
         SprocOutputParam op,
         string paramLocal,
         string indent)
@@ -5273,7 +5289,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             : op.TypeName;
         var message =
             $"Stored procedure '{procedureName}' returned NULL for output parameter " +
-            $"'{op.MatchingParameterName}', but tuple element '{op.TupleFieldName}' is the " +
+            $"'{boundParameterName}', but tuple element '{op.TupleFieldName}' is the " +
             $"non-nullable type '{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
         sb.AppendLine($"{indent}if ({paramLocal}.Value is null or global::System.DBNull)");
         sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(message, quote: true)});");
