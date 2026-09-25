@@ -415,11 +415,32 @@ and `applied_at` by bare name.
 ### NULL semantics
 
 A `DBNull` in a non-nullable column position throws
-`ZeroAllocOrmMaterializationException` on every provider. The check is
-**generator-emitted**, not provider-dependent — no provider silently
-coerces `NULL` to `0` / `""` / `default`. To accept NULLs, mark the
-column type nullable in the row record: `decimal? Total`,
-`string? PhoneNumber`.
+`ZeroAllocOrmMaterializationException` on every provider, naming the column,
+the parameter it binds to and the type; see
+[flat-row](flat-row.md#recipe-3--single-row-read-with-nullable-columns).
+To accept NULLs, mark the column type nullable in the row record:
+`decimal? Total`, `string? PhoneNumber`.
+
+The check is **generator-emitted** and runs only on failure, so a row without
+a NULL pays nothing for it. Every provider throws when a typed getter meets a
+NULL, and the generated code catches that exception around the row:
+
+| Provider | Exception for a NULL read | Names |
+| --- | --- | --- |
+| SqlClient | `SqlNullValueException` | nothing |
+| Microsoft.Data.Sqlite | `InvalidOperationException` | the ordinal |
+| Npgsql | `InvalidCastException` | the column |
+
+It then looks for a non-nullable column that is NULL. If it finds one, it
+throws `ZeroAllocOrmMaterializationException` with the provider's exception as
+`InnerException`. If no non-nullable column of the row is NULL, the provider's
+exception propagates unchanged, so a cast error such as text read into an
+`int` surfaces as itself. If a row has both a cast error and a NULL in a
+non-nullable column, the NULL column is reported and the cast error is kept as
+`InnerException`.
+
+A column read by position takes its name from the reader, so Postgres
+reports it in the lower case it folds unquoted identifiers to.
 
 ### Connection ownership
 

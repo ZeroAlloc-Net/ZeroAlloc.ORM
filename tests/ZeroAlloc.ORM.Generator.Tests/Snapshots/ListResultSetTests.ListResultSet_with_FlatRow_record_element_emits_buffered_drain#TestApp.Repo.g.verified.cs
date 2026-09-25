@@ -28,10 +28,31 @@ partial class Repo
             var __list = new global::System.Collections.Generic.List<global::TestApp.OrderListRow>();
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                __list.Add(new global::TestApp.OrderListRow(
-                    __reader.GetInt32(0),
-                    __reader.GetInt32(1),
-                    __reader.GetDecimal(2)));
+                try
+                {
+                    __list.Add(new global::TestApp.OrderListRow(
+                        __reader.GetInt32(0),
+                        __reader.GetInt32(1),
+                        __reader.GetDecimal(2)));
+                }
+                catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+                {
+                    throw __nullColumn;
+                }
+
+                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+                {
+                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                        return null;
+                    if (__r.IsDBNull(0))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.OrderListRow' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                    if (__r.IsDBNull(1))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'CustomerId' of 'TestApp.OrderListRow' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                    if (__r.IsDBNull(2))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(2) + "' is NULL, but parameter 'Total' of 'TestApp.OrderListRow' is the non-nullable type 'decimal'. Declare it as 'decimal?' to receive null.", __inner);
+                    return null;
+                }
             }
             return __list;
         }

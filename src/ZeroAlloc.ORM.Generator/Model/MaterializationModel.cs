@@ -57,7 +57,10 @@ internal sealed record ConventionInfo(
 //
 //   GetterMethod -- IDataReader.GetXxx method name (e.g. "GetInt32").
 //   IsNullable   -- ctor parameter type is a nullable reference or Nullable<T>;
-//                   emit wraps the GetXxx call in an IsDBNull(N) guard.
+//                   emit wraps the GetXxx call in an IsDBNull(N) guard that maps
+//                   NULL to null. When clear, the column is read directly and a
+//                   NULL is reported by the row's catch, naming the column and
+//                   CtorArgName (#249).
 //   TypeName     -- fully-qualified parameter type display, UNWRAPPED (no trailing
 //                   `?`, reference-nullability annotation stripped). The emit
 //                   appends `?` based on IsNullable when it needs to cast a null
@@ -87,9 +90,10 @@ internal sealed record ConventionInfo(
 //                   (e.g. "Amount" / "Currency" for a `Money(decimal Amount,
 //                   string Currency)` inner column). Used as a debug-friendly
 //                   fallback for the mixed-null exception message when
-//                   ColumnName is null (FlatRow positional path). Null on
-//                   non-composite outer columns where no meaningful inner
-//                   ctor-arg name applies.
+//                   ColumnName is null (FlatRow positional path). #249 sets it
+//                   on FlatRow and DomainEntity leaf columns too, to the row
+//                   type's ctor parameter name, so the NULL-column exception
+//                   can name the parameter a non-nullable column binds to.
 // EquatableArray<ColumnBinding>.default is IsDefault==true with zero heap allocation;
 // non-composite leaf bindings carry this field for free (no per-binding empty-array
 // instance is materialized when InnerColumns is unused).

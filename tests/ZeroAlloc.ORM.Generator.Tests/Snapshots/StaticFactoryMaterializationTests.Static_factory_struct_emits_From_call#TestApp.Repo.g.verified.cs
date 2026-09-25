@@ -19,9 +19,28 @@ partial class Repo
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             if (!await __reader.ReadAsync(ct).ConfigureAwait(false))
                 return null;
-            return new global::TestApp.GameRow(
-                __reader.GetInt32(0),
-                global::TestApp.Score.From(__reader.GetInt32(1)));
+            try
+            {
+                return new global::TestApp.GameRow(
+                    __reader.GetInt32(0),
+                    global::TestApp.Score.From(__reader.GetInt32(1)));
+            }
+            catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+            {
+                throw __nullColumn;
+            }
+
+            [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+            static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+            {
+                if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                    return null;
+                if (__r.IsDBNull(0))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.GameRow' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                if (__r.IsDBNull(1))
+                    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'Score' of 'TestApp.GameRow' is the non-nullable type 'TestApp.Score'. Declare it as 'TestApp.Score?' to receive null.", __inner);
+                return null;
+            }
         }
         finally
         {

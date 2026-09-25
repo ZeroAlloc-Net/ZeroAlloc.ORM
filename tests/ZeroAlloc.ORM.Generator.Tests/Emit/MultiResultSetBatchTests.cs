@@ -32,4 +32,25 @@ public class MultiResultSetBatchTests
             "}\n";
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    // #249 — a non-nullable scalar element throws on NULL naming the column and
+    // the tuple element; the nullable one reads NULL as null.
+    [Fact]
+    public void Tuple_with_scalar_elements_guards_the_non_nullable_one()
+    {
+        var source =
+            "using System.Data.Async;\n" +
+            "using System.Threading;\n" +
+            "using System.Threading.Tasks;\n" +
+            "using ZeroAlloc.ORM;\n" +
+            "\n" +
+            "namespace TestApp;\n" +
+            "\n" +
+            "public sealed partial class Repo(IAsyncDbConnection connection)\n" +
+            "{\n" +
+            "    [Query(\"SELECT COUNT(*) FROM Orders; SELECT MAX(Total) FROM Orders;\", Batch = BatchMode.Always)]\n" +
+            "    public partial Task<(int Count, decimal? MaxTotal)> GetStatsAsync(CancellationToken ct);\n" +
+            "}\n";
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }
