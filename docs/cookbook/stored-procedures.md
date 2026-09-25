@@ -329,6 +329,11 @@ notable differences:
   CALL command's wire syntax includes them as `NULL` markers. An `INOUT`
   parameter that reads its initial value needs
   `[Param(Direction = ParameterDirection.InputOutput)]`, or it sees `NULL`.
+- **PostgreSQL date and time outputs.** Npgsql returns a `timestamptz`
+  output as a UTC `DateTime`, a `time` as `TimeOnly` and a `date` as
+  `DateOnly`. The generator converts them for a `DateTimeOffset`, `TimeSpan`
+  or `DateTime` tuple field. See
+  [Date and time outputs](provider-quirks.md#date-and-time-outputs).
 - **SQL Server output parameters.** SqlClient needs a `DbType` and, for a
   string or binary output, a non-zero `Size` on every output parameter. The
   generator sets both; a `decimal` output also needs `[Param(Scale = ...)]`.

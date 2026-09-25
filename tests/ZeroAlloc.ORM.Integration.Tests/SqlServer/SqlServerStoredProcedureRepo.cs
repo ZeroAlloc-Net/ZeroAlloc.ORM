@@ -41,6 +41,25 @@ public sealed partial class SqlServerStoredProcedureRepo(IAsyncDbConnection conn
         StringStatus named,
         CancellationToken ct);
 
+    // #245, #247 — the temporal outputs PostgresTemporalOutputTests covers.
+    // SqlClient hands each one back as the tuple element's own type: datetimeoffset
+    // as DateTimeOffset, time as TimeSpan and date as DateTime.
+    [StoredProcedure("dbo.temporal_output_proc")]
+    public partial Task<(DateTimeOffset Stamp, DateTimeOffset? Missing, TimeSpan Clock, TimeSpan? Late, DateTime Day)> TemporalOutputsAsync(
+        DateTimeOffset stamp,
+        DateTimeOffset? missing,
+        TimeSpan clock,
+        TimeSpan? late,
+        DateTime day,
+        CancellationToken ct);
+
+    // A scalar command reads through the same conversion as an output.
+    [Command("SELECT CAST('2024-01-02T03:04:05.1234567+02:00' AS DATETIMEOFFSET(7))", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset> ScalarStampAsync(CancellationToken ct);
+
+    [Command("SELECT CAST('13:14:15.1234567' AS TIME(7))", Kind = CommandKind.Scalar)]
+    public partial Task<TimeSpan> ScalarClockAsync(CancellationToken ct);
+
     // Nullable outputs: the procedure leaves `missing` and `note` NULL and sets
     // `present`.
     [StoredProcedure("dbo.nullable_output_proc")]

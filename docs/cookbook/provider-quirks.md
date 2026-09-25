@@ -183,6 +183,25 @@ bare `ParameterName` binds either form. For `CommandType.StoredProcedure`
 Npgsql writes the `CALL` itself with named arguments, `"name" := $1`, again
 from the trimmed name. See [Parameter prefixes](#parameter-prefixes).
 
+### Date and time outputs
+
+A stored-procedure output and a `[Command(Kind = Scalar)]` result arrive as
+the column's default CLR type, not the type you asked for. Npgsql's defaults
+for three temporal types differ from the tuple field or return type they
+usually map to, so the generator converts them to the value a column read
+would produce:
+
+| Postgres type | Npgsql returns | Read as | Conversion |
+|---------------|----------------|---------|------------|
+| `timestamptz` | UTC `DateTime` | `DateTimeOffset` | The same instant, offset `+00:00` |
+| `time` | `TimeOnly` | `TimeSpan` | The time of day |
+| `date` | `DateOnly` | `DateTime` | Midnight, `DateTimeKind.Unspecified` |
+
+An `interval` output comes back as `TimeSpan` already, including values of a
+day or more. A `timestamp` output read as `DateTimeOffset` throws
+`InvalidCastException`, as a `timestamp` column does: without a time zone it
+names no instant.
+
 ### `BulkInsert` parameter cap
 
 Postgres' per-statement parameter cap is **65535** (an `int16` index on
