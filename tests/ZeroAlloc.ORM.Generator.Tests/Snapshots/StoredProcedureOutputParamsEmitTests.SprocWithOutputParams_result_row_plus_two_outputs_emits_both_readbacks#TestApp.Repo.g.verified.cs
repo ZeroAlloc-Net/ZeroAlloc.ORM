@@ -52,7 +52,7 @@ partial class Repo
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             if (__p_traceId.Value is null or global::System.DBNull)
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Stored procedure 'usp_InsertOrderWithTrace' returned NULL for output parameter 'traceId', but tuple element 'TraceId' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.");
-            var __out_TraceId = (global::System.Guid)__p_traceId.Value!;
+            var __out_TraceId = (__p_traceId.Value! switch { global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] { Length: 16 } __v => new global::System.Guid(__v), byte[] __v => global::System.Guid.Parse(global::System.Text.Encoding.UTF8.GetString(__v)), var __v => (global::System.Guid)__v });
             return (__elem0, __out_NewOrderId, __out_TraceId);
         }
         finally
