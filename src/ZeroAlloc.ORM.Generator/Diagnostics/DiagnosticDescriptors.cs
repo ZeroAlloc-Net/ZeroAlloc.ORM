@@ -293,4 +293,17 @@ internal static class DiagnosticDescriptors
         "ZAO080", "At most one IAsyncDbTransaction parameter",
         "Method '{0}' has {1} IAsyncDbTransaction parameters; only the first is used.",
         DiagnosticSeverity.Warning);
+
+    // v2.0 — issue #238. A repository declared inside one or more containing
+    // types needs the generated partial half wrapped in a matching partial
+    // declaration at every level so it joins the user's nested type. ZAO004
+    // already requires the repository type itself to be partial; ZAO081 extends
+    // the same requirement to every type that CONTAINS the repository type.
+    //
+    // MessageArgs:
+    //   {0} = the non-partial containing type's fully-qualified display name
+    public static readonly DiagnosticDescriptor ZAO081_ContainingTypeNotPartial = Make(
+        "ZAO081", "Containing type must be partial",
+        "Type '{0}' contains a nested repository but is not declared partial. Add the 'partial' modifier so the generator can emit a matching partial declaration around the generated code.",
+        DiagnosticSeverity.Error);
 }

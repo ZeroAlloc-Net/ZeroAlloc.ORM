@@ -4,6 +4,8 @@
 
 namespace App.Feature;
 
+public partial class OuterOne
+{
 partial class Repository
 {
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
@@ -24,4 +26,5 @@ partial class Repository
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
         }
     }
+}
 }
