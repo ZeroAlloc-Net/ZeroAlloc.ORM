@@ -182,7 +182,35 @@ internal sealed record ParameterInfo(
     // derives from the C# parameter name and each field's PascalCased property
     // name — records auto-generate properties matching ctor arg names.
     EquatableArray<CompositeBindingField> CompositeFields = default,
-    string? CompositeTypeFullName = null);
+    string? CompositeTypeFullName = null,
+    // v2.0, #235 — the facets written on `[Param]`. Null when the parameter has no
+    // `[Param]` facet at all, so an unannotated parameter's emit is unchanged.
+    // Carried on every parameter, including the CancellationToken, transaction and
+    // BulkInsert collection parameters that bind no DbParameter, so ZAO066 can
+    // report a member written where nothing reads it.
+    ParamFacets? Facets = null,
+    // v2.0, #235 — the BulkInsert row collection. It binds one DbParameter per
+    // placeholder and row, never one for itself, so no `[Param]` member applies.
+    bool IsBulkInsertCollection = false);
+
+// v2.0, #235 — `[Param]` members that shape the DbParameter's type. Each field is
+// null unless the adopter wrote the member, so the emit sets only what was asked
+// for; the attribute's own defaults (0, DbType.Object, Input) never reach it.
+//
+//   DbTypeExpression -- C# expression for `[Param(DbType = X)]`, such as
+//                 `global::System.Data.DbType.AnsiString`. DbType.Object, the
+//                 "let the provider infer" default, is null.
+//   Size / Precision / Scale -- copied verbatim onto the DbParameter.
+//   Direction  -- `System.Data.ParameterDirection` member name from
+//                 `[Param(Direction = X)]`. Only Output and InputOutput on a
+//                 tuple-matched stored-procedure parameter reach the emit;
+//                 every other use is ZAO066.
+internal sealed record ParamFacets(
+    string? DbTypeExpression,
+    int? Size,
+    int? Precision,
+    int? Scale,
+    string? Direction);
 
 // v0.5 Phase B — one inner field of a composite parameter (e.g. `Amount` /
 // `Currency` of a `Money(decimal Amount, string Currency)` parameter).

@@ -22,7 +22,8 @@ namespace ZeroAlloc.ORM.Generator.Model;
 
 // One output-parameter tuple position. Emit semantics:
 //   1. The C# parameter `MatchingParameterName` is bound with
-//      Direction = ParameterDirection.Output.
+//      Direction = ParameterDirection.Output, or InputOutput when its
+//      `[Param(Direction = ...)]` says so, and a DbType from DbTypeName.
 //   2. After the command runs (reader drained + disposed, or ExecuteNonQueryAsync
 //      returned), the parameter's `.Value` is unboxed through
 //      BuildScalarConvertExpression keyed on TypeName and wrapped via the
@@ -35,7 +36,7 @@ namespace ZeroAlloc.ORM.Generator.Model;
 //                                 TupleElementOrder on the parent model.
 //   MatchingParameterName     -- name of the matching C# parameter (e.g.
 //                                 "newOrderId"). The emit uses this to:
-//                                  * format the DbParameter name (`@newOrderId`)
+//                                  * format the DbParameter name (`newOrderId`)
 //                                  * locate the captured `__p_newOrderId` local
 //   TypeName                  -- fully-qualified UNWRAPPED type display of the
 //                                 tuple element. Used by BuildScalarConvertExpression
@@ -48,12 +49,19 @@ namespace ZeroAlloc.ORM.Generator.Model;
 //                                 emit may guard `.Value` for DBNull when set.
 //   Convention                -- ConventionInfo for value-object / enum / etc.
 //                                 wrapping. Null for bare primitives.
+//   DbTypeName                -- v2.0, #235. `System.Data.DbType` member name
+//                                 the output DbParameter declares, from
+//                                 PrimitiveCatalog.GetDbTypeNameFromReader on the
+//                                 element's reader. SqlClient validates an output
+//                                 parameter's type and size before it sends the
+//                                 call, so leaving it unset fails on SQL Server.
 internal sealed record SprocOutputParam(
     string TupleFieldName,
     string MatchingParameterName,
     string TypeName,
     bool IsNullable,
-    ConventionInfo? Convention);
+    ConventionInfo? Convention,
+    string DbTypeName);
 
 // Discriminator for TupleElementOrder entries — distinguishes "this slot is the
 // i-th OUTPUT element" vs "this slot is the i-th RESULT element". The emit walks

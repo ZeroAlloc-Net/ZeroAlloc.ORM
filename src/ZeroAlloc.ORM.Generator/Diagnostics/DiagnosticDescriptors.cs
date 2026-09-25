@@ -249,6 +249,42 @@ internal static class DiagnosticDescriptors
         "Method '{0}' has [StoredProcedure(..., Batch = {1})] but stored procedures encapsulate their own batching semantics. The Batch value is ignored. Use BatchMode.Never (the default) or remove the explicit value.",
         DiagnosticSeverity.Info);
 
+    // v2.0, #235 — a decimal output or input-output parameter of a
+    // [StoredProcedure] without `[Param(Scale = ...)]`. SqlClient declares such a
+    // parameter as scale 0 and rounds the value the procedure assigns, so
+    // 1234.5678 comes back as 1235 with no error. Npgsql returns it exactly.
+    //
+    // Warning: the value is lost without an error, and the generator cannot see
+    // which provider runs the procedure. An adopter who targets only Postgres
+    // turns it off with `dotnet_diagnostic.ZAO065.severity = none`.
+    //
+    // MessageArgs:
+    //   {0} = parameter name
+    //   {1} = method name
+    public static readonly DiagnosticDescriptor ZAO065_DecimalOutputWithoutScale = Make(
+        "ZAO065", "Decimal output parameter has no Scale",
+        "Output parameter '{0}' on method '{1}' is a decimal without [Param(Scale = ...)]. SQL Server rounds the value to scale 0, so 1234.5678 comes back as 1235. Set Precision and Scale to match the procedure's declaration. PostgreSQL returns the exact value either way.",
+        DiagnosticSeverity.Warning);
+
+    // v2.0, #235 — a `[Param]` member the generator cannot honour, so it would
+    // otherwise be dropped without a word or fail at run time: any member on a
+    // CancellationToken, transaction or BulkInsert collection parameter; DbType,
+    // Size, Precision, Scale or Direction on a composite parameter; a Size below
+    // -1; a non-Input Direction on a parameter that no named-tuple field reads
+    // back, or a Direction other than Output / InputOutput on one that a field
+    // does read back; an output whose length-typed DbType gets a Size of 0, or a
+    // fixed-length output without a Size.
+    //
+    // MessageArgs:
+    //   {0} = the member(s), e.g. "Size" or "Direction = ReturnValue"
+    //   {1} = parameter name
+    //   {2} = method name
+    //   {3} = the reason
+    public static readonly DiagnosticDescriptor ZAO066_ParamFacetNotApplicable = Make(
+        "ZAO066", "[Param] member does not apply to this parameter",
+        "[Param({0})] on parameter '{1}' of method '{2}' cannot be applied: {3}",
+        DiagnosticSeverity.Error);
+
     // v1.3 — BulkInsert shape diagnostics (design 2026-06-02).
     // The five descriptors below classify the BulkInsert misuse modes detected
     // by the Task 5 classifier. They are declared here so AnalyzerReleases.md

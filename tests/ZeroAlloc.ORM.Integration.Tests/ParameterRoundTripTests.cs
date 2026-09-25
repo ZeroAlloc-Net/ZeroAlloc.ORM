@@ -41,6 +41,24 @@ public class ParameterRoundTripTests
     }
 
     [Fact]
+    public async Task String_parameter_Size_facet_applies_to_an_input()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Things (Name TEXT PRIMARY KEY, Value INTEGER NOT NULL);
+                INSERT INTO Things (Name, Value) VALUES ('alpha', 7), ('beta', 13);").ConfigureAwait(false);
+
+            // [Param(Size = 4)] reaches the provider, which sends 'beta'.
+            var repo = new StringParamRepo(fx.Connection);
+            var result = await repo.GetByNameTruncatedAsync("betamax", CancellationToken.None).ConfigureAwait(false);
+            result.Should().Be(13);
+        }
+    }
+
+    [Fact]
     public async Task Decimal_parameter_roundtrips()
     {
         var fx = new SqliteFixture();

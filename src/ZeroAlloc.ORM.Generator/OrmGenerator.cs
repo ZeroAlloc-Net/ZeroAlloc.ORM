@@ -889,6 +889,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var isCt = string.Equals(p.Type.ToDisplayString(), "System.Threading.CancellationToken", StringComparison.Ordinal);
                 var isTx = IsIAsyncDbTransaction(p.Type);
                 var paramNameOverride = ReadParamNameOverride(p);
+                var paramFacets = ReadParamFacets(p);
                 // Nullability detection mirrors the FlatRow column-binding logic:
                 // either an annotated nullable reference type (`string?`) or the
                 // `Nullable<T>` value-type wrapper (`int?` / `Nullable<int>`).
@@ -932,7 +933,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         IsNullable: isNullable,
                         Convention: null,
                         CompositeFields: default,
-                        CompositeTypeFullName: null);
+                        CompositeTypeFullName: null,
+                        Facets: paramFacets);
                 }
                 if (!isCt && IsBulkInsertCollectionParameterShape(p, isCommandAttribute, commandKind))
                 {
@@ -945,7 +947,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         IsNullable: isNullable,
                         Convention: null,
                         CompositeFields: default,
-                        CompositeTypeFullName: null);
+                        CompositeTypeFullName: null,
+                        Facets: paramFacets,
+                        IsBulkInsertCollection: true);
                 }
                 if (!isCt)
                 {
@@ -1085,9 +1089,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     isNullable,
                     paramConvention,
                     compositeFields,
-                    compositeTypeFullName);
+                    compositeTypeFullName,
+                    paramFacets);
             })
             .ToImmutableArray();
+
+        // v2.0, #235 — `[Param]` facet and direction checks, and ZAO065 for a
+        // decimal output parameter without a scale. Runs here because it needs
+        // both the per-parameter facets and the output-parameter model.
+        ReportParamFacetDiagnostics(
+            method,
+            methodParameters,
+            shape == EmitShape.SprocWithOutputParams ? sprocOutputParamsMaterialization : null,
+            diagnostics);
         var cancellationTokenParameterName = methodParameters
             .FirstOrDefault(p => p.IsCancellationToken)?.Name;
         var transactionParameterName = methodParameters
@@ -3256,7 +3270,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     MatchingParameterName: matchingParam.Name,
                     TypeName: unwrapped.ToDisplayString(typeDisplayFormat),
                     IsNullable: isNullable,
-                    Convention: convention));
+                    Convention: convention,
+                    DbTypeName: PrimitiveCatalog.GetDbTypeNameFromReader(reader)));
                 orderBuilder.Add(new SprocTupleSlot(
                     SprocTupleSlotKind.Output, outputBuilder.Count - 1));
                 matchedAny = true;
@@ -3626,6 +3641,241 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return null;
     }
 
+    // v2.0, #235 — read the type facets and direction written on
+    // `[ZeroAlloc.ORM.ParamAttribute]`. Presence in NamedArguments is what counts,
+    // not the value: `Scale = 0` is a real scale, and the attribute's own defaults
+    // must not reach the emit, or every annotated input parameter would change.
+    // Returns null when none of the members is written.
+    private static ParamFacets? ReadParamFacets(IParameterSymbol p)
+    {
+        string? dbType = null;
+        int? size = null;
+        int? precision = null;
+        int? scale = null;
+        string? direction = null;
+        foreach (var attr in p.GetAttributes())
+        {
+            if (!string.Equals(
+                attr.AttributeClass?.ToDisplayString(),
+                "ZeroAlloc.ORM.ParamAttribute",
+                StringComparison.Ordinal))
+            {
+                continue;
+            }
+            foreach (var kvp in attr.NamedArguments)
+            {
+                var value = kvp.Value;
+                switch (kvp.Key)
+                {
+                    case "DbType":
+                        var dbTypeName = EnumMemberName(value);
+                        if (!string.Equals(dbTypeName, "Object", StringComparison.Ordinal))
+                        {
+                            dbType = dbTypeName is not null
+                                ? "global::System.Data.DbType." + dbTypeName
+                                : "(global::System.Data.DbType)" + Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture);
+                        }
+                        break;
+                    case "Size":
+                        if (value.Value is int s) size = s;
+                        break;
+                    case "Precision":
+                        if (value.Value is byte pr) precision = pr;
+                        break;
+                    case "Scale":
+                        if (value.Value is byte sc) scale = sc;
+                        break;
+                    case "Direction":
+                        direction = EnumMemberName(value)
+                            ?? Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture);
+                        break;
+                }
+            }
+        }
+        return dbType is null && size is null && precision is null && scale is null && direction is null
+            ? null
+            : new ParamFacets(dbType, size, precision, scale, direction);
+    }
+
+    // v2.0, #235 — diagnostics for `[Param]` type facets and direction.
+    //
+    //   ZAO066 (Error)   -- a `[Param]` member the emit would otherwise drop, or one
+    //                       SqlClient rejects at run time:
+    //                       * any member on a CancellationToken, transaction or
+    //                         BulkInsert collection parameter, none of which binds a
+    //                         DbParameter of its own;
+    //                       * DbType, Size, Precision, Scale or Direction on a
+    //                         composite parameter, which binds as several
+    //                         DbParameters. Name there is ZAO063's;
+    //                       * a Size below -1, which every provider rejects;
+    //                       * a non-Input Direction on a parameter that no tuple
+    //                         field reads back, or a Direction other than Output or
+    //                         InputOutput on one that a tuple field does read back;
+    //                       * an output or input-output parameter of a length-typed
+    //                         DbType whose Size is written as 0, or of a fixed-length
+    //                         DbType whose Size is not written. SqlClient throws "the
+    //                         Size property has an invalid size of 0" for both. The
+    //                         variable-length default of -1 is not given to a
+    //                         fixed-length type: SqlClient accepts it, but as a MAX
+    //                         declaration, which is not what the author wrote.
+    //   ZAO065 (Warning) -- a decimal output or input-output parameter without a
+    //                       Scale. SqlClient declares it as scale 0 and silently
+    //                       rounds the value the procedure assigns. The generator
+    //                       cannot see the provider, so a Postgres-only adopter, for
+    //                       whom the value comes back exact, opts out in .editorconfig.
+    private static void ReportParamFacetDiagnostics(
+        IMethodSymbol method,
+        ImmutableArray<ParameterInfo> parameters,
+        SprocOutputParamsMaterializationModel? sprocOutputs,
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var outputs = new Dictionary<string, SprocOutputParam>(StringComparer.Ordinal);
+        if (sprocOutputs is not null)
+        {
+            foreach (var op in sprocOutputs.OutputElements)
+                outputs[op.MatchingParameterName] = op;
+        }
+
+        for (var i = 0; i < parameters.Length && i < method.Parameters.Length; i++)
+        {
+            var info = parameters[i];
+            var location = LocationInfo.From(method.Parameters[i].Locations.FirstOrDefault() ?? Location.None);
+            outputs.TryGetValue(info.Name, out var output);
+            var facets = info.Facets;
+
+            void Report(string members, string reason)
+                => diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO066",
+                    Location: location,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        members,
+                        info.Name,
+                        method.Name,
+                        reason))));
+
+            // A parameter that binds no DbParameter of its own: every member is dead.
+            var unboundReason =
+                info.IsCancellationToken ? "a CancellationToken is not bound as a DbParameter"
+                : info.IsTransaction ? "a transaction is not bound as a DbParameter"
+                : info.IsBulkInsertCollection ? "the BulkInsert row collection binds one DbParameter per placeholder and row, never one for itself"
+                : null;
+            if (unboundReason is not null)
+            {
+                var written = WrittenParamMembers(facets, includeName: info.ParamNameOverride is not null);
+                if (written.Count > 0)
+                    Report(string.Join(", ", written), unboundReason);
+                continue;
+            }
+
+            if (info.CompositeFields.Length > 0)
+            {
+                // Name on a composite is ZAO063's, so it is not listed here.
+                var written = WrittenParamMembers(facets, includeName: false);
+                if (written.Count > 0)
+                {
+                    Report(
+                        string.Join(", ", written),
+                        "a composite parameter binds as one DbParameter per field, so one set of facets cannot apply to it");
+                }
+                continue;
+            }
+
+            if (facets?.Size is { } writtenSize && writtenSize < -1)
+            {
+                Report(
+                    "Size = " + writtenSize.ToString(inv),
+                    "a DbParameter size is -1 for no limit, or zero and above; every provider rejects a smaller value");
+            }
+
+            if (facets?.Direction is { } direction)
+            {
+                var isOutputDirection = string.Equals(direction, "Output", StringComparison.Ordinal)
+                    || string.Equals(direction, "InputOutput", StringComparison.Ordinal);
+                if (output is null && !string.Equals(direction, "Input", StringComparison.Ordinal))
+                {
+                    Report(
+                        "Direction = " + direction,
+                        "only a [StoredProcedure] parameter whose name matches a field of the returned named tuple is read back");
+                }
+                else if (output is not null && !isOutputDirection)
+                {
+                    Report(
+                        "Direction = " + direction,
+                        "a parameter that a tuple field reads back must be Output or InputOutput");
+                }
+            }
+
+            if (output is null) continue;
+
+            var dbType = facets?.DbTypeExpression ?? DbTypePrefix + output.DbTypeName;
+            if (IsFixedLengthDbType(dbType))
+            {
+                if (facets?.Size is null or 0)
+                {
+                    var members = "DbType = " + dbType.Substring(DbTypePrefix.Length);
+                    if (facets?.Size is { } shownSize)
+                        members += ", Size = " + shownSize.ToString(inv);
+                    Report(
+                        members,
+                        "a fixed-length output parameter needs a Size, the length the procedure declares. SqlClient rejects a size of 0, and the generator has no default: -1 would quietly declare the parameter as a MAX type instead of the fixed length written here");
+                }
+            }
+            else if (IsVariableLengthDbType(dbType) && facets?.Size == 0)
+            {
+                Report(
+                    "Size = 0",
+                    "SqlClient rejects a variable-length output parameter with a size of 0. Leave Size unset or write -1 for MAX, or write the length the procedure declares");
+            }
+
+            if (facets?.Scale is null
+                && string.Equals(dbType, DbTypePrefix + "Decimal", StringComparison.Ordinal))
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO065",
+                    Location: location,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        info.Name,
+                        method.Name))));
+            }
+        }
+    }
+
+    private const string DbTypePrefix = "global::System.Data.DbType.";
+
+    // The `[Param]` members written on a parameter, in declaration order, for a
+    // ZAO066 message. `DbType = Object` is the attribute's "let the provider
+    // infer" default; ReadParamFacets does not record it, so it is never listed.
+    private static List<string> WrittenParamMembers(ParamFacets? facets, bool includeName)
+    {
+        var members = new List<string>(6);
+        if (includeName) members.Add("Name");
+        if (facets is null) return members;
+        if (facets.DbTypeExpression is not null) members.Add("DbType");
+        if (facets.Size is not null) members.Add("Size");
+        if (facets.Precision is not null) members.Add("Precision");
+        if (facets.Scale is not null) members.Add("Scale");
+        if (facets.Direction is not null) members.Add("Direction");
+        return members;
+    }
+
+    // The member name of an enum-typed attribute argument, or null when the value
+    // is not a declared member, as with `(DbType)999`.
+    private static string? EnumMemberName(TypedConstant value)
+    {
+        if (value.Type is not INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType || value.Value is null)
+            return null;
+        foreach (var member in enumType.GetMembers())
+        {
+            if (member is IFieldSymbol { HasConstantValue: true } field
+                && Equals(field.ConstantValue, value.Value))
+            {
+                return field.Name;
+            }
+        }
+        return null;
+    }
+
     // Drops one leading provider sigil from a parameter name: `@` (SQL Server,
     // SQLite, Postgres), `:` (Oracle, SQLite, Postgres) or `$` (SQLite). These are
     // the prefixes Microsoft.Data.Sqlite tries when it resolves a bare name, and a
@@ -3987,6 +4237,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO062" => DiagnosticDescriptors.ZAO062_TupleFieldNotMatchingParameter,
         "ZAO063" => DiagnosticDescriptors.ZAO063_ParamNameOnCompositeUnsupported,
         "ZAO064" => DiagnosticDescriptors.ZAO064_BatchOnStoredProcedureIgnored,
+        "ZAO065" => DiagnosticDescriptors.ZAO065_DecimalOutputWithoutScale,
+        "ZAO066" => DiagnosticDescriptors.ZAO066_ParamFacetNotApplicable,
         // v1.3 — BulkInsert misuse diagnostics. Tasks 3/5 introduced both the
         // descriptors and the firing sites but missed wiring them into this
         // lookup, which is the single funnel from `methodModel.Diagnostics`
@@ -4822,13 +5074,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        // Build a case-insensitive set of parameter names that map to OUTPUT
-        // tuple positions so the binding emit can flip Direction = Output on
-        // exactly those positions. Lookup is case-insensitive to mirror the
-        // tuple-field <-> parameter pairing rule that drove classification.
-        var outputParamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Map the parameter names that back OUTPUT tuple positions to their
+        // output model so the binding emit can flip Direction = Output and set
+        // the DbType on exactly those positions. Lookup is case-insensitive to
+        // mirror the tuple-field <-> parameter pairing rule that drove
+        // classification.
+        var outputParams = new Dictionary<string, SprocOutputParam>(StringComparer.OrdinalIgnoreCase);
         foreach (var op in mat.OutputElements)
-            outputParamNames.Add(op.MatchingParameterName);
+            outputParams[op.MatchingParameterName] = op;
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -4837,7 +5090,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
         EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
-        EmitParameterBindingWithIndent(sb, m, "            ", outputParamNames);
+        EmitParameterBindingWithIndent(sb, m, "            ", outputParams);
 
         var hasResultSets = mat.ResultElements.Length > 0;
         if (hasResultSets)
@@ -6446,6 +6699,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
+            EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
             var valueExpr = "@" + p.Name;
             if (p.Convention is { } conv)
@@ -6486,15 +6740,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // same INPUT-binding emit but flips Direction = Output for the subset of
     // parameters whose names match output tuple positions. Rather than maintain a
     // forked clone (the former EmitSprocOutputParamsBinding) we accept an optional
-    // `outputParamNames` set here; when non-null and the current parameter's name
-    // is present, the emit skips the Value assignment and writes the Direction
-    // line. All other callers pass `null` so the v0.1/v0.2/v0.3 snapshot byte-output
-    // is unchanged.
+    // `outputParams` map here; when non-null and the current parameter's name
+    // is present, the emit writes the Direction line and skips the Value
+    // assignment. All other callers pass `null`.
+    //
+    // v2.0, #235 — an output parameter also gets a DbType from its tuple element,
+    // and Size = -1 when that type is variable-length; SqlClient rejects an output
+    // parameter it cannot size. `[Param(Direction = InputOutput)]` keeps the Value
+    // assignment so the argument reaches the procedure.
     private static void EmitParameterBindingWithIndent(
         StringBuilder sb,
         QueryMethodModel m,
         string indent,
-        HashSet<string>? outputParamNames = null)
+        Dictionary<string, SprocOutputParam>? outputParams = null)
     {
         foreach (var p in m.MethodParameters)
         {
@@ -6519,47 +6777,121 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
 
-            var isOutput = outputParamNames is not null && outputParamNames.Contains(p.Name);
-            if (isOutput)
+            SprocOutputParam? output = null;
+            if (outputParams is not null && outputParams.TryGetValue(p.Name, out var matched))
+                output = matched;
+            if (output is not null)
             {
                 // Output position: set Direction and skip the .Value write — the
                 // procedure populates the value after execution; assigning a CLR
                 // value upfront is either ignored or treated as the initial state
-                // by the provider, so leaving it unset is cleaner.
-                sb.AppendLine($"{indent}{local}.Direction = global::System.Data.ParameterDirection.Output;");
+                // by the provider, so leaving it unset is cleaner. InputOutput is
+                // the opt-in for a procedure that reads the initial value.
+                var isInputOutput = string.Equals(p.Facets?.Direction, "InputOutput", StringComparison.Ordinal);
+                var direction = isInputOutput ? "InputOutput" : "Output";
+                sb.AppendLine($"{indent}{local}.Direction = global::System.Data.ParameterDirection.{direction};");
+                EmitParameterFacets(sb, indent, local, p.Facets, output);
+                if (!isInputOutput)
+                {
+                    sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
+                    continue;
+                }
             }
             else
             {
-                var valueExpr = "@" + p.Name;
-                if (p.Convention is { } conv)
-                {
-                    if (conv.Kind == (int)ConventionKind.Enum)
-                    {
-                        var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                        valueExpr = $"({castType})@{p.Name}";
-                    }
-                    else if (conv.Kind == (int)ConventionKind.EnumAsString)
-                    {
-                        valueExpr = $"@{p.Name}.ToString()";
-                    }
-                    else if (conv.ValuePropertyName is { } propName)
-                    {
-                        valueExpr = $"@{p.Name}.{propName}";
-                    }
-                }
+                EmitParameterFacets(sb, indent, local, p.Facets, output: null);
+            }
 
-                if (p.IsNullable)
+            var valueExpr = "@" + p.Name;
+            if (p.Convention is { } conv)
+            {
+                if (conv.Kind == (int)ConventionKind.Enum)
                 {
-                    sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+                    valueExpr = $"({castType})@{p.Name}";
                 }
-                else
+                else if (conv.Kind == (int)ConventionKind.EnumAsString)
                 {
-                    sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
+                    valueExpr = $"@{p.Name}.ToString()";
                 }
+                else if (conv.ValuePropertyName is { } propName)
+                {
+                    valueExpr = $"@{p.Name}.{propName}";
+                }
+            }
+
+            if (p.IsNullable)
+            {
+                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            }
+            else
+            {
+                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
             }
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
+
+    // v2.0, #235 — DbType, Size, Precision and Scale lines for one DbParameter.
+    //
+    // An input parameter (`output` null) gets only what `[Param]` wrote, so an
+    // unannotated input emits nothing here and its generated code is unchanged;
+    // the provider goes on inferring the type from the value.
+    //
+    // An output or input-output parameter always gets a DbType: the `[Param]`
+    // override, else the tuple element's type through
+    // PrimitiveCatalog.GetDbTypeNameFromReader. A variable-length type defaults to
+    // Size = -1, which SqlClient reads as MAX; Npgsql and Microsoft.Data.Sqlite
+    // treat -1 as "no limit". Precision and Scale have no default: a guessed scale
+    // silently rounds, and ZAO065 flags the decimal case instead.
+    private static void EmitParameterFacets(
+        StringBuilder sb,
+        string indent,
+        string local,
+        ParamFacets? facets,
+        SprocOutputParam? output)
+    {
+        var dbType = facets?.DbTypeExpression;
+        var size = facets?.Size;
+        if (output is not null)
+        {
+            dbType ??= "global::System.Data.DbType." + output.DbTypeName;
+            if (size is null && IsVariableLengthDbType(dbType)) size = -1;
+        }
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (dbType is not null)
+            sb.AppendLine($"{indent}{local}.DbType = {dbType};");
+        if (size is { } s)
+            sb.AppendLine($"{indent}{local}.Size = {s.ToString(inv)};");
+        if (facets?.Precision is { } precision)
+            sb.AppendLine($"{indent}{local}.Precision = {precision.ToString(inv)};");
+        if (facets?.Scale is { } scale)
+            sb.AppendLine($"{indent}{local}.Scale = {scale.ToString(inv)};");
+    }
+
+    // DbTypes whose values have a length, so an output parameter needs a Size.
+    private static bool IsVariableLengthDbType(string dbTypeExpression)
+        => dbTypeExpression switch
+        {
+            "global::System.Data.DbType.String"
+                or "global::System.Data.DbType.AnsiString"
+                or "global::System.Data.DbType.Binary"
+                or "global::System.Data.DbType.Xml" => true,
+            _ => false,
+        };
+
+    // DbTypes with a fixed, declared length, NCHAR and CHAR on SqlClient. An output
+    // parameter of one needs a Size, and the emit gives it no default: -1 would
+    // declare a MAX type instead of the fixed length the author chose. ZAO066
+    // reports a missing Size.
+    private static bool IsFixedLengthDbType(string dbTypeExpression)
+        => dbTypeExpression switch
+        {
+            "global::System.Data.DbType.StringFixedLength"
+                or "global::System.Data.DbType.AnsiStringFixedLength" => true,
+            _ => false,
+        };
 
     // v0.3 Phase B.3 — ;-joined fallback for MultiResultSet. Used for
     // BatchEmitStrategy.JoinedStatementsOnly when the adopter has explicitly set
@@ -6649,6 +6981,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
+            EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
             var valueExpr = "@" + p.Name;
             if (p.Convention is { } conv)
@@ -6943,6 +7276,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
+            EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
             // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
             // through their discovered `Value` property before binding to the

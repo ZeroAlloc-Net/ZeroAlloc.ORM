@@ -43,12 +43,12 @@ public sealed class SqlServerParameterBindingTests : IAsyncLifetime
         Assert.Equal(99, result);
     }
 
-    // Provider contract, not generator output. The generated code for a
-    // stored-procedure output parameter sets no DbType, and SqlClient rejects
-    // that before any name is sent; see the #219 report. This test pins what
-    // the generator relies on once that is fixed: OUTPUT parameters named
-    // without `@` and added out of declaration order bind by name and have
-    // their values copied back.
+    // Provider contract, not generator output: OUTPUT parameters named without
+    // `@` and added out of declaration order bind by name and have their values
+    // copied back. The generated code relies on it. Since #235 the generator
+    // sets the DbType SqlClient requires on output parameters, and
+    // SqlServerStoredProcedureTests runs the same procedure through generated
+    // code, in and out of declaration order.
     [Fact]
     public async Task SqlClient_binds_unprefixed_output_parameter_names()
     {

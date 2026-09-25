@@ -25,6 +25,7 @@ partial class Repo
             var __p_optionalCount = __cmd.CreateParameter();
             __p_optionalCount.ParameterName = "optionalCount";
             __p_optionalCount.Direction = global::System.Data.ParameterDirection.Output;
+            __p_optionalCount.DbType = global::System.Data.DbType.Int32;
             __cmd.Parameters.Add(__p_optionalCount);
             global::TestApp.OrderRow __elem0 = default!;
             await using (var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false))

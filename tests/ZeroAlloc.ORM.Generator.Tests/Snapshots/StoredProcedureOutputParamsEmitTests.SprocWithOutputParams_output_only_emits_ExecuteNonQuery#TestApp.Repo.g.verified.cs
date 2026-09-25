@@ -25,10 +25,12 @@ partial class Repo
             var __p_newOrderId = __cmd.CreateParameter();
             __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
+            __p_newOrderId.DbType = global::System.Data.DbType.Int32;
             __cmd.Parameters.Add(__p_newOrderId);
             var __p_status = __cmd.CreateParameter();
             __p_status.ParameterName = "status";
             __p_status.Direction = global::System.Data.ParameterDirection.Output;
+            __p_status.DbType = global::System.Data.DbType.Int32;
             __cmd.Parameters.Add(__p_status);
             await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);

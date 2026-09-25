@@ -53,7 +53,9 @@ public sealed partial class StoredProcedureRepo(IAsyncDbConnection connection)
     //      mechanics, this requires the procedure to declare its outputs as
     //      OUT (pure output) rather than INOUT — otherwise the C#-side
     //      omission of a value-write surfaces as DBNull on the readback.
-    //      OUT requires PG 15+, which matches the fixture pin.
+    //      OUT requires PG 15+, which matches the fixture pin. Since 2.0,
+    //      `[Param(Direction = InputOutput)]` binds an INOUT parameter with
+    //      its value; see InputOutputAsync below.
     //
     // The named-tuple convention matches `Neworderid` against the
     // `neworderid` parameter (case-insensitive) and flips its Direction to
@@ -62,6 +64,31 @@ public sealed partial class StoredProcedureRepo(IAsyncDbConnection connection)
     public partial Task<(int Neworderid, int Status)> AllocateIdAsync(
         int neworderid,
         int status,
+        CancellationToken ct);
+
+    // v2.0, #235 — the SQL Server output-type shape on a Postgres procedure.
+    // The generator now sets DbType on every output and Size = -1 on the text
+    // output. For an OUT argument Npgsql writes NULL into the CALL and matches the
+    // returned row by name, so neither changes what comes back. `rounded` carries
+    // Scale = 0, the scale SQL Server rounds to; Postgres ignores it and returns
+    // the exact value, and the test pins that.
+    [StoredProcedure("output_types_proc")]
+    public partial Task<(int Count, string Label, decimal Total, decimal Rounded, Guid Traceid, DateTime At)> OutputTypesAsync(
+        int seed,
+        int count,
+        string label,
+        [Param(Precision = 18, Scale = 4)] decimal total,
+        [Param(Scale = 0)] decimal rounded,
+        Guid traceid,
+        DateTime at,
+        CancellationToken ct);
+
+    // v2.0, #235 — INOUT parameters, bound as ParameterDirection.InputOutput so
+    // the argument reaches the procedure.
+    [StoredProcedure("input_output_proc")]
+    public partial Task<(int Counter, string Label)> InputOutputAsync(
+        [Param(Direction = System.Data.ParameterDirection.InputOutput)] int counter,
+        [Param(Direction = System.Data.ParameterDirection.InputOutput)] string label,
         CancellationToken ct);
 
     // Multi-result-set via two function calls joined with `;`. Auto-batch

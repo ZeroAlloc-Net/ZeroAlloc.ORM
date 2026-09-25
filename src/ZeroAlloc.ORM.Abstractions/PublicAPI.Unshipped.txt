@@ -1,1 +1,9 @@
 #nullable enable
+ZeroAlloc.ORM.ParamAttribute.Direction.get -> System.Data.ParameterDirection
+ZeroAlloc.ORM.ParamAttribute.Direction.init -> void
+ZeroAlloc.ORM.ParamAttribute.Precision.get -> byte
+ZeroAlloc.ORM.ParamAttribute.Precision.init -> void
+ZeroAlloc.ORM.ParamAttribute.Scale.get -> byte
+ZeroAlloc.ORM.ParamAttribute.Scale.init -> void
+ZeroAlloc.ORM.ParamAttribute.Size.get -> int
+ZeroAlloc.ORM.ParamAttribute.Size.init -> void
