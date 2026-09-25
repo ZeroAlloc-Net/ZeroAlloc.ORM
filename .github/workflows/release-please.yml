@@ -51,35 +51,21 @@ jobs:
   # ever marked shipped, so the analyzers could not flag a change to a shipped rule
   # or a shipped API.
   #
-  # release-please rebuilds its branch from main whenever main moves, dropping this
-  # commit; the job then runs again in the same workflow run and re-applies it. The
-  # script is idempotent and commits nothing when nothing is unshipped.
+  # The job and its script are shared across the org from ZeroAlloc-Net/.github, which
+  # took them from this repo; see ZeroAlloc-Net/.github#38. release-please rebuilds its
+  # branch from main whenever main moves, dropping this commit; the job then runs again
+  # in the same workflow run and re-applies it. It commits nothing when nothing is
+  # unshipped.
   ship-release-tracking:
     needs: release-please
     if: ${{ needs.release-please.outputs.prs_created == 'true' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout release PR branch
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-          # Same token as release-please, so this push triggers the PR's checks
-          # exactly as release-please's own push does.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Move Unshipped entries to Shipped
-        run: |
-          version=$(jq -r '."."' .release-please-manifest.json)
-          python3 scripts/ship-release-tracking.py "$version"
-          if git diff --quiet; then
-            echo "Nothing unshipped for $version."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore: mark analyzer rules and public api shipped in $version"
-          git push
+    uses: ZeroAlloc-Net/.github/.github/workflows/ship-release-tracking.yml@main
+    with:
+      branch: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+    secrets:
+      # Same token as release-please, so this push triggers the PR's checks exactly
+      # as release-please's own push does. Empty falls back to GITHUB_TOKEN.
+      RELEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
   # Publishing lives here rather than in a workflow listening for
   # `release: published`. A release created with GITHUB_TOKEN does not trigger
