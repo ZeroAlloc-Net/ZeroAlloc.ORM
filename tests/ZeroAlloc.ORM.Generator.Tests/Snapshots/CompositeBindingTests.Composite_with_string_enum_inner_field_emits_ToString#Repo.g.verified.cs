@@ -18,11 +18,11 @@ partial class Repo
             __cmd.CommandText = "UPDATE Orders SET Amount = @total_Amount, Tier = @total_Tier WHERE Id = 1";
             // EmitShape: CompositeBinding total -> global::TestApp.Pricing (fields: 2)
             var __p_total_Amount = __cmd.CreateParameter();
-            __p_total_Amount.ParameterName = "@total_Amount";
+            __p_total_Amount.ParameterName = "total_Amount";
             __p_total_Amount.Value = @total.@Amount;
             __cmd.Parameters.Add(__p_total_Amount);
             var __p_total_Tier = __cmd.CreateParameter();
-            __p_total_Tier.ParameterName = "@total_Tier";
+            __p_total_Tier.ParameterName = "total_Tier";
             __p_total_Tier.Value = @total.@Tier.ToString();
             __cmd.Parameters.Add(__p_total_Tier);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

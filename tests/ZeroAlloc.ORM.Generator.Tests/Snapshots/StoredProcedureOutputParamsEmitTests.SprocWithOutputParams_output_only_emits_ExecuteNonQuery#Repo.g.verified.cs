@@ -19,15 +19,15 @@ partial class Repo
             __cmd.CommandText = "usp_InsertOrder";
             __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __p_newOrderId = __cmd.CreateParameter();
-            __p_newOrderId.ParameterName = "@newOrderId";
+            __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_newOrderId);
             var __p_status = __cmd.CreateParameter();
-            __p_status.ParameterName = "@status";
+            __p_status.ParameterName = "status";
             __p_status.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_status);
             await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

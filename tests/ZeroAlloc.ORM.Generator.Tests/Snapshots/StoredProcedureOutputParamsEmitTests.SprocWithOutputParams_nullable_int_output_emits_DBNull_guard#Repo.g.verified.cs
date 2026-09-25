@@ -19,11 +19,11 @@ partial class Repo
             __cmd.CommandText = "usp_InsertOrderMaybeCount";
             __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __p_optionalCount = __cmd.CreateParameter();
-            __p_optionalCount.ParameterName = "@optionalCount";
+            __p_optionalCount.ParameterName = "optionalCount";
             __p_optionalCount.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_optionalCount);
             global::TestApp.OrderRow __elem0 = default!;

@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT SUM(Total) FROM Orders WHERE CustomerId = @customerId";
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

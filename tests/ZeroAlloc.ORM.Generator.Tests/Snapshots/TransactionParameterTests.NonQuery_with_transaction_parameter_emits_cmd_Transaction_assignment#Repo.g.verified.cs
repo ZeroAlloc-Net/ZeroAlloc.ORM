@@ -18,11 +18,11 @@ partial class Repo
             __cmd.Transaction = @tx;
             __cmd.CommandText = "UPDATE Orders SET Status = @status WHERE Id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "@id";
+            __p_id.ParameterName = "id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __p_status = __cmd.CreateParameter();
-            __p_status.ParameterName = "@status";
+            __p_status.ParameterName = "status";
             __p_status.Value = @status;
             __cmd.Parameters.Add(__p_status);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

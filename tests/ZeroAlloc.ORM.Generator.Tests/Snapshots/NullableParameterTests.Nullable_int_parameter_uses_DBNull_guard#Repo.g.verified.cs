@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT 1 WHERE @customerId IS @customerId";
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = (object?)@customerId ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_customerId);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

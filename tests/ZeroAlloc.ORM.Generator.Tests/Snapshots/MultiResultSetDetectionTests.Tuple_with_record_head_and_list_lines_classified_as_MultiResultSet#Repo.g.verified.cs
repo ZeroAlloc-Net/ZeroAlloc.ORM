@@ -21,7 +21,7 @@ partial class Repo
                 var __cmd0 = __batch.CreateBatchCommand();
                 __cmd0.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
                 var __p_id_0 = __cmd0.CreateParameter();
-                __p_id_0.ParameterName = "@id";
+                __p_id_0.ParameterName = "id";
                 __p_id_0.Value = @id;
                 __cmd0.Parameters.Add(__p_id_0);
                 __batch.BatchCommands.Add(__cmd0);
@@ -29,7 +29,7 @@ partial class Repo
                 var __cmd1 = __batch.CreateBatchCommand();
                 __cmd1.CommandText = "SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id";
                 var __p_id_1 = __cmd1.CreateParameter();
-                __p_id_1.ParameterName = "@id";
+                __p_id_1.ParameterName = "id";
                 __p_id_1.Value = @id;
                 __cmd1.Parameters.Add(__p_id_1);
                 __batch.BatchCommands.Add(__cmd1);
@@ -58,7 +58,7 @@ partial class Repo
                 await using var __cmd = __conn.CreateCommand();
                 __cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Sku, Quantity FROM OrderLines WHERE OrderId = @id;";
                 var __p_id = __cmd.CreateParameter();
-                __p_id.ParameterName = "@id";
+                __p_id.ParameterName = "id";
                 __p_id.Value = @id;
                 __cmd.Parameters.Add(__p_id);
                 await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

@@ -18,7 +18,7 @@ partial class Repo
             __cmd.CommandText = "usp_GetCount";
             __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
