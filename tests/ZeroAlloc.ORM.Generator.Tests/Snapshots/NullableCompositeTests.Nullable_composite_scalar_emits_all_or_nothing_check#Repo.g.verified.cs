@@ -18,7 +18,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT Amount, Currency FROM Orders WHERE Id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "@id";
+            __p_id.ParameterName = "id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

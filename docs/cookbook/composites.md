@@ -102,16 +102,17 @@ public sealed partial class OrderRepo(IAsyncDbConnection connection)
 
 The SQL author picks the parameter-name suffix scheme by spelling out
 `@total_Amount` / `@total_Currency` in the SQL string — the generator emits
-matching `DbParameter.ParameterName` values:
+matching `DbParameter.ParameterName` values, without the placeholder's sigil
+(see [provider quirks](provider-quirks.md#parameter-prefixes)):
 
 ```csharp
 var __p_total_Amount    = __cmd.CreateParameter();
-__p_total_Amount.ParameterName = "@total_Amount";
+__p_total_Amount.ParameterName = "total_Amount";
 __p_total_Amount.Value = @total.@Amount;
 __cmd.Parameters.Add(__p_total_Amount);
 
 var __p_total_Currency  = __cmd.CreateParameter();
-__p_total_Currency.ParameterName = "@total_Currency";
+__p_total_Currency.ParameterName = "total_Currency";
 __p_total_Currency.Value = @total.@Currency;
 __cmd.Parameters.Add(__p_total_Currency);
 ```

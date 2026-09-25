@@ -17,11 +17,11 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT @limit OFFSET @offset";
             var __p_limit = __cmd.CreateParameter();
-            __p_limit.ParameterName = "@limit";
+            __p_limit.ParameterName = "limit";
             __p_limit.Value = @limit;
             __cmd.Parameters.Add(__p_limit);
             var __p_offset = __cmd.CreateParameter();
-            __p_offset.ParameterName = "@offset";
+            __p_offset.ParameterName = "offset";
             __p_offset.Value = @offset;
             __cmd.Parameters.Add(__p_offset);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

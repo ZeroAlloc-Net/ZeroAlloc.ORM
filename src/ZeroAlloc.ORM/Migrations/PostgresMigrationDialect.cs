@@ -73,7 +73,7 @@ public sealed class PostgresMigrationDialect : IMigrationDialect
         {
             cmd.CommandText = "SELECT pg_advisory_lock(@key)";
             var p = cmd.CreateParameter();
-            p.ParameterName = "@key";
+            p.ParameterName = "key";
             p.Value = _lockKey;
             cmd.Parameters.Add(p);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -88,7 +88,7 @@ public sealed class PostgresMigrationDialect : IMigrationDialect
         {
             cmd.CommandText = "SELECT pg_advisory_unlock(@key)";
             var p = cmd.CreateParameter();
-            p.ParameterName = "@key";
+            p.ParameterName = "key";
             p.Value = _lockKey;
             cmd.Parameters.Add(p);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

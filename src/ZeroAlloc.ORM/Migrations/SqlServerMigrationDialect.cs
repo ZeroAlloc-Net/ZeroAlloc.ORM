@@ -107,7 +107,7 @@ public sealed class SqlServerMigrationDialect : IMigrationDialect
     private void AddLockName(IAsyncDbCommand cmd)
     {
         var p = cmd.CreateParameter();
-        p.ParameterName = "@lockName";
+        p.ParameterName = "lockName";
         p.Value = _lockName;
         cmd.Parameters.Add(p);
     }

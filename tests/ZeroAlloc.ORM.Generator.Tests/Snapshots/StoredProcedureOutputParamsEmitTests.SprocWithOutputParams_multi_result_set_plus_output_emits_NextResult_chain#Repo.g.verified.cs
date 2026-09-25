@@ -19,11 +19,11 @@ partial class Repo
             __cmd.CommandText = "usp_GetHeadsAndInsertTail";
             __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __p_newOrderId = __cmd.CreateParameter();
-            __p_newOrderId.ParameterName = "@newOrderId";
+            __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_newOrderId);
             global::System.Collections.Generic.List<global::TestApp.OrderRow> __elem0 = default!;

@@ -17,29 +17,29 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "@id";
+            __p_id.ParameterName = "id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             // EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)
             if (@total is null)
             {
                 var __p_total_Amount = __cmd.CreateParameter();
-                __p_total_Amount.ParameterName = "@total_Amount";
+                __p_total_Amount.ParameterName = "total_Amount";
                 __p_total_Amount.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_total_Amount);
                 var __p_total_Currency = __cmd.CreateParameter();
-                __p_total_Currency.ParameterName = "@total_Currency";
+                __p_total_Currency.ParameterName = "total_Currency";
                 __p_total_Currency.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_total_Currency);
             }
             else
             {
                 var __p_total_Amount = __cmd.CreateParameter();
-                __p_total_Amount.ParameterName = "@total_Amount";
+                __p_total_Amount.ParameterName = "total_Amount";
                 __p_total_Amount.Value = @total.Value.@Amount;
                 __cmd.Parameters.Add(__p_total_Amount);
                 var __p_total_Currency = __cmd.CreateParameter();
-                __p_total_Currency.ParameterName = "@total_Currency";
+                __p_total_Currency.ParameterName = "total_Currency";
                 __p_total_Currency.Value = @total.Value.@Currency;
                 __cmd.Parameters.Add(__p_total_Currency);
             }

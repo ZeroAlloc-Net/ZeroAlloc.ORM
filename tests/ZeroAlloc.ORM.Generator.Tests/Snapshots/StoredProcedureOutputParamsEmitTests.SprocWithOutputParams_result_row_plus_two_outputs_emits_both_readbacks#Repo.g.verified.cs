@@ -19,15 +19,15 @@ partial class Repo
             __cmd.CommandText = "usp_InsertOrderWithTrace";
             __cmd.CommandType = global::System.Data.CommandType.StoredProcedure;
             var __p_customerId = __cmd.CreateParameter();
-            __p_customerId.ParameterName = "@customerId";
+            __p_customerId.ParameterName = "customerId";
             __p_customerId.Value = @customerId;
             __cmd.Parameters.Add(__p_customerId);
             var __p_newOrderId = __cmd.CreateParameter();
-            __p_newOrderId.ParameterName = "@newOrderId";
+            __p_newOrderId.ParameterName = "newOrderId";
             __p_newOrderId.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_newOrderId);
             var __p_traceId = __cmd.CreateParameter();
-            __p_traceId.ParameterName = "@traceId";
+            __p_traceId.ParameterName = "traceId";
             __p_traceId.Direction = global::System.Data.ParameterDirection.Output;
             __cmd.Parameters.Add(__p_traceId);
             global::TestApp.OrderRow __elem0 = default!;

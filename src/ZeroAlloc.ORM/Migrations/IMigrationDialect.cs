@@ -30,7 +30,10 @@ public interface IMigrationDialect
 
     /// <summary>
     /// <c>INSERT INTO &lt;history&gt; (version, name, applied_at) VALUES (@version, @name, @applied_at)</c>
-    /// — the runner binds three parameters per applied migration.
+    /// — the runner binds three parameters per applied migration, named
+    /// <c>version</c>, <c>name</c> and <c>applied_at</c> with no prefix. Write the
+    /// placeholders with the provider's own sigil, <c>@version</c> or <c>:version</c>;
+    /// the provider matches the unprefixed parameter name to either.
     /// </summary>
     string InsertAppliedVersionSql { get; }
 

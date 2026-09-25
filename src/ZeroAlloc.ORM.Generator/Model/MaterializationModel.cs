@@ -156,7 +156,8 @@ internal sealed record MaterializationModel(
 //   TypeDisplay       -- fully-qualified type display incl. nullable annotation.
 //   IsCancellationToken -- skip binding; CT is a runtime control signal.
 //   ParamNameOverride -- when set via [Param(Name = "...")], emit uses this string
-//                        verbatim as `ParameterName`. Null falls back to "@" + Name.
+//                        as `ParameterName`, minus one leading `@`, `:` or `$`.
+//                        Null falls back to the bare Name; see #219.
 //   IsNullable        -- the C# parameter type is a nullable reference (`string?`)
 //                        or `Nullable<T>` (`int?`); emit wraps `.Value` with a
 //                        `(object?)x ?? DBNull.Value` guard.
@@ -171,7 +172,7 @@ internal sealed record ParameterInfo(
     // v0.5 Phase B — composite parameter binding. Non-default when the parameter's
     // type resolves to ConventionKind.MultiArgCtor (e.g. `Money(decimal Amount,
     // string Currency)`). The binding emitter walks this list to produce one
-    // DbParameter per inner field, named `@{Name}_{Field.CtorArgName}`. When
+    // DbParameter per inner field, named `{Name}_{Field.CtorArgName}`. When
     // default (empty / IsDefault), the parameter binds via the primitive /
     // VO / enum path captured in Convention.
     //

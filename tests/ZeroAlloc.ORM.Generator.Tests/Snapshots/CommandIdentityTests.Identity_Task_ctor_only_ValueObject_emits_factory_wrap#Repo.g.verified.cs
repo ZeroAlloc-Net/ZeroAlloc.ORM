@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "INSERT INTO Orders (Total) VALUES (@total) RETURNING Id";
             var __p_total = __cmd.CreateParameter();
-            __p_total.ParameterName = "@total";
+            __p_total.ParameterName = "total";
             __p_total.Value = @total;
             __cmd.Parameters.Add(__p_total);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

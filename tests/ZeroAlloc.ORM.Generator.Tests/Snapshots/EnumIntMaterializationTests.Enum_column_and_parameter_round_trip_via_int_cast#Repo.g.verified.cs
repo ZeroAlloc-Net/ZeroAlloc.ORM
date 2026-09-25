@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT Id, Status FROM Orders WHERE Status = @status LIMIT 1";
             var __p_status = __cmd.CreateParameter();
-            __p_status.ParameterName = "@status";
+            __p_status.ParameterName = "status";
             __p_status.Value = (int)@status;
             __cmd.Parameters.Add(__p_status);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

@@ -3545,6 +3545,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Read the optional `Name` argument from `[ZeroAlloc.ORM.ParamAttribute]` on a
     // method parameter. Returns null when the attribute is absent or doesn't set Name.
     // The named argument is a string literal; null/empty values fall back to the C# name.
+    //
+    // v2.0, #219 — every emitted `ParameterName` is the bare name, with no provider
+    // sigil. The SQL placeholder carries the sigil the provider expects (`@id` for
+    // SQL Server, SQLite and Postgres, `:id` for Oracle) and every supported provider
+    // matches an unprefixed ParameterName to it. An override written with a sigil,
+    // `[Param(Name = "@orderId")]` as v1 required, is normalised to `orderId` so the
+    // one rule holds for every parameter and existing overrides keep compiling.
     private static string? ReadParamNameOverride(IParameterSymbol p)
     {
         foreach (var attr in p.GetAttributes())
@@ -3559,11 +3566,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
             foreach (var kvp in attr.NamedArguments)
             {
                 if (!string.Equals(kvp.Key, "Name", StringComparison.Ordinal)) continue;
-                if (kvp.Value.Value is string s && !string.IsNullOrEmpty(s))
-                    return s;
+                if (kvp.Value.Value is string s)
+                {
+                    var bare = StripParameterSigil(s);
+                    if (bare.Length > 0) return bare;
+                }
             }
         }
         return null;
+    }
+
+    // Drops one leading provider sigil from a parameter name: `@` (SQL Server,
+    // SQLite, Postgres), `:` (Oracle, SQLite, Postgres) or `$` (SQLite). These are
+    // the prefixes Microsoft.Data.Sqlite tries when it resolves a bare name, and a
+    // superset of the `@` / `:` that Npgsql trims and the `@` SqlClient adds.
+    private static string StripParameterSigil(string name)
+    {
+        if (name.Length > 0 && (name[0] == '@' || name[0] == ':' || name[0] == '$'))
+            return name.Substring(1);
+        return name;
     }
 
     // v0.5 Phase D — read the `Factory` named arg from a `[Materialize(...)]`
@@ -4507,6 +4528,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // of the placeholder in PlaceholderBindings — not the row index. The
         // ParameterName carries the row index suffix so the SQL `@a_0`, `@a_1`
         // bind to distinct DbParameter instances inside the same DbCommand.
+        // The name is bare, `a_0`, like every other emitted ParameterName (#219);
+        // only the SQL text the chunk loop builds carries the `@` sigil, which is
+        // the one BulkInsertValuesParser accepts in the author's VALUES tuple.
         sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
         sb.AppendLine("                {");
         sb.AppendLine($"                    var __row = {rowsLocal}[__offset + __i];");
@@ -4516,7 +4540,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramLocal = $"__p_{binding.PlaceholderName}_{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
-            sb.AppendLine($"                    {paramLocal}.ParameterName = \"@{binding.PlaceholderName}_\" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
+            sb.AppendLine($"                    {paramLocal}.ParameterName = \"{binding.PlaceholderName}_\" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
             sb.AppendLine($"                    {paramLocal}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
@@ -6285,7 +6309,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             if (p.IsCancellationToken || p.IsTransaction) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
@@ -6357,7 +6381,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
 
             var local = "__p_" + p.Name;
-            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"{indent}var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
@@ -6488,7 +6512,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
 
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
@@ -6761,7 +6785,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //
     // Emit shape per parameter:
     //     var __p_<name> = __cmd.CreateParameter();
-    //     __p_<name>.ParameterName = "@<name>";
+    //     __p_<name>.ParameterName = "<name>";
     //     __p_<name>.Value = <name>;
     //     __cmd.Parameters.Add(__p_<name>);
     private static void EmitParameterBinding(StringBuilder sb, QueryMethodModel m)
@@ -6782,7 +6806,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
 
             var local = "__p_" + p.Name;
-            var paramName = p.ParamNameOverride ?? ("@" + p.Name);
+            var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
@@ -6858,12 +6882,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // blocks:
     //
     //   var __p_total_Amount = __cmd.CreateParameter();
-    //   __p_total_Amount.ParameterName = "@total_Amount";
+    //   __p_total_Amount.ParameterName = "total_Amount";
     //   __p_total_Amount.Value = @total.Amount;
     //   __cmd.Parameters.Add(__p_total_Amount);
     //
     //   var __p_total_Currency = __cmd.CreateParameter();
-    //   __p_total_Currency.ParameterName = "@total_Currency";
+    //   __p_total_Currency.ParameterName = "total_Currency";
     //   __p_total_Currency.Value = @total.Currency;
     //   __cmd.Parameters.Add(__p_total_Currency);
     //
@@ -6874,7 +6898,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // recursive convention layering, matching the Phase A read side.
     //
     // ParamNameOverride is intentionally NOT consulted here — Phase B picks
-    // a positional convention (`@{paramName}_{ctorArgName}`) and the override
+    // a positional convention (`{paramName}_{ctorArgName}`) and the override
     // (which targets a single DbParameter name) doesn't compose with N-way
     // unpacking. Detection-side ZAO063 reports the misuse so adopters get a
     // build-time error instead of a silently-dropped override.
@@ -6924,7 +6948,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             foreach (var field in p.CompositeFields)
             {
                 var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramName = p.Name + "_" + field.CtorArgName;
                 var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
@@ -6937,7 +6961,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             foreach (var field in p.CompositeFields)
             {
                 var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-                var paramName = "@" + p.Name + "_" + field.CtorArgName;
+                var paramName = p.Name + "_" + field.CtorArgName;
                 var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
@@ -6966,7 +6990,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         foreach (var field in p.CompositeFields)
         {
             var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-            var paramName = "@" + p.Name + "_" + field.CtorArgName;
+            var paramName = p.Name + "_" + field.CtorArgName;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");

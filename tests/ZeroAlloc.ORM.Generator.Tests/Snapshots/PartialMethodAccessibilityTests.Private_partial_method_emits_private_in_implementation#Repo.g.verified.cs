@@ -17,11 +17,11 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "INSERT INTO Orders (CustomerId, Total) VALUES (@cust, @total) RETURNING Id";
             var __p_cust = __cmd.CreateParameter();
-            __p_cust.ParameterName = "@cust";
+            __p_cust.ParameterName = "cust";
             __p_cust.Value = @cust;
             __cmd.Parameters.Add(__p_cust);
             var __p_total = __cmd.CreateParameter();
-            __p_total.ParameterName = "@total";
+            __p_total.ParameterName = "total";
             __p_total.Value = @total;
             __cmd.Parameters.Add(__p_total);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

@@ -189,9 +189,9 @@ public sealed class MigrationRunner
                     _dialect.InsertAppliedVersionSql,
                     parameters: new[]
                     {
-                        new MigrationParameter("@version", migration.Version),
-                        new MigrationParameter("@name", migration.Name),
-                        new MigrationParameter("@applied_at", appliedAt.ToString("o", CultureInfo.InvariantCulture)),
+                        new MigrationParameter("version", migration.Version),
+                        new MigrationParameter("name", migration.Name),
+                        new MigrationParameter("applied_at", appliedAt.ToString("o", CultureInfo.InvariantCulture)),
                     },
                     ct).ConfigureAwait(false);
 

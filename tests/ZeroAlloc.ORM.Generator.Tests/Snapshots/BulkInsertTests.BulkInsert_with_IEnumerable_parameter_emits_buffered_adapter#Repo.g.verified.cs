@@ -41,11 +41,11 @@ partial class Repo
                 {
                     var __row = __rows[__offset + __i];
                     var __p_CustomerId_0 = __cmd.CreateParameter();
-                    __p_CustomerId_0.ParameterName = "@CustomerId_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_CustomerId_0.ParameterName = "CustomerId_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
                     __p_CustomerId_0.Value = (object?)__row.CustomerId ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_CustomerId_0);
                     var __p_Total_1 = __cmd.CreateParameter();
-                    __p_Total_1.ParameterName = "@Total_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_Total_1.ParameterName = "Total_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
                     __p_Total_1.Value = (object?)__row.Total ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_Total_1);
                 }

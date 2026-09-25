@@ -18,11 +18,11 @@ partial class Repo
             __cmd.CommandText = "UPDATE Orders SET Amount = @outer_Amount, Currency = @outer_Currency WHERE Id = 1";
             // EmitShape: CompositeBinding outer -> global::TestApp.MoneyWithOrderId (fields: 2)
             var __p_outer_Amount = __cmd.CreateParameter();
-            __p_outer_Amount.ParameterName = "@outer_Amount";
+            __p_outer_Amount.ParameterName = "outer_Amount";
             __p_outer_Amount.Value = @outer.@Amount;
             __cmd.Parameters.Add(__p_outer_Amount);
             var __p_outer_Currency = __cmd.CreateParameter();
-            __p_outer_Currency.ParameterName = "@outer_Currency";
+            __p_outer_Currency.ParameterName = "outer_Currency";
             __p_outer_Currency.Value = @outer.@Currency.Value;
             __cmd.Parameters.Add(__p_outer_Currency);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

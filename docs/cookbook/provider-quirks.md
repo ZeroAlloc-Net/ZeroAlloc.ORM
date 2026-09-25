@@ -177,10 +177,11 @@ consistent (lowercase is the safe default).
 
 ### Parameter prefix normalisation
 
-ZeroAlloc.ORM emits `@paramName` uniformly across all providers. Npgsql
-historically preferred `$1` / `$2` positional placeholders, but every
-modern Npgsql release accepts the `@name` form and normalises internally.
-No adopter-side change required.
+Npgsql accepts both `@name` and `:name` placeholders in the SQL and stores
+each parameter's name with a leading `@` or `:` trimmed, so the generator's
+bare `ParameterName` binds either form. For `CommandType.StoredProcedure`
+Npgsql writes the `CALL` itself with named arguments, `"name" := $1`, again
+from the trimmed name. See [Parameter prefixes](#parameter-prefixes).
 
 ### `BulkInsert` parameter cap
 
@@ -333,10 +334,36 @@ eliminates the variance.
 
 ### Parameter prefixes
 
-ZeroAlloc.ORM emits `@paramName` uniformly. Every provider's modern
-driver accepts the `@name` form. Adopters do not need to translate
-between `:name` (Oracle / older Npgsql), `$1` (PG positional), or `?`
-(MySQL positional) — the generator never emits those.
+The rule since v2: **the SQL placeholder carries the provider's sigil, and
+the generated `DbParameter.ParameterName` carries none.**
+
+- Write the placeholder the provider expects: `@id` for SQL Server, SQLite,
+  PostgreSQL and MySQL; `:id` for Oracle. The generator passes the SQL
+  through verbatim.
+- The generator emits `ParameterName = "id"`, a composite's fields as
+  `"total_Amount"`, and a `BulkInsert` row's values as `"CustomerId_0"`,
+  `"CustomerId_1"` and so on.
+- `[Param(Name = "...")]` takes the bare name. A single leading `@`, `:` or
+  `$` is dropped, so the v1 spelling `[Param(Name = "@orderId")]` still binds.
+
+Each provider matches the bare name to the prefixed placeholder:
+
+| Provider | How a bare `ParameterName` binds |
+|---|---|
+| Microsoft.Data.Sqlite | Looks the name up as written, then retries with `@`, `$` and `:` prepended. A statement that uses two of those for one name is rejected as ambiguous. |
+| Npgsql | Trims a leading `@` or `:` from every parameter name and matches placeholders against the trimmed name. |
+| Microsoft.Data.SqlClient | Prepends `@` when the name lacks one, in both the `sp_executesql` parameter list and stored-procedure RPC argument names. |
+| MySqlConnector | Trims a leading `@` or `?` when normalising the name. Not exercised by the test suite. |
+
+`$1` / `?` positional placeholders are not supported; the generator binds
+by name.
+
+Two things are still `@`-only. `CommandKind.BulkInsert` recognises only
+`@name` placeholders in its `VALUES (...)` tuple and writes `@name_0`,
+`@name_1` into the SQL it builds per chunk. And the shipped migration
+dialects write their own SQL with `@` placeholders; a dialect for another
+provider writes its own sigil, and `MigrationRunner` binds `version`, `name`
+and `applied_at` by bare name.
 
 ### NULL semantics
 

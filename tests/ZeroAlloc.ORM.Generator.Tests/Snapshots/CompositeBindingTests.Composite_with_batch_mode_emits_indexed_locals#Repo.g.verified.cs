@@ -20,11 +20,11 @@ partial class Repo
             __cmd0.CommandText = "SELECT Id, Total FROM Orders WHERE Total >= @total_Amount AND Currency = @total_Currency";
             // EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)
             var __p_total_Amount_0 = __cmd0.CreateParameter();
-            __p_total_Amount_0.ParameterName = "@total_Amount";
+            __p_total_Amount_0.ParameterName = "total_Amount";
             __p_total_Amount_0.Value = @total.@Amount;
             __cmd0.Parameters.Add(__p_total_Amount_0);
             var __p_total_Currency_0 = __cmd0.CreateParameter();
-            __p_total_Currency_0.ParameterName = "@total_Currency";
+            __p_total_Currency_0.ParameterName = "total_Currency";
             __p_total_Currency_0.Value = @total.@Currency;
             __cmd0.Parameters.Add(__p_total_Currency_0);
             __batch.BatchCommands.Add(__cmd0);
@@ -33,11 +33,11 @@ partial class Repo
             __cmd1.CommandText = "SELECT Sku, Quantity FROM OrderLines WHERE Total >= @total_Amount";
             // EmitShape: CompositeBinding total -> global::TestApp.Money (fields: 2)
             var __p_total_Amount_1 = __cmd1.CreateParameter();
-            __p_total_Amount_1.ParameterName = "@total_Amount";
+            __p_total_Amount_1.ParameterName = "total_Amount";
             __p_total_Amount_1.Value = @total.@Amount;
             __cmd1.Parameters.Add(__p_total_Amount_1);
             var __p_total_Currency_1 = __cmd1.CreateParameter();
-            __p_total_Currency_1.ParameterName = "@total_Currency";
+            __p_total_Currency_1.ParameterName = "total_Currency";
             __p_total_Currency_1.Value = @total.@Currency;
             __cmd1.Parameters.Add(__p_total_Currency_1);
             __batch.BatchCommands.Add(__cmd1);
