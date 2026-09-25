@@ -95,14 +95,16 @@ public class CommandScalarTests
     }
 
     [Fact]
-    public async Task NonNullable_scalar_on_empty_result_throws_InvalidOperationException()
+    public async Task NonNullable_scalar_on_empty_result_throws_ZeroAllocOrmMaterializationException()
     {
         // v0.4 Phase B code-review Fix 1 regression. A non-nullable Task<decimal>
         // scalar pointed at a SELECT that produces NO ROWS yields a null
         // `__result` from ExecuteScalarAsync. Without the generator's explicit
         // null-guard, Convert.ToDecimal(null, ic) silently returns 0 — a
-        // data-corruption hazard. The guard must throw InvalidOperationException
-        // so callers see the missing scalar instead of a sentinel zero.
+        // data-corruption hazard. The guard must throw
+        // ZeroAllocOrmMaterializationException, as a NULL value has since #250;
+        // #260 moved the no-row case to it. Callers see the missing scalar
+        // instead of a sentinel zero.
         var fx = new SqliteFixture();
         await using (fx.ConfigureAwait(false))
         {
@@ -112,7 +114,7 @@ public class CommandScalarTests
 
             var repo = new CommandRepo(fx.Connection);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(
+            await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
                 () => repo.GetTotalForMissingIdAsync(CancellationToken.None))
                 .ConfigureAwait(false);
         }

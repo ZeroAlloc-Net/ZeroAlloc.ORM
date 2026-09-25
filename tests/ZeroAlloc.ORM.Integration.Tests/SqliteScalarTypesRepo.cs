@@ -50,4 +50,19 @@ public sealed partial class SqliteScalarTypesRepo(IAsyncDbConnection connection)
 
     [Command("SELECT Span FROM NumericTyped WHERE Id = @id", Kind = CommandKind.Scalar)]
     public partial Task<TimeSpan?> NullableNumericSpanAsync(int id, CancellationToken ct);
+
+    // #265 — dates stored as TEXT that the reader converts under Microsoft.Data.Sqlite
+    // 10's time-zone handling: text without an offset is UTC for DateTimeOffset,
+    // and text with an offset is converted to UTC for DateTime.
+    [Command("SELECT Value FROM TextTemporal WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset> TextStampAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Value FROM TextTemporal WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime> TextMomentAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Value FROM TextTemporal WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset?> NullableTextStampAsync(int id, CancellationToken ct);
+
+    [Command("SELECT Value FROM TextTemporal WHERE Id = @id", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime?> NullableTextMomentAsync(int id, CancellationToken ct);
 }

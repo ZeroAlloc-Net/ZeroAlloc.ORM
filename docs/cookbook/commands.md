@@ -107,9 +107,17 @@ public sealed partial class OrderRepo(IAsyncDbConnection connection)
     'MyApp.OrderRepo.MaxTotalAsync' returned NULL, but its return type is the
     non-nullable 'decimal'. Declare it as 'decimal?' to receive null."* This
     includes `Task<string>`: a NULL string throws rather than reading as `""`.
-  - an empty result set, where the query returns no row at all, throws
-    `InvalidOperationException` with the message *"Scalar command returned no
-    value; use Task<T?> if null is legal."*
+  - an empty result set, where the query returns no row at all, also throws
+    `ZeroAllocOrmMaterializationException`, naming the method and its return
+    type: *"Scalar command 'MyApp.OrderRepo.MaxTotalAsync' returned no row, but
+    its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to
+    receive null."*
+
+  Catch `ZeroAllocOrmMaterializationException` for both. Earlier releases threw
+  `InvalidOperationException` for the no-row case.
+  `ZeroAllocOrmMaterializationException` derives from `Exception`, not from
+  `InvalidOperationException`, so a handler for the old type no longer catches
+  it.
 
   Both are deliberate safety nets — silently coercing NULL to `0` or `""`
   would hide aggregation bugs in production. Wrap the SELECT in
@@ -172,12 +180,15 @@ of identity-return patterns, parameter prefixes, and identifier folding.
 
 If the INSERT returns no row — for example `INSERT ... SELECT ... WHERE 1 = 0
 RETURNING Id` — `ExecuteScalarAsync` produces `null`. The generator's Identity
-emit throws `InvalidOperationException` with the message **"Identity command
-returned no value"** rather than silently defaulting to `0`. The check matches
-the non-nullable-scalar guard in Recipe 2: production code should never see a
+emit throws `ZeroAllocOrmMaterializationException`, naming the method and the
+identity type, rather than silently defaulting to `0`: **"Identity command
+'MyApp.OrderRepo.InsertAsync' returned no row, but its return type is the
+non-nullable 'int'. The SQL must return the identity value, for example through
+RETURNING, OUTPUT or SCOPE_IDENTITY()."** The check matches the
+non-nullable-scalar guard in Recipe 2: production code should never see a
 zero-typed identity that didn't come from the database. A row whose identity
-value is NULL throws `ZeroAllocOrmMaterializationException` naming the method
-and the identity type.
+value is NULL throws the same exception type. Earlier releases threw
+`InvalidOperationException` for the no-row case.
 
 ## When NOT to use `[Command]`
 

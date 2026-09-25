@@ -4815,7 +4815,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // nullable and non-nullable branches based on the column binding.
         EmitScalarMaterialization(sb, m, connectionAccess,
             shapeLabelForError: "Scalar",
-            nullGuardMessage: "Scalar command returned no value; use Task<T?> if null is legal.",
             isIdentity: false);
     }
 
@@ -4835,7 +4834,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         EmitScalarMaterialization(sb, m, connectionAccess,
             shapeLabelForError: "CommandIdentity",
-            nullGuardMessage: "Identity command returned no value; the SQL must include a RETURNING / SCOPE_IDENTITY() clause that produces a non-null value.",
             isIdentity: true);
     }
 
@@ -5487,18 +5485,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     // `shapeLabelForError` appears only in the defensive comment when the
-    // model carries no Materialization (classification bug). `nullGuardMessage`
-    // is the literal string embedded in the InvalidOperationException thrown for
-    // an empty result set — Scalar points users at `Task<T?>` for the nullable
-    // escape, Identity points at the RETURNING / SCOPE_IDENTITY() contract since
-    // Identity has no nullable variant. `isIdentity` words the NULL-value
-    // message the same way; see EmitScalarNullValueGuard.
+    // model carries no Materialization (classification bug). `isIdentity` words
+    // the no-row and NULL-value messages: Scalar points users at `Task<T?>` for
+    // the nullable escape, Identity points at the SQL since Identity has no
+    // nullable variant; see EmitScalarEmptyGuards.
     private static void EmitScalarMaterialization(
         StringBuilder sb,
         QueryMethodModel m,
         string connectionAccess,
         string shapeLabelForError,
-        string nullGuardMessage,
         bool isIdentity)
     {
         var mat = m.Materialization;
@@ -5526,24 +5521,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
 
         // Nullable path emits a DBNull/null guard before the typed cast. The
-        // non-nullable path has two guards for the two empty states:
-        //   * `null` — ExecuteScalar found no row. Convert.ToInt32(null, ic)
-        //     returns 0, so without the guard an empty COUNT result would read
-        //     as a sentinel zero. Throws InvalidOperationException.
-        //   * DBNull — the row's value is a database NULL (#250). Without the
-        //     guard Convert.ToString turned it into "" and every other funnel
-        //     threw a bare InvalidCastException that named nothing. Throws
-        //     ZeroAllocOrmMaterializationException naming the method and type,
-        //     as a NULL stored-procedure output does (#244).
+        // non-nullable path guards both empty states; see EmitScalarEmptyGuards.
         if (col.IsNullable)
         {
             sb.AppendLine("            if (__result is null or global::System.DBNull) return null;");
         }
         else
         {
-            sb.AppendLine("            if (__result is null)");
-            sb.AppendLine($"                throw new global::System.InvalidOperationException(\"{nullGuardMessage}\");");
-            EmitScalarNullValueGuard(sb, m, col, isIdentity, "            ");
+            EmitScalarEmptyGuards(sb, m, col, isIdentity, "            ");
         }
 
         // Build the materialization expression. Provider-returned scalar types
@@ -5599,11 +5584,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
-    // #250 — reject a database NULL in a non-nullable scalar command. The message
-    // names the method, qualified by its containing type, and the declared
-    // type. A Scalar command points at the nullable return type; an Identity
-    // command has no nullable variant, so it points at the SQL instead.
-    private static void EmitScalarNullValueGuard(
+    // Reject the two empty states of a non-nullable scalar command. Both throw
+    // ZeroAllocOrmMaterializationException, as a missing row or a NULL column
+    // does elsewhere in the ORM, so a caller catches one type for both:
+    //   * `null` — ExecuteScalar found no row (#260). Convert.ToInt32(null, ic)
+    //     returns 0, so without the guard an empty COUNT result would read as a
+    //     sentinel zero.
+    //   * DBNull — the row's value is a database NULL (#250). Without the guard
+    //     Convert.ToString turned it into "" and every other funnel threw a bare
+    //     InvalidCastException that named nothing.
+    // The messages name the method, qualified by its containing type, and the
+    // declared type. A Scalar command points at the nullable return type; an
+    // Identity command has no nullable variant, so it points at the SQL instead.
+    private static void EmitScalarEmptyGuards(
         StringBuilder sb,
         QueryMethodModel m,
         ColumnBinding col,
@@ -5612,13 +5605,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
         var typeDisplay = DisplayTypeName(col.TypeName);
-        var message = isIdentity
+        var noRow = isIdentity
+            ? $"Identity command '{method}' returned no row, but its return type is the non-nullable " +
+              $"'{typeDisplay}'. The SQL must return the identity value, for example through RETURNING, " +
+              "OUTPUT or SCOPE_IDENTITY()."
+            : $"Scalar command '{method}' returned no row, but its return type is the non-nullable " +
+              $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+        var nullValue = isIdentity
             ? $"Identity command '{method}' returned NULL, but its return type is the non-nullable " +
               $"'{typeDisplay}'. The SQL must produce a non-null identity value."
             : $"Scalar command '{method}' returned NULL, but its return type is the non-nullable " +
               $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+        sb.AppendLine($"{indent}if (__result is null)");
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
         sb.AppendLine($"{indent}if (__result is global::System.DBNull)");
-        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(message, quote: true)});");
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
     }
 
     // Build the expression that converts a boxed `object` scalar (the result of
@@ -5650,8 +5651,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // a Guid can also be a 16-byte BLOB, which is what an untyped
     // Microsoft.Data.Sqlite parameter writes. ExecuteScalar returns the raw
     // string or byte array. The string and byte[] arms parse them the way
-    // Microsoft.Data.Sqlite's GetFieldValue<T> does for the same column:
-    //   * DateTimeOffset <- string, DateTimeOffset.Parse with InvariantCulture.
+    // Microsoft.Data.Sqlite 10's GetFieldValue<T> does for the same column (#265):
+    //   * DateTimeOffset <- string, DateTimeOffset.Parse with InvariantCulture and
+    //                       AssumeUniversal, so text without an offset has offset
+    //                       zero.
+    //   * DateTime       <- string, DateTime.Parse with InvariantCulture and
+    //                       AdjustToUniversal. Text with an offset or a Z becomes
+    //                       UTC with Kind Utc; text without one keeps Kind
+    //                       Unspecified. Convert.ToDateTime, used before, returned
+    //                       the former as local time with Kind Local.
     //   * TimeSpan       <- string, TimeSpan.Parse with InvariantCulture.
     //   * Guid           <- string, Guid.Parse; or byte[] of 16 bytes, new Guid;
     //                       or any other byte[], its UTF-8 text through Guid.Parse.
@@ -5665,6 +5673,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                       Microsoft.Data.Sqlite 10 reads it.
     //   * TimeSpan       <- double or long, TimeSpan.FromDays.
     // A long is never read as Unix seconds, because the reader path does not.
+    // Microsoft.Data.Sqlite's Pre10TimeZoneHandling switch, which restores the
+    // local-offset readings of earlier versions, is not honoured here: generated
+    // code cannot see which package version or switch the consumer uses, so it
+    // matches the version 10 defaults.
     // Every other value takes the fallback arm, the cast or Convert.ToDateTime
     // the funnel used before. Type patterns on the boxed value only unbox, so
     // the valid path does not allocate. Each arm's pattern variable is scoped to
@@ -5686,8 +5698,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             "double" => $"global::System.Convert.ToDouble({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "float" => $"global::System.Convert.ToSingle({subject}, global::System.Globalization.CultureInfo.InvariantCulture)",
             "string" => $"global::System.Convert.ToString({subject}, global::System.Globalization.CultureInfo.InvariantCulture)!",
-            "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), double __v => {FromJulianDay("__v")}, long __v => {FromJulianDay("__v")}, var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
-            "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), long __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), var __v => (global::System.DateTimeOffset)__v }})",
+            "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), string __v => global::System.DateTime.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.AdjustToUniversal), double __v => {FromJulianDay("__v")}, long __v => {FromJulianDay("__v")}, var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
+            "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.AssumeUniversal), double __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), long __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), var __v => (global::System.DateTimeOffset)__v }})",
             "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), string __v => global::System.TimeSpan.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => global::System.TimeSpan.FromDays(__v), long __v => global::System.TimeSpan.FromDays((double)__v), var __v => (global::System.TimeSpan)__v }})",
             "global::System.Guid" => $"({subject} switch {{ global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] {{ Length: 16 }} __v => new global::System.Guid(__v), byte[] __v => global::System.Guid.Parse(global::System.Text.Encoding.UTF8.GetString(__v)), var __v => (global::System.Guid)__v }})",
             // No Convert.ToXxx exists for byte[]; fall back to a direct cast.

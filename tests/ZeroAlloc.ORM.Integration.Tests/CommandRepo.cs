@@ -44,7 +44,7 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
     // v0.4 Phase B code-review Fix 1 regression coverage. A non-nullable
     // `Task<int>` scalar against a SELECT that produces NO ROWS yields a null
     // `__result` from ExecuteScalarAsync. The generator's null-guard must throw
-    // InvalidOperationException instead of letting Convert.ToInt32(null, ic)
+    // ZeroAllocOrmMaterializationException, #260, instead of letting Convert.ToInt32(null, ic)
     // silently return 0 — a data-corruption hazard for callers expecting an
     // actual scalar.
     [Command("SELECT Total FROM Orders WHERE Id = -999", Kind = CommandKind.Scalar)]
@@ -76,7 +76,7 @@ public sealed partial class CommandRepo(IAsyncDbConnection connection)
 
     // RETURNING + WHERE FALSE yields zero-rows-returned. ExecuteScalarAsync's
     // result is null; the generator's null-guard must throw
-    // InvalidOperationException naming "Identity command returned no value".
+    // ZeroAllocOrmMaterializationException naming the method, #260.
     // Validates the regression-safety contract that an empty RETURNING clause
     // surfaces as a clear exception rather than a silent zero / default.
     [Command("INSERT INTO Orders (CustomerId, Total) SELECT @cust, @total WHERE 1 = 0 RETURNING Id", Kind = CommandKind.Identity)]
