@@ -101,12 +101,21 @@ public sealed partial class OrderRepo(IAsyncDbConnection connection)
 
 - **Nullable return type** (`Task<int?>`, `Task<DateTime?>`, `Task<string?>`): a
   NULL from the database — or an empty result set — surfaces as a C# `null`.
-- **Non-nullable return type** (`Task<int>`, `Task<decimal>`): a NULL or an
-  empty result set throws `InvalidOperationException`. This is a deliberate
-  safety net — silently coercing `null` to `0` would hide aggregation bugs in
-  production. Wrap the SELECT in `COALESCE(..., 0)` when you want the
-  zero-fallback at the database level, or change the return type to
-  `Task<int?>` if you genuinely want `null` to flow through.
+- **Non-nullable return type** (`Task<int>`, `Task<decimal>`, `Task<string>`):
+  - a NULL value throws `ZeroAllocOrmMaterializationException`. The message
+    names the method and its return type, for example *"Scalar command
+    'MyApp.OrderRepo.MaxTotalAsync' returned NULL, but its return type is the
+    non-nullable 'decimal'. Declare it as 'decimal?' to receive null."* This
+    includes `Task<string>`: a NULL string throws rather than reading as `""`.
+  - an empty result set, where the query returns no row at all, throws
+    `InvalidOperationException` with the message *"Scalar command returned no
+    value; use Task<T?> if null is legal."*
+
+  Both are deliberate safety nets — silently coercing NULL to `0` or `""`
+  would hide aggregation bugs in production. Wrap the SELECT in
+  `COALESCE(..., 0)` when you want the zero-fallback at the database level,
+  or change the return type to `Task<int?>` if you genuinely want `null` to
+  flow through.
 
 ## Recipe 3 — Identity: capture the inserted row's ID
 
@@ -166,7 +175,9 @@ RETURNING Id` — `ExecuteScalarAsync` produces `null`. The generator's Identity
 emit throws `InvalidOperationException` with the message **"Identity command
 returned no value"** rather than silently defaulting to `0`. The check matches
 the non-nullable-scalar guard in Recipe 2: production code should never see a
-zero-typed identity that didn't come from the database.
+zero-typed identity that didn't come from the database. A row whose identity
+value is NULL throws `ZeroAllocOrmMaterializationException` naming the method
+and the identity type.
 
 ## When NOT to use `[Command]`
 

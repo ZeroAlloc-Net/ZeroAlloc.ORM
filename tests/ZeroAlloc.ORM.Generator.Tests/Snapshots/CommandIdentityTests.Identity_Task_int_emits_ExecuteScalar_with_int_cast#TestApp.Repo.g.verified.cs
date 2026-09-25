@@ -27,6 +27,8 @@ partial class Repo
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (__result is null)
                 throw new global::System.InvalidOperationException("Identity command returned no value; the SQL must include a RETURNING / SCOPE_IDENTITY() clause that produces a non-null value.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Identity command 'TestApp.Repo.InsertOrderAsync' returned NULL, but its return type is the non-nullable 'int'. The SQL must produce a non-null identity value.");
             return global::System.Convert.ToInt32(__result!, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

@@ -42,6 +42,18 @@ for what happens if you point the same factory at a NUMERIC column. The
 canonical recipe lives in
 [`composites.md`](composites.md#recipe-5--materializefactory-for-sqlite-decimal-as-text).
 
+### `DateTimeOffset`, `TimeSpan` and `Guid` stored as TEXT
+
+Sqlite has no storage class for these three types either. Microsoft.Data.Sqlite
+stores them as TEXT, and a `Guid` written through an untyped `SqliteParameter`
+as a 16-byte BLOB. A column read asks the provider for the type through
+`GetFieldValue<T>`, which parses the stored value. A
+`[Command(Kind = Scalar)]` result arrives from `ExecuteScalar` as the raw
+`string` or `byte[]` instead, so the generator parses it the same way:
+`DateTimeOffset.Parse` and `TimeSpan.Parse` with `InvariantCulture`,
+`Guid.Parse` for TEXT, and `new Guid(bytes)` for a 16-byte BLOB. A scalar
+command and a row query read the same value from the same column.
+
 ### `CanCreateBatch = false`
 
 The AdoNet.Async wrapper over Microsoft.Data.Sqlite reports

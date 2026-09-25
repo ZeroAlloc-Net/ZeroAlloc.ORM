@@ -23,6 +23,8 @@ partial class Repo
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (__result is null)
                 throw new global::System.InvalidOperationException("Scalar command returned no value; use Task<T?> if null is legal.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Scalar command 'TestApp.Repo.GetTotalAsync' returned NULL, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
             return global::System.Convert.ToDecimal(__result!, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

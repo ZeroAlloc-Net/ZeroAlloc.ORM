@@ -19,6 +19,8 @@ partial class Repo
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (__result is null)
                 throw new global::System.InvalidOperationException("Scalar command returned no value; use Task<T?> if null is legal.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Scalar command 'TestApp.Repo.GetMaxIdAsync' returned NULL, but its return type is the non-nullable 'TestApp.OrderId'. Declare it as 'TestApp.OrderId?' to receive null.");
             return new global::TestApp.OrderId(global::System.Convert.ToInt32(__result!, global::System.Globalization.CultureInfo.InvariantCulture));
         }
         finally
