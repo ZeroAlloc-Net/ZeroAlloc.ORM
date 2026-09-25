@@ -12,6 +12,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 //   * Method-level [return: Materialize(Factory)] override.
 //   * Nested in a FlatRow row.
 //   * Nested in a DomainEntity row (column-name keyed reads).
+//   * Nullable and nested in a FlatRow row, via the hoisted all-or-nothing block.
 //
 // The factory's parameter list — not the composite's underlying ctor —
 // drives the inner-column shape. The canonical Sqlite case carries a
@@ -154,6 +155,38 @@ public class MaterializeFactoryTests
             {
                 [Query("SELECT Amount, Currency FROM Orders WHERE Id = @id")]
                 public partial Task<Money?> GetTotalAsync(int id, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public void Factory_on_nullable_nested_composite_in_flat_row_emits_factory_call()
+    {
+        // #264 — the nullable composite takes the hoisted-local all-or-nothing
+        // path, which must dispatch through the factory like the non-nullable one.
+        var source = """
+            #pragma warning disable ZAO050
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "FromStorage")]
+            public readonly record struct Money(decimal Amount, string Currency)
+            {
+                public static Money FromStorage(string amountText, string currency)
+                    => new Money(decimal.Parse(amountText, global::System.Globalization.CultureInfo.InvariantCulture), currency);
+            }
+
+            public sealed record OrderRow(int Id, Money? Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
             }
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));

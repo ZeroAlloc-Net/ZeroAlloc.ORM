@@ -6015,7 +6015,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         sb.AppendLine($" + {suffixLit});");
         sb.AppendLine($"{indent}else");
-        sb.AppendLine($"{indent}    {localName} = new {composite.TypeName}(");
+        // #264 — a [Materialize(Factory)] composite is built through its factory here
+        // too, exactly as EmitNestedCompositeConstruction does for the non-nullable
+        // case. The inner columns come from the factory's parameters, so `new T(...)`
+        // would both bypass the factory and feed the ctor the factory's shape.
+        if (composite.FactoryMethodName is { } factoryName)
+        {
+            sb.AppendLine($"{indent}    // FactoryDispatch: {composite.TypeName}.{factoryName}");
+            sb.AppendLine($"{indent}    {localName} = {composite.TypeName}.{factoryName}(");
+        }
+        else
+        {
+            sb.AppendLine($"{indent}    {localName} = new {composite.TypeName}(");
+        }
         for (var j = 0; j < inner.Length; j++)
         {
             var b = inner[j];

@@ -100,4 +100,12 @@ public sealed partial class CompositeRepo(IAsyncDbConnection connection)
     // inner factory dispatch swaps `new MoneyWithFactory(...)` for the static call.
     [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
     public partial Task<MoneyWithFactoryOrderRow?> GetMoneyOrderRowAsync(int id, CancellationToken ct);
+
+    // #264 — same factory at a nullable FlatRow-nested position.
+    [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+    public partial Task<MoneyWithFactoryNullableOrderRow?> GetNullableMoneyOrderRowAsync(int id, CancellationToken ct);
+
+    // #264 — nullable position, factory parameters in the reverse of the ctor's order.
+    [Query("SELECT Id, Currency, Amount FROM Orders WHERE Id = @id")]
+    public partial Task<MoneyWithReversedFactoryNullableOrderRow?> GetNullableReversedMoneyOrderRowAsync(int id, CancellationToken ct);
 }

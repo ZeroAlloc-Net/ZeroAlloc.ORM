@@ -1557,6 +1557,99 @@ public class CompileSmokeTests
         Assert.Empty(bugClass);
     }
 
+    // #264 — a NULLABLE composite nested in a row goes through the hoisted-local
+    // all-or-nothing block, which built the composite with `new T(...)` and so
+    // bypassed [Materialize(Factory)]. The factory takes `string` where the ctor
+    // takes `decimal`, so a `new Money(...)` fed with the factory-shaped reads
+    // fails to compile with CS1503; the factory call compiles.
+    [Fact]
+    public void Materialize_factory_nullable_nested_in_flat_row_emit_calls_factory()
+    {
+        var source = """
+            #pragma warning disable ZAO050
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "FromStorage")]
+            public readonly record struct Money(decimal Amount, string Currency)
+            {
+                public static Money FromStorage(string amountText, string currency)
+                    => new Money(decimal.Parse(amountText, global::System.Globalization.CultureInfo.InvariantCulture), currency);
+            }
+
+            public sealed record OrderRow(int Id, Money? Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
+                public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        AssertNullableFactoryDispatch(source);
+    }
+
+    // #264 — same as above for a DomainEntity row, where the hoisted block reads
+    // the inner columns by name. The factory's parameter names match the columns.
+    [Fact]
+    public void Materialize_factory_nullable_nested_in_domain_entity_emit_calls_factory()
+    {
+        var source = """
+            #pragma warning disable ZAO050
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [Materialize(Factory = "FromStorage")]
+            public readonly record struct Money(decimal Amount, string Currency)
+            {
+                public static Money FromStorage(string amount, string currency)
+                    => new Money(decimal.Parse(amount, global::System.Globalization.CultureInfo.InvariantCulture), currency);
+            }
+
+            public sealed class Cart
+            {
+                public Cart(int id, Money? total)
+                {
+                    Id = id;
+                    Total = total;
+                }
+                public int Id { get; }
+                public Money? Total { get; }
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Amount, Currency FROM Carts WHERE Id = @id")]
+                public partial Task<Cart?> GetByIdAsync(int id, CancellationToken ct);
+            }
+            """;
+        AssertNullableFactoryDispatch(source);
+    }
+
+    private static void AssertNullableFactoryDispatch(string source)
+    {
+        var (runResult, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
+        var generated = string.Concat(runResult.Results[0].GeneratedSources.Select(s => s.SourceText.ToString()));
+        Assert.Contains("global::TestApp.Money.FromStorage(", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("new global::TestApp.Money(", generated, System.StringComparison.Ordinal);
+
+        var errors = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => d.Id + ": " + d.GetMessage(CultureInfo.InvariantCulture))
+            .ToArray();
+        Assert.Empty(errors);
+    }
+
     /// <summary>
     /// Fails if the snippet did not bind against the real ADO.NET surface.
     /// </summary>

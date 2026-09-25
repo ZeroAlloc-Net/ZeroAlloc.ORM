@@ -11,10 +11,13 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 // factory dispatch lets the adopter parse them under InvariantCulture to
 // avoid the culture-dependent GetDecimal path.
 //
-// Three round-trip scenarios:
+// Scenarios:
 //
 //   * Factory_round_trips_decimal_via_text_storage      — scalar Task<MoneyWithFactory>.
 //   * Factory_nested_in_flat_row_round_trips            — Task<MoneyWithFactoryOrderRow?>.
+//   * Factory_nested_as_nullable_in_flat_row_round_trips — #264, MoneyWithFactory? nested.
+//   * Factory_nested_as_nullable_throws_on_mixed_null_columns — #264, all-or-nothing check.
+//   * Factory_nested_as_nullable_passes_columns_in_factory_parameter_order — #264.
 //   * Factory_handles_culture_dependent_decimal_format  — proves the factory
 //        parses under InvariantCulture even when the host culture is non-en-US.
 //        (Defended directly: `decimal.Parse("1234.56", InvariantCulture)` is
@@ -62,6 +65,74 @@ public class MaterializeFactoryTests
             row!.Id.Should().Be(42);
             row.Total.Amount.Should().Be(1234.56m);
             row.Total.Currency.Should().Be("EUR");
+        }
+    }
+
+    [Fact]
+    public async Task Factory_nested_as_nullable_in_flat_row_round_trips()
+    {
+        // #264 — the nullable composite is built in the hoisted all-or-nothing
+        // block. The factory must run there too: the amount is TEXT, which the
+        // factory parses and the decimal ctor cannot take.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount TEXT NULL, Currency TEXT NULL);
+                INSERT INTO Orders (Id, Amount, Currency) VALUES (1, '1234.56', 'EUR');
+                INSERT INTO Orders (Id, Amount, Currency) VALUES (2, NULL, NULL);").ConfigureAwait(false);
+
+            var repo = new CompositeRepo(fx.Connection);
+            var withTotal = await repo.GetNullableMoneyOrderRowAsync(1, CancellationToken.None).ConfigureAwait(false);
+            var withoutTotal = await repo.GetNullableMoneyOrderRowAsync(2, CancellationToken.None).ConfigureAwait(false);
+
+            withTotal.Should().NotBeNull();
+            withTotal!.Total.Should().Be(new MoneyWithFactory(1234.56m, "EUR"));
+            withoutTotal.Should().NotBeNull();
+            withoutTotal!.Total.Should().BeNull();
+        }
+    }
+
+    [Fact]
+    public async Task Factory_nested_as_nullable_throws_on_mixed_null_columns()
+    {
+        // #264 — the all-or-nothing check runs before the factory: one NULL and
+        // one value is neither a Money nor null, so the read throws.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount TEXT NULL, Currency TEXT NULL);
+                INSERT INTO Orders (Id, Amount, Currency) VALUES (3, '5.00', NULL);").ConfigureAwait(false);
+
+            var repo = new CompositeRepo(fx.Connection);
+            Func<Task> act = () => repo.GetNullableMoneyOrderRowAsync(3, CancellationToken.None);
+
+            await act.Should().ThrowAsync<ZeroAllocOrmMaterializationException>()
+                .WithMessage("*mixed-null*").ConfigureAwait(false);
+        }
+    }
+
+    [Fact]
+    public async Task Factory_nested_as_nullable_passes_columns_in_factory_parameter_order()
+    {
+        // #264 — FromStorage takes (currency, amountText), the reverse of the ctor.
+        // A swapped call would pass "EUR" as the amount and fail to parse it.
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(@"
+                CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Amount TEXT NULL, Currency TEXT NULL);
+                INSERT INTO Orders (Id, Amount, Currency) VALUES (4, '12.34', 'EUR');").ConfigureAwait(false);
+
+            var repo = new CompositeRepo(fx.Connection);
+            var row = await repo.GetNullableReversedMoneyOrderRowAsync(4, CancellationToken.None).ConfigureAwait(false);
+
+            row.Should().NotBeNull();
+            row!.Total.Should().Be(new MoneyWithReversedFactory(12.34m, "EUR"));
         }
     }
 
