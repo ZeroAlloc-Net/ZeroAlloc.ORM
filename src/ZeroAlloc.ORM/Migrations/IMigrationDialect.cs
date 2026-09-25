@@ -20,9 +20,11 @@ public interface IMigrationDialect
     string CreateHistoryTableSql { get; }
 
     /// <summary>
-    /// <c>SELECT version FROM &lt;history&gt; ORDER BY version</c> — the runner
-    /// turns the result into a <see cref="System.Collections.Generic.HashSet{T}"/>
-    /// of applied versions to filter pending migrations against.
+    /// <c>SELECT version, name FROM &lt;history&gt; ORDER BY version</c> — the
+    /// runner turns the result into a
+    /// <see cref="System.Collections.Generic.Dictionary{TKey, TValue}"/> mapping
+    /// each applied version to its recorded name, so it can both filter pending
+    /// migrations and detect a version recorded under a different name.
     /// </summary>
     string SelectAppliedVersionsSql { get; }
 

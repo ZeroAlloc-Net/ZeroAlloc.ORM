@@ -4,12 +4,16 @@ ZeroAlloc.ORM 1.1+ ships a minimal SQL migration runner. Embed `.sql`
 files in your assembly, instantiate `MigrationRunner`, call `RunAsync()`
 at startup. The runner tracks applied versions in the `__zaorm_migrations`
 table and skips already-applied migrations on subsequent runs. Idempotent
-re-runs are a no-op.
+re-runs are a no-op — but only when the replayed migration matches on
+BOTH version and name; see
+[Version collisions](#version-collisions) below.
 
 The runner is **runtime** code (it lives in `ZeroAlloc.ORM`, not in the
 generator), so it does not surface any `ZAO0xx` compile-time diagnostics.
-Failure mode is a `DbException` propagated out of `RunAsync` — see
-[Recipe 4](#recipe-4--failing-migrations).
+Failure mode is a `DbException` propagated out of `RunAsync` for a failing
+migration body, or a `ZeroAllocOrmMigrationConflictException` for a version
+collision — see [Recipe 4](#recipe-4--failing-migrations) and
+[Version collisions](#version-collisions).
 
 ## Recipe 1 — Embedded SQL migrations
 
@@ -67,6 +71,9 @@ all migrations are already in the history table.
 - Gaps are permitted but **permanent**: if `003_x.sql` is already applied,
   a later-added `002_y.sql` will never run (its version is below the
   highest applied — the runner has no notion of "back-filling").
+- `NNN` must be **unique**, both against already-applied versions and
+  against every other migration discovered in the same run — see
+  [Version collisions](#version-collisions).
 - Convention: zero-pad to at least 3 digits (`001` not `1`) so the files
   list in natural lexical order.
 - The `description` segment becomes the `Name` stored in the history
@@ -191,6 +198,49 @@ will skip every already-applied migration and apply only the new one.
 Rolling back to a prior version is out of v1.1 scope — see
 [When NOT to use this runner](#when-not-to-use-this-runner).
 
+## Version collisions
+
+The history table records both the `version` and the `name` of every
+applied migration. `RunAsync` uses both columns to tell a genuine
+**replay** (safe to skip) from a **version collision** (a bug — the runner
+throws `ZeroAllocOrmMigrationConflictException` instead of silently
+dropping the migration):
+
+- **Replay** — a discovered migration's `Version` AND `Name` match a row
+  already in the history table. Silent no-op, as always.
+- **Applied-version collision** — a discovered migration's `Version`
+  matches a row in the history table, but its `Name` does NOT. This
+  happens when two developers each add a "next" migration independently
+  and both land on the same `NNN` prefix, or when a migration is
+  renumbered after it already shipped. The runner throws, naming the
+  version, the recorded name, and the discovered name. **Resolution:
+  renumber the new migration** to an unused version — never reuse a
+  version number that has already been applied.
+- **In-run collision** — two migrations discovered in the *same* call to
+  `GetMigrations()` share a `Version`, regardless of whether either has
+  been applied yet (e.g. two files both named `007_*.sql`). The runner
+  throws before attempting to apply anything. **Resolution: renumber one
+  of the two files.**
+
+Detecting a name-mismatched collision requires the runner to read `name`
+alongside `version`, which is a breaking change for a custom
+`IMigrationDialect` — see
+[Migrating to v2](../migrating-to-v2.md#imigrationdialectselectappliedversionssql-must-return-version-name)
+if you implement the interface directly rather than using a shipped
+dialect.
+
+```csharp
+try
+{
+    await runner.RunAsync(ct).ConfigureAwait(false);
+}
+catch (ZeroAllocOrmMigrationConflictException ex)
+{
+    logger.LogError(ex, "Migration version collision — renumber the new migration");
+    throw;
+}
+```
+
 ## Recipe 5 — Test fixtures over a kept-alive in-memory connection
 
 Integration tests against a real database typically reuse one
@@ -299,11 +349,19 @@ ships Sqlite + Postgres only. Adopters running on SQL Server, MySQL,
 Oracle, or other providers implement the interface directly for now;
 the SQL Server / MySQL ships are tracked as v1.1-CLN1 in the backlog.
 
+`SelectAppliedVersionsSql` **must** select `version, name` (in that
+column order) — `MigrationRunner` reads both columns positionally to
+tell a replay from a version collision; see
+[Version collisions](#version-collisions). `InsertAppliedVersionSql`
+already writes `name` into the history table, so this is a read-side
+change only — no new column, no migration of your own history table.
+
 ```csharp
 public sealed class SqlServerMigrationDialect : IMigrationDialect
 {
     public string CreateHistoryTableSql => /* ... */;
-    public string SelectAppliedVersionsSql => /* ... */;
+    public string SelectAppliedVersionsSql =>
+        "SELECT version, name FROM __zaorm_migrations ORDER BY version";
     public string InsertAppliedVersionSql => /* ... */;
     public Task AcquireLockAsync(IAsyncDbConnection c, CancellationToken ct) => /* sp_getapplock ... */;
     public Task ReleaseLockAsync(IAsyncDbConnection c, CancellationToken ct) => /* sp_releaseapplock ... */;
@@ -364,4 +422,7 @@ already-applied migrations; only the lock serialization.
 
 The migration runner is runtime code, not generator code — no `ZAO0xx`
 diagnostics fire from it. Failure mode is an exception raised at
-`RunAsync()` (see [Recipe 4](#recipe-4--failing-migrations)).
+`RunAsync()`: a `DbException` for a failing migration body (see
+[Recipe 4](#recipe-4--failing-migrations)), or a
+`ZeroAllocOrmMigrationConflictException` for a version collision (see
+[Version collisions](#version-collisions)).

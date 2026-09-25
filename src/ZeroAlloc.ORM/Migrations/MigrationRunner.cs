@@ -21,9 +21,13 @@ namespace ZeroAlloc.ORM.Migrations;
 ///   <item>Acquire the dialect's apply-lock (no-op on Sqlite).</item>
 ///   <item>Execute <see cref="IMigrationDialect.CreateHistoryTableSql"/> — idempotent.</item>
 ///   <item>Read applied versions via <see cref="IMigrationDialect.SelectAppliedVersionsSql"/>
-///         into a <see cref="HashSet{T}"/>.</item>
-///   <item>Get migrations from <see cref="IMigrationSource.GetMigrations"/>,
-///         filter to pending (version NOT in applied set), sort ascending.</item>
+///         into a <see cref="Dictionary{TKey, TValue}"/> of version → recorded name.</item>
+///   <item>Get migrations from <see cref="IMigrationSource.GetMigrations"/>. Reject
+///         (<see cref="ZeroAllocOrmMigrationConflictException"/>) two discovered
+///         migrations sharing a version, and any discovered version already applied
+///         under a different name — see <see cref="RunAsync"/>. Otherwise filter to
+///         pending (version NOT in applied map, or applied under the same name is a
+///         silent replay), sort ascending.</item>
 ///   <item>For each pending migration: BEGIN TRANSACTION, execute the migration
 ///         body, INSERT the history row, COMMIT. On exception: ROLLBACK,
 ///         release the lock, and rethrow.</item>
@@ -58,9 +62,17 @@ public sealed class MigrationRunner
     /// <summary>
     /// Executes the migration pipeline and returns the set of migrations newly
     /// applied during this invocation (each with <see cref="Migration.AppliedAt"/>
-    /// populated). Migrations whose <c>Version</c> already appears in the history
-    /// table are skipped and NOT included in the return list.
+    /// populated). A migration whose <c>Version</c> AND <c>Name</c> already match
+    /// a row in the history table is a genuine replay and is skipped silently
+    /// (NOT included in the return list).
     /// </summary>
+    /// <exception cref="ZeroAllocOrmMigrationConflictException">
+    /// Thrown instead of silently skipping when a discovered migration's
+    /// <c>Version</c> is already recorded as applied under a DIFFERENT
+    /// <c>Name</c> — a version-number collision, not a replay. Also thrown when
+    /// two discovered migrations share the same <c>Version</c>, regardless of
+    /// whether either has been applied.
+    /// </exception>
     /// <exception cref="System.Data.Common.DbException">
     /// Propagated verbatim when a migration's SQL fails. The transaction for the
     /// failing migration is rolled back; earlier migrations in this call have
@@ -75,20 +87,12 @@ public sealed class MigrationRunner
             // Step 2: bootstrap the history table (CREATE IF NOT EXISTS).
             await ExecuteNonQueryAsync(_dialect.CreateHistoryTableSql, ct).ConfigureAwait(false);
 
-            // Step 3: snapshot already-applied versions.
+            // Step 3: snapshot already-applied versions, keyed by recorded name.
             var applied = await ReadAppliedVersionsAsync(ct).ConfigureAwait(false);
 
-            // Step 4: discover + filter + sort.
+            // Step 4: discover + validate + filter + sort.
             var discovered = _source.GetMigrations();
-            var pending = new List<Migration>(discovered.Count);
-            foreach (var m in discovered)
-            {
-                if (!applied.Contains(m.Version))
-                {
-                    pending.Add(m);
-                }
-            }
-            pending.Sort(static (a, b) => a.Version.CompareTo(b.Version));
+            var pending = ResolvePending(discovered, applied);
 
             // Step 5: per-migration tx — commit each individually so a downstream
             // failure leaves earlier migrations applied (Phase A.3 invariant).
@@ -109,6 +113,59 @@ public sealed class MigrationRunner
             // cleanup decisions.
             await _dialect.ReleaseLockAsync(_connection, CancellationToken.None).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Validates the discovered migrations against each other and against the
+    /// applied-versions map, then returns the ones still pending, sorted by
+    /// <see cref="Migration.Version"/> ascending.
+    /// </summary>
+    /// <exception cref="ZeroAllocOrmMigrationConflictException">
+    /// Thrown when two discovered migrations share a version, or when a
+    /// discovered version is already applied under a different name.
+    /// </exception>
+    private static List<Migration> ResolvePending(IReadOnlyList<Migration> discovered, Dictionary<int, string> applied)
+    {
+        // Two discovered migrations sharing a version is always a bug — reject
+        // up front, independent of what is or isn't applied yet.
+        var byVersion = new Dictionary<int, Migration>(discovered.Count);
+        foreach (var m in discovered)
+        {
+            if (byVersion.TryGetValue(m.Version, out var other))
+            {
+                throw new ZeroAllocOrmMigrationConflictException(
+                    $"Migration version {m.Version} is used by two discovered migrations: " +
+                    $"'{other.Name}' and '{m.Name}'. Renumber one of them so every " +
+                    "discovered migration has a unique version.");
+            }
+            byVersion[m.Version] = m;
+        }
+
+        // A discovered version already recorded as applied under a different
+        // name is a version collision, not a replay — throw. The same version
+        // with the same name is a genuine replay and is skipped silently,
+        // matching today's behaviour.
+        var pending = new List<Migration>(discovered.Count);
+        foreach (var m in discovered)
+        {
+            if (applied.TryGetValue(m.Version, out var appliedName))
+            {
+                if (!string.Equals(appliedName, m.Name, StringComparison.Ordinal))
+                {
+                    throw new ZeroAllocOrmMigrationConflictException(
+                        $"Migration version {m.Version} is already applied as " +
+                        $"'{appliedName}', but the discovered migration for that version " +
+                        $"is named '{m.Name}'. Renumber the new migration to an unused " +
+                        "version — do not reuse an applied version number.");
+                }
+
+                continue;
+            }
+
+            pending.Add(m);
+        }
+        pending.Sort(static (a, b) => a.Version.CompareTo(b.Version));
+        return pending;
     }
 
     private async Task<DateTime> ApplyOneAsync(Migration migration, CancellationToken ct)
@@ -199,9 +256,9 @@ public sealed class MigrationRunner
         }
     }
 
-    private async Task<HashSet<int>> ReadAppliedVersionsAsync(CancellationToken ct)
+    private async Task<Dictionary<int, string>> ReadAppliedVersionsAsync(CancellationToken ct)
     {
-        var set = new HashSet<int>();
+        var map = new Dictionary<int, string>();
         var cmd = _connection.CreateCommand();
         await using (cmd.ConfigureAwait(false))
         {
@@ -211,11 +268,11 @@ public sealed class MigrationRunner
             {
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
-                    set.Add(reader.GetInt32(0));
+                    map.Add(reader.GetInt32(0), reader.GetString(1));
                 }
             }
         }
-        return set;
+        return map;
     }
 
     // Lightweight parameter carrier so the per-migration apply step doesn't
