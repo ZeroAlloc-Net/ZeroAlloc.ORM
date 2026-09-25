@@ -5257,12 +5257,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // #241 — only SQL Server fills a ReturnValue parameter; it always
                 // does, with an int. Npgsql neither sends nor sets one, so its
                 // Value stays null, and Convert.ToInt32(null) would read that as a
-                // RETURN value of 0. The generator cannot see the provider, so the
-                // check happens here.
+                // RETURN value of 0. DBNull is no RETURN value either. The
+                // generator cannot see the provider, so the check happens here.
                 var message = SymbolDisplay.FormatLiteral(
                     $"The provider did not set the RETURN value of the procedure called by '{m.MethodName}' into parameter '{op.MatchingParameterName}'. Only SQL Server procedures have a RETURN value.",
                     quote: true);
-                sb.AppendLine($"            if ({paramLocal}.Value is null)");
+                sb.AppendLine($"            if ({paramLocal}.Value is null or global::System.DBNull)");
                 sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({message});");
             }
             var expr = BuildSprocOutputReadbackExpression(op, paramLocal);

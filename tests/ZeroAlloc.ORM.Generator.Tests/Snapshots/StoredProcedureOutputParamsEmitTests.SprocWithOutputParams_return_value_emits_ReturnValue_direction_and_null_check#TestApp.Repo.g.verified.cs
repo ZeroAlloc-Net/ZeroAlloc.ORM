@@ -48,7 +48,7 @@ partial class Repo
                 }
             }
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
-            if (__p_RETURN_VALUE.Value is null)
+            if (__p_RETURN_VALUE.Value is null or global::System.DBNull)
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The provider did not set the RETURN value of the procedure called by 'InsertAsync' into parameter 'RETURN_VALUE'. Only SQL Server procedures have a RETURN value.");
             var __out_RETURN_VALUE = global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             return (__elem0, __out_NewOrderId, __out_RETURN_VALUE);

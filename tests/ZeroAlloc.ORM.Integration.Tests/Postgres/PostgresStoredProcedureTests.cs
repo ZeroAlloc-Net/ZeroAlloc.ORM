@@ -280,6 +280,49 @@ public sealed class PostgresStoredProcedureTests
             .WithMessage("*did not set the RETURN value*'ReturnValueAsync'*'RETURN_VALUE'*Only SQL Server*");
     }
 
+    // #241 — a procedure that declares an OUT parameter named "RETURN_VALUE".
+    // Npgsql writes each argument name quoted, `"RETURN_VALUE" := NULL`, so in
+    // 2.0.0 the convention-named Output parameter matched only this quoted
+    // declaration; an unquoted `return_value` folds to lower case and never
+    // matched. The convention now binds it as ReturnValue, which Npgsql leaves
+    // out of the CALL, so the argument list no longer fits the procedure.
+    [Fact]
+    public async Task Declared_RETURN_VALUE_out_parameter_fails_under_the_convention()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await CreateDeclaredReturnValueProcAsync(fx).ConfigureAwait(false);
+
+        var repo = new StoredProcedureRepo(fx.Connection);
+        var act = async () => await repo.DeclaredReturnValueByConventionAsync(21, 0, 0, CancellationToken.None).ConfigureAwait(false);
+
+        (await act.Should().ThrowAsync<Npgsql.PostgresException>().ConfigureAwait(false))
+            .Which.SqlState.Should().Be("42883", "the CALL omits the OUT argument, so no procedure matches");
+    }
+
+    // The escape hatch: a written Direction = Output keeps it an OUT argument.
+    [Fact]
+    public async Task Declared_RETURN_VALUE_out_parameter_binds_with_explicit_Output()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await CreateDeclaredReturnValueProcAsync(fx).ConfigureAwait(false);
+
+        var repo = new StoredProcedureRepo(fx.Connection);
+        var (doubled, returnValue) = await repo.DeclaredReturnValueAsOutputAsync(21, 0, 0, CancellationToken.None).ConfigureAwait(false);
+
+        doubled.Should().Be(42);
+        returnValue.Should().Be(63);
+    }
+
+    private static ValueTask CreateDeclaredReturnValueProcAsync(PostgresFixture fx) => fx.ExecuteDdlAsync(@"
+        CREATE PROCEDURE declared_return_value_proc(IN seed integer, OUT doubled integer, OUT ""RETURN_VALUE"" integer)
+            LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            doubled := seed * 2;
+            ""RETURN_VALUE"" := seed * 3;
+        END;
+        $$;");
+
     [Fact]
     public async Task MultiResultSet_via_function_calls_returns_count_and_rows()
     {

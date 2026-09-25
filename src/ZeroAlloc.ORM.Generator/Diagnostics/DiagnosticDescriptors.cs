@@ -271,8 +271,9 @@ internal static class DiagnosticDescriptors
     // CancellationToken, transaction or BulkInsert collection parameter; DbType,
     // Size, Precision, Scale or Direction on a composite parameter; a Size below
     // -1; a non-Input Direction on a parameter that no named-tuple field reads
-    // back, or Direction = Input on one that a field does read back; an output whose length-typed DbType gets a Size of 0, or a
-    // fixed-length output without a Size.
+    // back, or Direction = Input on one that a field does read back; an output
+    // whose length-typed DbType gets a Size of 0, or a fixed-length output
+    // without a Size.
     //
     // MessageArgs:
     //   {0} = the member(s), e.g. "Size" or "Direction = ReturnValue"

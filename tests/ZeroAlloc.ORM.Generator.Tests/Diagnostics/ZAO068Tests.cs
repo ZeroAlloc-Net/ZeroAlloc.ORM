@@ -64,6 +64,34 @@ public class ZAO068Tests
         Assert.Single(diagnostics);
     }
 
+    // Two convention matches need two parameters bound to the same name. In
+    // 2.0.0 that sent two arguments named RETURN_VALUE, which SQL Server and
+    // PostgreSQL both reject at run time.
+    [Fact]
+    public void Two_RETURN_VALUE_convention_matches_report_ZAO068_on_the_second()
+    {
+        var source = Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_X")]
+                public partial Task<(int Id, int RETURN_VALUE, int X)> RunAsync(
+                    int id,
+                    int RETURN_VALUE,
+                    [Param(Name = "RETURN_VALUE")] int x,
+                    CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+
+        var zao068 = Assert.Single(result.Diagnostics, d => string.Equals(d.Id, "ZAO068", System.StringComparison.Ordinal));
+        var message = zao068.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.StartsWith("Parameter 'x' ", message, System.StringComparison.Ordinal);
+        Assert.Contains("'RETURN_VALUE' already is", message, System.StringComparison.Ordinal);
+        // Reported on the second parameter, `x`, not on RETURN_VALUE.
+        var span = zao068.Location.SourceSpan;
+        Assert.Equal("x", source.Substring(span.Start, span.Length));
+    }
+
     [Fact]
     public void One_ReturnValue_beside_output_parameters_reports_no_ZAO068()
     {

@@ -303,6 +303,18 @@ is read after the result sets are drained, like an output parameter.
   method throws `ZeroAllocOrmMaterializationException` after the call rather
   than read the unset value as `0`. Return the value through an `OUT`
   parameter there.
+- **A PostgreSQL `OUT` or `INOUT` parameter named `RETURN_VALUE`.** Npgsql
+  names each `CALL` argument in quotes, `"RETURN_VALUE" := NULL`, so before
+  this change the field matched only a parameter declared with that quoted,
+  upper-case name. The convention now binds it as a return value, which
+  Npgsql leaves out of the `CALL`, and the call fails with `42883`,
+  procedure does not exist. Write
+  `[Param(Direction = ParameterDirection.Output)] int RETURN_VALUE`, or
+  `InputOutput` for an `INOUT` parameter, to keep it an argument, as on
+  SQL Server. An unquoted `return_value` folds to lower case and never
+  matched `"RETURN_VALUE"`, before this change or after. Bind it as
+  `int return_value`, an ordinary output parameter that the convention
+  does not touch.
 
 ## Recipe 4 — Multi-result-set sproc
 

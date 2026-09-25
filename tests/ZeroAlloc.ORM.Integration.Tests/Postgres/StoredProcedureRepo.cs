@@ -124,6 +124,23 @@ public sealed partial class StoredProcedureRepo(IAsyncDbConnection connection)
         int? RETURN_VALUE,
         CancellationToken ct);
 
+    // #241 — a procedure that declares an OUT parameter named RETURN_VALUE.
+    // Without a written Direction the convention binds it as ReturnValue.
+    [StoredProcedure("declared_return_value_proc")]
+    public partial Task<(int Doubled, int RETURN_VALUE)> DeclaredReturnValueByConventionAsync(
+        int seed,
+        int doubled,
+        int RETURN_VALUE,
+        CancellationToken ct);
+
+    // The escape hatch: a written Direction = Output keeps it an OUT argument.
+    [StoredProcedure("declared_return_value_proc")]
+    public partial Task<(int Doubled, int RETURN_VALUE)> DeclaredReturnValueAsOutputAsync(
+        int seed,
+        int doubled,
+        [Param(Direction = System.Data.ParameterDirection.Output)] int RETURN_VALUE,
+        CancellationToken ct);
+
     // Multi-result-set via two function calls joined with `;`. Auto-batch
     // mode lets the runtime pick the IAsyncDbBatch path on Postgres
     // (CanCreateBatch == true on Npgsql). Functions encapsulate the same

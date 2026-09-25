@@ -65,8 +65,8 @@ public class ReturnValueTests
         Assert.DoesNotContain("__p_status.Value =", generated, System.StringComparison.Ordinal);
         // Only SQL Server sets a return value; on another provider Value stays
         // null, which the generated code reports instead of reading it as 0.
-        Assert.Contains("if (__p_status.Value is null)", generated, System.StringComparison.Ordinal);
-        Assert.DoesNotContain("if (__p_doubled.Value is null)", generated, System.StringComparison.Ordinal);
+        Assert.Contains("if (__p_status.Value is null or global::System.DBNull)", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("if (__p_doubled.Value is null", generated, System.StringComparison.Ordinal);
         // It is read back after the reader is drained, like an output parameter.
         Assert.Contains("var __out_Status = global::System.Convert.ToInt32(__p_status.Value!", generated, System.StringComparison.Ordinal);
         Assert.Contains("__p_doubled.Direction = global::System.Data.ParameterDirection.Output;", generated, System.StringComparison.Ordinal);
