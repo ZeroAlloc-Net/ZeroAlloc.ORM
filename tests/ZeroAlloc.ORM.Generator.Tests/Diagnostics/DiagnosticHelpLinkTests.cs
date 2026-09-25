@@ -75,6 +75,52 @@ public sealed class DiagnosticHelpLinkTests
             "Diagnostic helpLinkUri gaps:\n  " + string.Join("\n  ", gaps));
     }
 
+    // #242 — the per-ID pages above prove the *page* exists, but they don't
+    // prove the *index* at docs/diagnostics/README.md lists it. The README
+    // (both the root one and the docs/diagnostics one) drifted out of sync
+    // with the descriptor catalog more than once because nothing forced them
+    // to move together. This test parses the canonical index table and fails
+    // when a shipped descriptor has no row there, so the index can't go stale
+    // silently again.
+    [Fact]
+    public void Every_diagnostic_has_a_row_in_the_canonical_docs_index()
+    {
+        var docsRoot = LocateDocsDiagnosticsFolder();
+        var indexPath = Path.Combine(docsRoot, "README.md");
+        Assert.True(File.Exists(indexPath), $"Canonical docs index not found at {indexPath}");
+
+        var indexText = File.ReadAllText(indexPath);
+        var idsInIndex = new HashSet<string>(
+            IndexRowPattern.Matches(indexText).Select(m => m.Groups["id"].Value),
+            StringComparer.Ordinal);
+
+        var descriptors = typeof(DiagnosticDescriptors)
+            .GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic)
+            .Where(f => f.FieldType == typeof(DiagnosticDescriptor))
+            .Select(f => (DiagnosticDescriptor)f.GetValue(null)!)
+            .ToList();
+
+        Assert.NotEmpty(descriptors);
+
+        var missing = descriptors
+            .Select(d => d.Id)
+            .Where(id => !idsInIndex.Contains(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(
+            missing.Count == 0,
+            "Descriptor IDs missing a row in docs/diagnostics/README.md:\n  " + string.Join("\n  ", missing));
+    }
+
+    // Matches a markdown table row that starts a cell with a ZAOxxx code, e.g.
+    // "| ZAO081 | Error | ... |". Anchored to line start and linear-time, same
+    // ReDoS guard as HelpLinkPattern above.
+    private static readonly Regex IndexRowPattern = new(
+        @"^\|\s*(?<id>ZAO\d+)\s*\|",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture | RegexOptions.Multiline,
+        TimeSpan.FromSeconds(1));
+
     private static string LocateDocsDiagnosticsFolder()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
