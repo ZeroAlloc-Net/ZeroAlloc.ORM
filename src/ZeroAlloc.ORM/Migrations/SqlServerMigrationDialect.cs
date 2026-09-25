@@ -56,7 +56,7 @@ public sealed class SqlServerMigrationDialect : IMigrationDialect
         "applied_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET())";
 
     /// <inheritdoc />
-    public string SelectAppliedVersionsSql => "SELECT version FROM __zaorm_migrations ORDER BY version";
+    public string SelectAppliedVersionsSql => "SELECT version, name FROM __zaorm_migrations ORDER BY version";
 
     /// <inheritdoc />
     public string InsertAppliedVersionSql =>

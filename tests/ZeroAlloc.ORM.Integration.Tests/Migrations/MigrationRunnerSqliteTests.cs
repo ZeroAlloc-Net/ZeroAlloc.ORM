@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Xunit;
+using ZeroAlloc.ORM;
 using ZeroAlloc.ORM.Migrations;
 
 namespace ZeroAlloc.ORM.Integration.Tests.Migrations;
@@ -79,6 +80,102 @@ public class MigrationRunnerSqliteTests
         // History table still has exactly the two original rows.
         var versions = await ReadAppliedVersionsAsync(fixture).ConfigureAwait(false);
         versions.Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task Replaying_the_same_version_and_name_is_a_no_op()
+    {
+        // A second run whose source returns the exact same (Version, Name) pair
+        // for an already-applied migration must stay silent — this is the
+        // "genuine replay" case called out in issue #230, distinct from a
+        // version collision with a different name.
+        await using var fixture = new SqliteFixture();
+        await fixture.InitializeAsync().ConfigureAwait(false);
+
+        var dialect = new SqliteMigrationDialect();
+        var first = new ListMigrationSource(new[]
+        {
+            new Migration(1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY)"),
+        });
+        await new MigrationRunner(fixture.Connection, first, dialect)
+            .RunAsync(CancellationToken.None).ConfigureAwait(false);
+
+        // A fresh source instance, but the same Version + Name for migration 1,
+        // plus a genuinely new migration 2.
+        var second = new ListMigrationSource(new[]
+        {
+            new Migration(1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY)"),
+            new Migration(2, "create_orders", "CREATE TABLE orders (id INTEGER PRIMARY KEY)"),
+        });
+        var applied = await new MigrationRunner(fixture.Connection, second, dialect)
+            .RunAsync(CancellationToken.None).ConfigureAwait(false);
+
+        applied.Select(m => m.Version).Should().Equal(2);
+
+        var versions = await ReadAppliedVersionsAsync(fixture).ConfigureAwait(false);
+        versions.Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task Applied_version_recorded_under_a_different_name_throws()
+    {
+        // Issue #230: a discovered migration's version collides with an
+        // already-applied version, but under a DIFFERENT name — e.g. two
+        // developers each add a "next" migration and both land on the same
+        // NNN prefix. The runner must throw instead of silently dropping it.
+        await using var fixture = new SqliteFixture();
+        await fixture.InitializeAsync().ConfigureAwait(false);
+
+        var dialect = new SqliteMigrationDialect();
+        var first = new ListMigrationSource(new[]
+        {
+            new Migration(1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY)"),
+        });
+        await new MigrationRunner(fixture.Connection, first, dialect)
+            .RunAsync(CancellationToken.None).ConfigureAwait(false);
+
+        // Same version (1), different name — a genuine collision, not a replay.
+        var second = new ListMigrationSource(new[]
+        {
+            new Migration(1, "create_customers", "CREATE TABLE customers (id INTEGER PRIMARY KEY)"),
+        });
+        var runner = new MigrationRunner(fixture.Connection, second, dialect);
+
+        var act = async () => await runner.RunAsync(CancellationToken.None).ConfigureAwait(false);
+        (await act.Should().ThrowAsync<ZeroAllocOrmMigrationConflictException>().ConfigureAwait(false))
+            .WithMessage("*version 1*")
+            .Which.Message.Should().Contain("create_users").And.Contain("create_customers");
+
+        // History table is untouched by the failed run.
+        var versions = await ReadAppliedVersionsAsync(fixture).ConfigureAwait(false);
+        versions.Should().Equal(1);
+        (await TableExistsAsync(fixture, "customers").ConfigureAwait(false)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Two_discovered_migrations_with_the_same_version_throws()
+    {
+        // Issue #230's second case: two migrations discovered in the same run
+        // share a version, and neither has been applied yet. This must also be
+        // rejected rather than silently dropping one of them.
+        await using var fixture = new SqliteFixture();
+        await fixture.InitializeAsync().ConfigureAwait(false);
+
+        var source = new ListMigrationSource(new[]
+        {
+            new Migration(1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY)"),
+            new Migration(1, "create_customers", "CREATE TABLE customers (id INTEGER PRIMARY KEY)"),
+        });
+        var runner = new MigrationRunner(fixture.Connection, source, new SqliteMigrationDialect());
+
+        var act = async () => await runner.RunAsync(CancellationToken.None).ConfigureAwait(false);
+        (await act.Should().ThrowAsync<ZeroAllocOrmMigrationConflictException>().ConfigureAwait(false))
+            .WithMessage("*version 1*")
+            .Which.Message.Should().Contain("create_users").And.Contain("create_customers");
+
+        // Nothing was applied — the conflict is caught before the apply loop starts.
+        var versions = await ReadAppliedVersionsAsync(fixture).ConfigureAwait(false);
+        versions.Should().BeEmpty();
     }
 
     [Fact]

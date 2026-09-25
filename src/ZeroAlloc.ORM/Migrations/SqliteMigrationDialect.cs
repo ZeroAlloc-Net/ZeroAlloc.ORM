@@ -29,7 +29,7 @@ public sealed class SqliteMigrationDialect : IMigrationDialect
         "applied_at TEXT NOT NULL)";
 
     /// <inheritdoc />
-    public string SelectAppliedVersionsSql => "SELECT version FROM __zaorm_migrations ORDER BY version";
+    public string SelectAppliedVersionsSql => "SELECT version, name FROM __zaorm_migrations ORDER BY version";
 
     /// <inheritdoc />
     public string InsertAppliedVersionSql =>

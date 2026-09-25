@@ -59,7 +59,7 @@ public sealed class PostgresMigrationDialect : IMigrationDialect
         "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())";
 
     /// <inheritdoc />
-    public string SelectAppliedVersionsSql => "SELECT version FROM __zaorm_migrations ORDER BY version";
+    public string SelectAppliedVersionsSql => "SELECT version, name FROM __zaorm_migrations ORDER BY version";
 
     /// <inheritdoc />
     public string InsertAppliedVersionSql =>

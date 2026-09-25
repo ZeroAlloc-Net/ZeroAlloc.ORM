@@ -1,4 +1,8 @@
 #nullable enable
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException() -> void
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException(string! message) -> void
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException(string! message, System.Exception! inner) -> void
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.CreateHistoryTableSql.get -> string!
