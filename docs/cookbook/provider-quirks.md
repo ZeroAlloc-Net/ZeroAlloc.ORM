@@ -55,6 +55,15 @@ as a 16-byte BLOB. A column read asks the provider for the type through
 over the UTF-8 text of any other BLOB. A scalar
 command and a row query read the same value from the same column.
 
+A date stored as TEXT follows Microsoft.Data.Sqlite 10's time-zone handling:
+
+| Target | TEXT value | Result |
+| --- | --- | --- |
+| `DateTimeOffset` | with an offset, such as `+02:00` or `Z` | that offset |
+| `DateTimeOffset` | without an offset | offset zero, as `DateTimeStyles.AssumeUniversal` |
+| `DateTime` | with an offset or `Z` | converted to UTC, `Kind` is `Utc` |
+| `DateTime` | without an offset | as written, `Kind` is `Unspecified` |
+
 A date can also be stored as a number, for example by SQLite's own
 `julianday()` function, and a `TimeSpan` as a number of days. `ExecuteScalar`
 returns a REAL as a `double` and an INTEGER as a `long`. `GetFieldValue<T>`
@@ -75,7 +84,23 @@ both the reader path and the scalar path throw. Convert it in SQL instead, with
 Stored-procedure output parameters share this conversion, so the numeric arms
 also apply to them on every provider: a `long` output read into a `TimeSpan` is
 taken as a number of days, and a `double` or `long` read into a `DateTime` or
-`DateTimeOffset` as a Julian day.
+`DateTimeOffset` as a Julian day. The same holds for text: a `string` output, or
+a scalar command on any provider whose value is text, read into a `DateTime` or
+`DateTimeOffset` follows the TEXT table above.
+
+#### `Pre10TimeZoneHandling` is not honoured on the scalar path
+
+Before version 10, Microsoft.Data.Sqlite read these values with the machine's
+local offset: a `DateTimeOffset` from TEXT without an offset, or from a Julian
+day, got the local offset, and a `DateTime` from TEXT with an offset was
+returned as local time with `Kind` `Local`. Version 10 keeps that behaviour
+behind the `Microsoft.Data.Sqlite.Pre10TimeZoneHandling` `AppContext` switch.
+Generated code cannot see which package version or switch the application
+uses, so a `[Command(Kind = Scalar)]` result always follows the version 10
+defaults in the tables above. With an older Microsoft.Data.Sqlite, or with the
+switch on, a row query reads these values with the local offset while a scalar
+command does not. A `DateTimeOffset` stored as TEXT with an explicit offset
+reads the same on both paths.
 
 ### `CanCreateBatch = false`
 

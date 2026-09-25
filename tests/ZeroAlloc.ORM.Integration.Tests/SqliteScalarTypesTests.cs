@@ -243,6 +243,82 @@ public sealed class SqliteScalarTypesTests
         }
     }
 
+    // #265 — time-zone handling of TEXT dates, as Microsoft.Data.Sqlite 10 reads
+    // them without its Pre10TimeZoneHandling switch:
+    //   * DateTimeOffset: text without an offset is taken as UTC, offset zero.
+    //     Text with an offset keeps it.
+    //   * DateTime: text with an offset, or a trailing Z, is converted to UTC
+    //     with Kind Utc. Text without one is read as written, Kind Unspecified.
+    // The expected values are independent of the machine's time zone. On a
+    // machine at UTC the old conversion gave the same instants: the DateTime
+    // rows with an offset or a Z still fail there on their Kind check, Local
+    // instead of Utc. The DateTimeOffset rows without an offset cannot fail on a
+    // UTC runner, because the local offset is zero there. The machine-independent
+    // guard for that case is the snapshot test
+    // StoredProcedureOutputParamsEmitTests
+    //     .SprocWithOutputParams_temporal_outputs_convert_from_provider_default_types,
+    // which pins DateTimeStyles.AssumeUniversal in the generated conversion.
+    [Theory]
+    [InlineData("2024-01-02 03:04:05", "2024-01-02T03:04:05.0000000+00:00", "2024-01-02T03:04:05.0000000", DateTimeKind.Unspecified)]
+    [InlineData("2024-01-02 03:04:05.1234567", "2024-01-02T03:04:05.1234567+00:00", "2024-01-02T03:04:05.1234567", DateTimeKind.Unspecified)]
+    [InlineData("2024-01-02", "2024-01-02T00:00:00.0000000+00:00", "2024-01-02T00:00:00.0000000", DateTimeKind.Unspecified)]
+    [InlineData("2024-07-02 03:04:05+02:00", "2024-07-02T03:04:05.0000000+02:00", "2024-07-02T01:04:05.0000000Z", DateTimeKind.Utc)]
+    [InlineData("2024-01-02 03:04:05-05:30", "2024-01-02T03:04:05.0000000-05:30", "2024-01-02T08:34:05.0000000Z", DateTimeKind.Utc)]
+    [InlineData("2024-01-02T03:04:05Z", "2024-01-02T03:04:05.0000000+00:00", "2024-01-02T03:04:05.0000000Z", DateTimeKind.Utc)]
+    public async Task Text_dates_read_back_with_the_readers_time_zone_handling(
+        string text, string expectedStamp, string expectedMoment, DateTimeKind expectedKind)
+    {
+        var stampExpected = DateTimeOffset.ParseExact(
+            expectedStamp, "o", System.Globalization.CultureInfo.InvariantCulture);
+        var momentExpected = DateTime.ParseExact(
+            expectedMoment, "o", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind);
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(
+                "CREATE TABLE TextTemporal (Id INTEGER PRIMARY KEY, Value TEXT NULL); " +
+                "INSERT INTO TextTemporal (Id, Value) VALUES (1, '" + text + "');").ConfigureAwait(false);
+            var repo = new SqliteScalarTypesRepo(fx.Connection);
+
+            DateTimeOffset readerStamp;
+            DateTime readerMoment;
+            var cmd = fx.Connection.CreateCommand();
+            await using (cmd.ConfigureAwait(false))
+            {
+                cmd.CommandText = "SELECT Value, Value FROM TextTemporal WHERE Id = 1";
+                var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+                await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
+                {
+                    Assert.True(await reader.ReadAsync().ConfigureAwait(false));
+                    readerStamp = reader.GetFieldValue<DateTimeOffset>(0);
+                    readerMoment = reader.GetFieldValue<DateTime>(1);
+                }
+            }
+
+            // Guard the expectations: they are what the reader returns.
+            Assert.Equal(stampExpected, readerStamp);
+            Assert.Equal(stampExpected.Offset, readerStamp.Offset);
+            Assert.Equal(momentExpected, readerMoment);
+            Assert.Equal(expectedKind, readerMoment.Kind);
+
+            var stamp = await repo.TextStampAsync(1, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(readerStamp, stamp);
+            Assert.Equal(readerStamp.Offset, stamp.Offset);
+            var nullableStamp = await repo.NullableTextStampAsync(1, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(readerStamp, nullableStamp);
+            Assert.Equal(readerStamp.Offset, nullableStamp!.Value.Offset);
+
+            var moment = await repo.TextMomentAsync(1, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(readerMoment, moment);
+            Assert.Equal(readerMoment.Kind, moment.Kind);
+            var nullableMoment = await repo.NullableTextMomentAsync(1, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(readerMoment, nullableMoment);
+            Assert.Equal(readerMoment.Kind, nullableMoment!.Value.Kind);
+        }
+    }
+
     private static ValueTask CreateNumericTableAsync(SqliteFixture fx) => fx.ExecuteDdlAsync(@"
         CREATE TABLE NumericTyped (Id INTEGER PRIMARY KEY, Stamp NULL, Moment NULL, Span NULL);
         INSERT INTO NumericTyped (Id, Stamp, Moment, Span) VALUES

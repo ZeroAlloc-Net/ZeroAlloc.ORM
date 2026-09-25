@@ -22,7 +22,7 @@ partial class Repo
             __cmd.Parameters.Add(__p_id);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             if (__result is null)
-                throw new global::System.InvalidOperationException("Scalar command returned no value; use Task<T?> if null is legal.");
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Scalar command 'TestApp.Repo.GetStatusAsync' returned no row, but its return type is the non-nullable 'TestApp.OrderStatus'. Declare it as 'TestApp.OrderStatus?' to receive null.");
             if (__result is global::System.DBNull)
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Scalar command 'TestApp.Repo.GetStatusAsync' returned NULL, but its return type is the non-nullable 'TestApp.OrderStatus'. Declare it as 'TestApp.OrderStatus?' to receive null.");
             return (global::TestApp.OrderStatus)global::System.Convert.ToInt32(__result!, global::System.Globalization.CultureInfo.InvariantCulture);

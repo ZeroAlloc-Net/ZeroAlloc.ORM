@@ -42,6 +42,36 @@ internal static class ScalarNullAssertions
             identity.Message);
     }
 
+    // #260 — no row at all throws the same exception type as a NULL value, naming
+    // the method, instead of InvalidOperationException.
+    public static async Task NoRowIntoNonNullableTargetsThrowsAsync(ScalarNullRepo repo)
+    {
+        var number = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.NoRowIntAsync(CancellationToken.None)).ConfigureAwait(false);
+        Assert.Equal(
+            "Scalar command 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.NoRowIntAsync' returned no row, " +
+            "but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.",
+            number.Message);
+
+        var wrapped = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.NoRowValueObjectAsync(CancellationToken.None)).ConfigureAwait(false);
+        Assert.Equal(
+            "Scalar command 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.NoRowValueObjectAsync' returned no row, " +
+            "but its return type is the non-nullable 'ZeroAlloc.ORM.Integration.Tests.TotalAmount'. " +
+            "Declare it as 'ZeroAlloc.ORM.Integration.Tests.TotalAmount?' to receive null.",
+            wrapped.Message);
+
+        var identity = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.NoRowIdentityAsync(CancellationToken.None)).ConfigureAwait(false);
+        Assert.Equal(
+            "Identity command 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.NoRowIdentityAsync' returned no row, " +
+            "but its return type is the non-nullable 'int'. The SQL must return the identity value, " +
+            "for example through RETURNING, OUTPUT or SCOPE_IDENTITY().",
+            identity.Message);
+
+        Assert.Null(await repo.NoRowNullableIntAsync(CancellationToken.None).ConfigureAwait(false));
+    }
+
     public static async Task NullableTargetsReceiveNullAsync(ScalarNullRepo repo)
     {
         Assert.Null(await repo.NullableStringAsync(CancellationToken.None).ConfigureAwait(false));

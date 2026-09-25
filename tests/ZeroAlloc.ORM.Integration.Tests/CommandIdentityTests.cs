@@ -10,7 +10,7 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 //   * Insert_via_last_insert_rowid_returns_int           — INSERT ...; SELECT
 //                                                          last_insert_rowid() — the
 //                                                          ;-joined fallback idiom.
-//   * Insert_returning_no_rows_throws_InvalidOperationException — null-guard regression.
+//   * Insert_returning_no_rows_throws_ZeroAllocOrmMaterializationException — null-guard regression.
 //
 // The schema declares `Id INTEGER PRIMARY KEY` which in Sqlite is an alias for
 // ROWID — values omitted from the INSERT auto-generate. The four tests share
@@ -83,13 +83,13 @@ public class CommandIdentityTests
     }
 
     [Fact]
-    public async Task Insert_returning_no_rows_throws_InvalidOperationException()
+    public async Task Insert_returning_no_rows_throws_ZeroAllocOrmMaterializationException()
     {
         // Regression for the null-guard. A RETURNING clause that produces zero
         // rows (INSERT ... WHERE FALSE) leaves ExecuteScalarAsync returning
         // null. The generator's Identity emit must throw
-        // InvalidOperationException with the "Identity command returned no
-        // value" message rather than silently propagating a default 0 or
+        // ZeroAllocOrmMaterializationException naming the method, #260, rather
+        // than silently propagating a default 0 or
         // tripping a NullReferenceException downstream.
         var fx = new SqliteFixture();
         await using (fx.ConfigureAwait(false))
@@ -99,7 +99,7 @@ public class CommandIdentityTests
 
             var repo = new CommandRepo(fx.Connection);
 
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
                 () => repo.InsertWithNoReturningRowAsync(42, 100.00m, CancellationToken.None))
                 .ConfigureAwait(false);
 

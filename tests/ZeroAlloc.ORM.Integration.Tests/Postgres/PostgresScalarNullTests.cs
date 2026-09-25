@@ -14,6 +14,13 @@ public sealed class PostgresScalarNullTests
     }
 
     [Fact]
+    public async Task No_row_into_a_non_nullable_scalar_throws()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await ScalarNullAssertions.NoRowIntoNonNullableTargetsThrowsAsync(new ScalarNullRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
     public async Task Null_into_a_nullable_scalar_returns_null()
     {
         await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);

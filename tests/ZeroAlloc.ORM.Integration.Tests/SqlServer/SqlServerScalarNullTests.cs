@@ -15,6 +15,10 @@ public sealed class SqlServerScalarNullTests : IAsyncLifetime
         => ScalarNullAssertions.NonNullableTargetsThrowAsync(new ScalarNullRepo(_fx.Connection));
 
     [Fact]
+    public Task No_row_into_a_non_nullable_scalar_throws()
+        => ScalarNullAssertions.NoRowIntoNonNullableTargetsThrowsAsync(new ScalarNullRepo(_fx.Connection));
+
+    [Fact]
     public Task Null_into_a_nullable_scalar_returns_null()
         => ScalarNullAssertions.NullableTargetsReceiveNullAsync(new ScalarNullRepo(_fx.Connection));
 }
