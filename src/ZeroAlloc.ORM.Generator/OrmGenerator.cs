@@ -145,7 +145,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                ConnectionResolved: first.ConnectionResolved,
                                ContainingTypePartial: first.ContainingTypePartial,
                                ContainingTypeLocation: first.ContainingTypeLocation,
-                               Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()));
+                               Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()),
+                               ContainingTypeChain: first.ContainingTypeChain);
                        }));
 
         context.RegisterSourceOutput(grouped, (sourceCtx, repo) =>
@@ -270,6 +271,42 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     containingTypePartial = true;
             }
         }
+
+        // v2.0 — issue #238. Walk the chain of OUTER containing types (i.e. types
+        // that contain `containing` — never `containing` itself, which the block
+        // above already covers via ZAO003/ZAO004). A repository nested inside one
+        // or more types needs the generated half wrapped in a matching partial
+        // declaration at every level, outermost first, or the two halves never
+        // join and the user's build fails with CS0116-family errors.
+        var containingTypeChainBuilder = ImmutableArray.CreateBuilder<ContainingTypeFrame>();
+        for (var outer = containing.ContainingType; outer is not null; outer = outer.ContainingType)
+        {
+            LocationInfo? outerLocation = null;
+            var outerPartial = false;
+            foreach (var outerSyntaxRef in outer.DeclaringSyntaxReferences)
+            {
+                if (outerSyntaxRef.GetSyntax() is TypeDeclarationSyntax otd)
+                {
+                    outerLocation ??= LocationInfo.From(otd.Identifier.GetLocation());
+                    if (otd.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
+                        outerPartial = true;
+                }
+            }
+
+            containingTypeChainBuilder.Add(new ContainingTypeFrame(
+                Kind: ContainingTypeKindKeyword(outer),
+                Name: outer.Name,
+                FullName: outer.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                TypeParameterNames: new EquatableArray<string>(
+                    outer.TypeParameters.Select(tp => tp.Name).ToImmutableArray()),
+                AccessibilityKeyword: MethodAccessibilityKeyword(outer.DeclaredAccessibility),
+                IsPartial: outerPartial,
+                Location: outerLocation));
+        }
+        // Symbol walk goes innermost-to-outermost; emit needs outermost-first so
+        // the generated wrapper opens `Outer { Middle { Inner { ... repo ... } } }`.
+        containingTypeChainBuilder.Reverse();
+        var containingTypeChain = new EquatableArray<ContainingTypeFrame>(containingTypeChainBuilder.ToImmutable());
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
 
@@ -1118,8 +1155,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ConnectionAccess: connectionAccess,
             ConnectionResolved: connectionResolved,
             ContainingTypePartial: containingTypePartial,
-            ContainingTypeLocation: containingTypeLocation);
+            ContainingTypeLocation: containingTypeLocation,
+            ContainingTypeChain: containingTypeChain);
     }
+
+    // v2.0 — issue #238. Maps a containing-type symbol to the C# keyword(s) its
+    // re-declared partial wrapper must use. `record struct` and `record` (record
+    // class — "record" alone is sufficient, "class" is implied) are distinguished
+    // via IsRecord combined with TypeKind; a plain class/struct/interface falls
+    // through to its own TypeKind keyword.
+    private static string ContainingTypeKindKeyword(INamedTypeSymbol type) => type.TypeKind switch
+    {
+        TypeKind.Struct => type.IsRecord ? "record struct" : "struct",
+        TypeKind.Interface => "interface",
+        _ => type.IsRecord ? "record" : "class",
+    };
 
     // Shape-based detection of the BulkInsert row-collection parameter. The
     // per-parameter ConventionDiscovery scan inside TransformMethod fires
@@ -3951,6 +4001,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO073" => DiagnosticDescriptors.ZAO073_BulkInsertReturnTypeShape,
         "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
         "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
+        "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
         _ => null,
     };
 
@@ -4002,6 +4053,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 repo.ContainingTypeLocation?.ToLocation(),
                 repo.ContainingTypeFullName));
         }
+
+        // ZAO081 — issue #238. An OUTER containing type (one that wraps the
+        // repository type itself, which ZAO004 above already covers) isn't
+        // partial. Fires once per offending frame — a repository nested three
+        // deep with two non-partial containers gets two diagnostics, naming
+        // each one, so the fix list is complete on the first read.
+        foreach (var frame in repo.ContainingTypeChain)
+        {
+            if (frame.IsPartial) continue;
+            hadError = true;
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
+                frame.Location?.ToLocation(),
+                frame.FullName));
+        }
         return hadError;
     }
 
@@ -4018,6 +4084,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"namespace {ns};");
             sb.AppendLine();
         }
+
+        // v2.0 — issue #238. Wrap the generated repository class in a matching
+        // partial declaration for every OUTER containing type, outermost first,
+        // so the generated half joins the user's nested type instead of landing
+        // as an unrelated namespace-level class. Empty for the common
+        // namespace-level case, which keeps this byte-identical with pre-#238
+        // output — no frames, no lines added, no indentation changed below.
+        foreach (var frame in repo.ContainingTypeChain)
+        {
+            var typeParams = frame.TypeParameterNames.Length == 0
+                ? string.Empty
+                : $"<{string.Join(", ", frame.TypeParameterNames)}>";
+            sb.AppendLine($"{frame.AccessibilityKeyword} partial {frame.Kind} {frame.Name}{typeParams}");
+            sb.AppendLine("{");
+        }
+
         sb.AppendLine($"partial class {repo.ContainingTypeName}");
         sb.AppendLine("{");
         var first = true;
@@ -4174,6 +4256,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
         sb.AppendLine("}");
+
+        // Close each OUTER containing-type frame opened above, one `}` per
+        // level — order doesn't matter for closing braces, only for opening.
+        for (var i = 0; i < repo.ContainingTypeChain.Length; i++)
+        {
+            sb.AppendLine("}");
+        }
 
         var hint = BuildHintName(repo);
         context.AddSource(hint, SourceText.From(sb.ToString(), Encoding.UTF8));

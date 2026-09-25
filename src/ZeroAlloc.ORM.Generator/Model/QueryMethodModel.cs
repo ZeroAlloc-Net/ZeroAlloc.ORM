@@ -1,3 +1,5 @@
+using System;
+
 namespace ZeroAlloc.ORM.Generator.Model;
 
 // Classification of the emit template a [Query] method should use.
@@ -259,7 +261,43 @@ internal sealed record QueryRepositoryModel(
     bool ConnectionResolved,
     bool ContainingTypePartial,
     LocationInfo? ContainingTypeLocation,
-    EquatableArray<QueryMethodModel> Methods);
+    EquatableArray<QueryMethodModel> Methods,
+    // v2.0 — issue #238. The chain of OUTER containing types wrapping the
+    // repository class, outermost first. Empty for a repository declared at
+    // namespace level (the common case, kept byte-identical). EmitRepository
+    // re-emits each frame's own partial declaration around the generated
+    // repository class so the generated half joins the user's nested type.
+    EquatableArray<ContainingTypeFrame> ContainingTypeChain);
+
+// v2.0 — issue #238. One entry per OUTER containing type of a nested repository
+// class (never the repository type itself — ZAO003/ZAO004 already cover that
+// one). Captured as a plain, cache-safe value so the incremental pipeline can
+// compare frames without re-reading symbols.
+//
+//   Kind                — the C# keyword(s) to re-declare: "class", "struct",
+//                          "record" (record class) or "record struct".
+//   Name                — the type's simple (unqualified) name.
+//   FullName            — fully-qualified display name, used in diagnostic
+//                          message args (mirrors ContainingTypeFullName).
+//   TypeParameterNames  — the type's own generic parameter names, in order.
+//                          Constraints are never repeated on a partial
+//                          declaration, so only the names are needed.
+//   AccessibilityKeyword — re-emitted verbatim; C# requires every partial
+//                          declaration of a type to agree on accessibility
+//                          (CS0262) exactly like it does for partial methods.
+//   IsPartial           — true when at least one syntax declaration of this
+//                          type carries the `partial` modifier. False fires
+//                          ZAO081 instead of emitting code that can't compile.
+//   Location            — first declaration's identifier location, for the
+//                          ZAO081 diagnostic.
+internal sealed record ContainingTypeFrame(
+    string Kind,
+    string Name,
+    string FullName,
+    EquatableArray<string> TypeParameterNames,
+    string AccessibilityKeyword,
+    bool IsPartial,
+    LocationInfo? Location) : IEquatable<ContainingTypeFrame>;
 
 // Intermediate carrier emitted by TransformMethod. Bundles the method-scoped
 // model with the type-scoped fields so the grouping step in OrmGenerator.Initialize
@@ -273,4 +311,5 @@ internal sealed record QueryMethodWithTypeContext(
     string ConnectionAccess,
     bool ConnectionResolved,
     bool ContainingTypePartial,
-    LocationInfo? ContainingTypeLocation);
+    LocationInfo? ContainingTypeLocation,
+    EquatableArray<ContainingTypeFrame> ContainingTypeChain);
