@@ -51,16 +51,10 @@ jobs:
   # AnalyzerReleases.Unshipped.md and the API in every PublicAPI.Unshipped.txt. The
   # ship-release-tracking job in release-please.yml commits that move onto the branch;
   # this fails the PR if the move is missing, or if a later commit on the branch adds
-  # entries after it. The checkout is the merge ref, so it sees what would land on main.
+  # entries after it. Shared from ZeroAlloc-Net/.github; see ZeroAlloc-Net/.github#38.
   release-tracking:
     if: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Check nothing is left unshipped
-        run: python3 scripts/ship-release-tracking.py --check
+    uses: ZeroAlloc-Net/.github/.github/workflows/release-tracking.yml@main
 
   # ZeroAlloc.ORM published four packages with no API gate at all -- the only
   # repo in the org with zero coverage. No inputs: the workflow discovers every
