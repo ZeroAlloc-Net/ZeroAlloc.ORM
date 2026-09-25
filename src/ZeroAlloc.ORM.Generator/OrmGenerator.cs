@@ -5252,31 +5252,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var op = outputs[i];
             var local = "__out_" + op.TupleFieldName;
             var paramLocal = "__p_" + op.MatchingParameterName;
+            var boundName = ResolveBoundParameterName(m, op);
             if (op.IsReturnValue)
-            {
-                // #241 — only SQL Server fills a ReturnValue parameter; it always
-                // does, with an int. Npgsql neither sends nor sets one, so its
-                // Value stays null, and Convert.ToInt32(null) would read that as a
-                // RETURN value of 0. The generator cannot see the provider, so the
-                // check happens here, for int and int? alike.
-                var notSet = SymbolDisplay.FormatLiteral(
-                    $"The provider did not set the RETURN value of the procedure called by '{m.MethodName}' into parameter '{op.MatchingParameterName}'. Only SQL Server procedures have a RETURN value.",
-                    quote: true);
-                sb.AppendLine($"            if ({paramLocal}.Value is null)");
-                sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({notSet});");
-
-                // DBNull is a database NULL. An int? field reads it as null through
-                // the readback's DBNull guard; an int field cannot hold it, so it
-                // gets the same exception instead of Convert's InvalidCastException.
-                if (!op.IsNullable)
-                {
-                    var isNull = SymbolDisplay.FormatLiteral(
-                        $"The RETURN value of the procedure called by '{m.MethodName}' is NULL, but its tuple field for parameter '{op.MatchingParameterName}' is int. Declare it int? to read NULL.",
-                        quote: true);
-                    sb.AppendLine($"            if ({paramLocal}.Value is global::System.DBNull)");
-                    sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({isNull});");
-                }
-            }
+                EmitSprocReturnValueGuards(sb, m.ProcedureName, boundName, op, paramLocal, "            ");
             var expr = BuildSprocOutputReadbackExpression(op, paramLocal);
             if (op.IsNullable)
             {
@@ -5284,7 +5262,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             else
             {
-                EmitSprocOutputNullGuard(sb, m.ProcedureName, ResolveBoundParameterName(m, op), op, paramLocal, "            ");
+                // A return value has its own guards above, worded for a RETURN
+                // value rather than an output parameter.
+                if (!op.IsReturnValue)
+                    EmitSprocOutputNullGuard(sb, m.ProcedureName, boundName, op, paramLocal, "            ");
                 sb.AppendLine($"            var {local} = {expr};");
             }
         }
@@ -5383,6 +5364,39 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 return p.ParamNameOverride ?? p.Name;
         }
         return op.MatchingParameterName;
+    }
+
+    // #241 — the RETURN value's two empty states mean different things.
+    //
+    //   * Value null: the provider never set the parameter. Only SQL Server fills
+    //     a ReturnValue parameter, and it always does, with an int; Npgsql neither
+    //     sends nor sets one. Convert.ToInt32(null) would read that as 0, so int
+    //     and int? both throw. The generator cannot see the provider, so the
+    //     check happens here.
+    //   * Value DBNull: a database NULL. An int? element reads it as null through
+    //     the readback expression's null guard. An int element cannot hold it and
+    //     throws the same exception, as #244 does for a non-nullable output.
+    private static void EmitSprocReturnValueGuards(
+        StringBuilder sb,
+        string procedureName,
+        string boundParameterName,
+        SprocOutputParam op,
+        string paramLocal,
+        string indent)
+    {
+        var notSet =
+            $"The provider did not set the RETURN value of stored procedure '{procedureName}' " +
+            $"into parameter '{boundParameterName}'. Only SQL Server procedures have a RETURN value.";
+        sb.AppendLine($"{indent}if ({paramLocal}.Value is null)");
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(notSet, quote: true)});");
+        if (op.IsNullable) return;
+
+        var isNull =
+            $"Stored procedure '{procedureName}' returned a NULL RETURN value into parameter " +
+            $"'{boundParameterName}', but tuple element '{op.TupleFieldName}' is the " +
+            "non-nullable type 'int'. Declare it as 'int?' to receive null.";
+        sb.AppendLine($"{indent}if ({paramLocal}.Value is global::System.DBNull)");
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(isNull, quote: true)});");
     }
 
     private static void EmitSprocOutputNullGuard(

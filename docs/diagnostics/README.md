@@ -34,6 +34,8 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO064 | Info | `[StoredProcedure(Batch = ...)]` non-default value is ignored | [ZAO064](ZAO064.md) |
 | ZAO065 | Warning | Decimal output parameter has no `Scale` | [ZAO065](ZAO065.md) |
 | ZAO066 | Error | `[Param]` member does not apply to this parameter | [ZAO066](ZAO066.md) |
+| ZAO067 | Error | Return value parameter must be `int` | [ZAO067](ZAO067.md) |
+| ZAO068 | Error | More than one return value parameter | [ZAO068](ZAO068.md) |
 | ZAO070 | Error | BulkInsert method must take exactly one collection parameter | [ZAO070](ZAO070.md) |
 | ZAO071 | Error | BulkInsert SQL must contain exactly one VALUES tuple | [ZAO071](ZAO071.md) |
 | ZAO072 | Error | BulkInsert placeholder doesn't match any TRow property | [ZAO072](ZAO072.md) |
@@ -47,7 +49,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO001`–`ZAO019` — hard errors and warnings about user-authored code shape.
 - `ZAO020`–`ZAO039` — informational notices about deferred features, plus tuple/SQL-statement arity mismatches (`ZAO032`, `ZAO033`).
 - `ZAO040`–`ZAO052` — materialization, binding and composite-type construction failures.
-- `ZAO060`–`ZAO066` — `[StoredProcedure]` and `[Param]` guardrails. `ZAO060` is reserved: registered for catalog completeness but never emitted (C# already rejects the case it targets via CS1988).
+- `ZAO060`–`ZAO068` — `[StoredProcedure]` and `[Param]` guardrails. `ZAO060` is reserved: registered for catalog completeness but never emitted (C# already rejects the case it targets via CS1988).
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 

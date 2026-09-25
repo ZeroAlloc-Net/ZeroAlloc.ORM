@@ -47,11 +47,13 @@ partial class Repo
                     while (await __reader.ReadAsync(ct).ConfigureAwait(false)) { }
                 }
             }
+            if (__p_newOrderId.Value is null or global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Stored procedure 'usp_InsertOrder' returned NULL for output parameter 'newOrderId', but tuple element 'NewOrderId' is the non-nullable type 'int'. Declare it as 'int?' to receive null.");
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             if (__p_RETURN_VALUE.Value is null)
-                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The provider did not set the RETURN value of the procedure called by 'InsertAsync' into parameter 'RETURN_VALUE'. Only SQL Server procedures have a RETURN value.");
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The provider did not set the RETURN value of stored procedure 'usp_InsertOrder' into parameter 'RETURN_VALUE'. Only SQL Server procedures have a RETURN value.");
             if (__p_RETURN_VALUE.Value is global::System.DBNull)
-                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The RETURN value of the procedure called by 'InsertAsync' is NULL, but its tuple field for parameter 'RETURN_VALUE' is int. Declare it int? to read NULL.");
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Stored procedure 'usp_InsertOrder' returned a NULL RETURN value into parameter 'RETURN_VALUE', but tuple element 'RETURN_VALUE' is the non-nullable type 'int'. Declare it as 'int?' to receive null.");
             var __out_RETURN_VALUE = global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             return (__elem0, __out_NewOrderId, __out_RETURN_VALUE);
         }

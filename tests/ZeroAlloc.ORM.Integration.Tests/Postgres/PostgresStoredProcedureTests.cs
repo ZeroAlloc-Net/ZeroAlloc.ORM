@@ -277,7 +277,7 @@ public sealed class PostgresStoredProcedureTests
         var act = async () => await repo.ReturnValueAsync(21, 0, null, CancellationToken.None).ConfigureAwait(false);
 
         (await act.Should().ThrowAsync<ZeroAllocOrmMaterializationException>().ConfigureAwait(false))
-            .WithMessage("*did not set the RETURN value*'ReturnValueAsync'*'RETURN_VALUE'*Only SQL Server*");
+            .WithMessage("*did not set the RETURN value of stored procedure 'return_value_proc' into parameter 'RETURN_VALUE'*Only SQL Server*");
     }
 
     // #241 — a procedure that declares an OUT parameter named "RETURN_VALUE".

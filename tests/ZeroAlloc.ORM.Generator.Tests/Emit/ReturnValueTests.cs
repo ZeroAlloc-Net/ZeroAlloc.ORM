@@ -66,7 +66,9 @@ public class ReturnValueTests
         // Only SQL Server sets a return value; on another provider Value stays
         // null, which the generated code reports instead of reading it as 0.
         Assert.Contains("if (__p_status.Value is null)", generated, System.StringComparison.Ordinal);
-        Assert.DoesNotContain("if (__p_doubled.Value is null", generated, System.StringComparison.Ordinal);
+        // The output parameter keeps the #244 NULL-output guard, not the RETURN one.
+        Assert.DoesNotContain("RETURN value of stored procedure 'usp_X' into parameter 'doubled'", generated, System.StringComparison.Ordinal);
+        Assert.Contains("returned NULL for output parameter 'doubled'", generated, System.StringComparison.Ordinal);
         // It is read back after the reader is drained, like an output parameter.
         Assert.Contains("var __out_Status = global::System.Convert.ToInt32(__p_status.Value!", generated, System.StringComparison.Ordinal);
         Assert.Contains("__p_doubled.Direction = global::System.Data.ParameterDirection.Output;", generated, System.StringComparison.Ordinal);
@@ -85,7 +87,9 @@ public class ReturnValueTests
             """);
 
         Assert.Contains("if (__p_RETURN_VALUE.Value is null)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The provider did not set the RETURN value", Normalize(generated), System.StringComparison.Ordinal);
-        Assert.Contains("if (__p_RETURN_VALUE.Value is global::System.DBNull)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The RETURN value of the procedure called by 'RunAsync' is NULL", Normalize(generated), System.StringComparison.Ordinal);
+        Assert.Contains("if (__p_RETURN_VALUE.Value is global::System.DBNull)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Stored procedure 'usp_X' returned a NULL RETURN value into parameter 'RETURN_VALUE'", Normalize(generated), System.StringComparison.Ordinal);
+        // The generic #244 output guard is not emitted a second time.
+        Assert.DoesNotContain("for output parameter 'RETURN_VALUE'", generated, System.StringComparison.Ordinal);
         Assert.Contains("var __out_RETURN_VALUE = global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!", generated, System.StringComparison.Ordinal);
     }
 
@@ -100,8 +104,8 @@ public class ReturnValueTests
 
         Assert.Contains("if (__p_RETURN_VALUE.Value is null)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The provider did not set the RETURN value", Normalize(generated), System.StringComparison.Ordinal);
         Assert.DoesNotContain("if (__p_RETURN_VALUE.Value is global::System.DBNull)", generated, System.StringComparison.Ordinal);
-        Assert.DoesNotContain("is NULL", generated, System.StringComparison.Ordinal);
-        Assert.Contains("int? __out_RETURN_VALUE = __p_RETURN_VALUE.Value is global::System.DBNull ? null : global::System.Convert.ToInt32(", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("NULL RETURN value", generated, System.StringComparison.Ordinal);
+        Assert.Contains("int? __out_RETURN_VALUE = __p_RETURN_VALUE.Value is null or global::System.DBNull ? null : global::System.Convert.ToInt32(", generated, System.StringComparison.Ordinal);
     }
 
     private static string Normalize(string text) => text.Replace("\r\n", "\n", System.StringComparison.Ordinal);
