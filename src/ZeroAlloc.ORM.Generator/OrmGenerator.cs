@@ -5029,18 +5029,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"                await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
             sb.AppendLine($"                while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
             sb.AppendLine("                {");
+            string addExpr;
             if (mat.IdentityFactory is null)
             {
                 // Primitive identity — no wrap.
-                sb.AppendLine($"                    __ids.Add(__reader.{mat.IdentityReaderMethod}(0));");
+                addExpr = $"__ids.Add(__reader.{mat.IdentityReaderMethod}(0));";
             }
             else
             {
                 // VO identity. The IdentityFactory sentinel is a ctor reference
                 // ("new global::Ns.OrderId") emitted by the classifier; static
                 // factories are NOT supported in v1.3 (see method comment).
-                sb.AppendLine($"                    __ids.Add({mat.IdentityFactory}(__reader.{mat.IdentityReaderMethod}(0)));");
+                addExpr = $"__ids.Add({mat.IdentityFactory}(__reader.{mat.IdentityReaderMethod}(0)));";
             }
+            EmitBulkInsertIdentityNullGuard(sb, "                    ", m, mat, addExpr);
             sb.AppendLine("                }");
         }
         else
@@ -5063,6 +5065,61 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+    }
+
+    // #263 — the identity readback has no NULL guard. An identity should never
+    // be NULL in practice, but if a provider or trigger returns one, a bare
+    // cast error (or a default value) is not what the docs promise. Reuses
+    // #249's design: checking IsDBNull(0) before every row's read costs real
+    // percentage points on a hot bulk-insert path, so the check runs only on
+    // failure. Every provider already throws when GetXxx meets a NULL — the
+    // row's read sits in a try whose catch filter calls a NoInlining static
+    // local function. That function returns null unless the exception is one
+    // of the three provider NULL-read exceptions AND ordinal 0 is actually
+    // DBNull; then it returns the ORM exception (provider's as InnerException)
+    // and the catch throws it. Otherwise the filter is false and the original
+    // exception propagates untouched. The valid path runs no extra code.
+    private static void EmitBulkInsertIdentityNullGuard(
+        StringBuilder sb,
+        string indent,
+        QueryMethodModel m,
+        BulkInsertMaterializationModel mat,
+        string addExpr)
+    {
+        const string finderName = "__NullIdentity";
+        sb.AppendLine($"{indent}try");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    {addExpr}");
+        sb.AppendLine($"{indent}}}");
+        sb.AppendLine($"{indent}catch (global::System.Exception __ex) when ({finderName}(__reader, __ex) is {{ }} __nullIdentity)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    throw __nullIdentity;");
+        sb.AppendLine($"{indent}}}");
+        sb.AppendLine();
+        sb.AppendLine($"{indent}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+        sb.AppendLine($"{indent}static global::System.Exception? {finderName}(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)");
+        sb.AppendLine($"{indent}{{");
+        sb.AppendLine($"{indent}    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))");
+        sb.AppendLine($"{indent}        return null;");
+        sb.AppendLine($"{indent}    if (!__r.IsDBNull(0))");
+        sb.AppendLine($"{indent}        return null;");
+        sb.AppendLine($"{indent}    return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({BuildBulkInsertIdentityNullMessage(m, mat)}, __inner);");
+        sb.AppendLine($"{indent}}}");
+    }
+
+    // Worded like #250's single-row Identity command NULL guard: names the
+    // method and the non-nullable type. Unlike that guard (a boxed
+    // ExecuteScalar result checked once) this one names the column too, since
+    // the identity readback reads it by position and the finder can ask the
+    // reader for its name.
+    private static string BuildBulkInsertIdentityNullMessage(QueryMethodModel m, BulkInsertMaterializationModel mat)
+    {
+        var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
+        var typeDisplay = StripGlobalPrefix(PrimitiveCatalog.GetScalarCastTypeFromReader(mat.IdentityReaderMethod));
+        var rest =
+            $"' is NULL, but BulkInsert identity command '{method}' expects the non-nullable " +
+            $"'{typeDisplay}'. The SQL must produce a non-null identity value.";
+        return $"\"Column '\" + __r.GetName(0) + {SymbolDisplay.FormatLiteral(rest, quote: true)}";
     }
 
     // v1.3 Task 6 — Render the parameter-value expression for one

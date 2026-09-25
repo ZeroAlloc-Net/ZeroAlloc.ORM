@@ -109,6 +109,19 @@ The list is materialised once across all chunks. ZA.ORM does **not** stream
 the identities back — for that scale, consider whether `BulkInsert` is the
 right tool (see [When to reach for BulkInsert](#when-to-reach-for-bulkinsert)).
 
+### NULL-identity safety
+
+An identity should never be NULL in practice, but if a provider or a
+trigger returns one for a row, the readback throws
+`ZeroAllocOrmMaterializationException` naming the column and the method,
+for example *"Column 'Id' is NULL, but BulkInsert identity command
+'MyApp.OrderRepo.InsertOrdersAsync' expects the non-nullable 'int'. The SQL
+must produce a non-null identity value."* The provider's own exception is
+kept as `InnerException`. This mirrors the single-row `Identity` guard (see
+[Recipe 3 in `commands.md`](commands.md#recipe-3--identity-capture-the-inserted-rows-id))
+and runs at no per-row cost: each row's read sits in a try block whose catch
+only fires on a provider NULL-read exception.
+
 ## Recipe 3 — TRow with value objects
 
 Both `TRow`'s properties and `TIdentity` can be `[ValueObject]`-wrapped
@@ -200,7 +213,7 @@ That has two consequences worth thinking about up front:
 | ------------ | ------------------------------------------------ | ----------------: | ------------------: | ----------------- |
 | Sqlite       | 999 (hard, `SQLITE_MAX_VARIABLE_NUMBER`)         |  450              |  90                 | covered in v1.3   |
 | PostgreSQL   | 65535 (`int16` wire-protocol parameter index)    |  450              |  90                 | covered in v1.3   |
-| SQL Server   | 2100                                             |  450              |  90                 | snapshot-only     |
+| SQL Server   | 2100                                             |  450              |  90                 | covered (#263)    |
 | MySQL        | bounded by `max_allowed_packet`, not parameter count | 450           |  90                 | snapshot-only     |
 
 The 900-parameter budget is conservative on every provider except Sqlite,
