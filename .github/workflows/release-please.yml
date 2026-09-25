@@ -8,12 +8,23 @@ permissions:
   contents: write
   pull-requests: write
 
+# One run at a time. Two quick pushes to main would otherwise run release-please and
+# ship-release-tracking concurrently against the same release PR branch. Queued, not
+# cancelled: a cancelled run could drop a release or its publish.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       version: ${{ steps.release.outputs.version }}
+      # Read by ship-release-tracking. A step output is only visible to another job
+      # when the job re-exports it here; without these the job's `if:` is always false.
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      pr: ${{ steps.release.outputs.pr }}
     steps:
       - uses: googleapis/release-please-action@v5
         id: release
@@ -31,6 +42,44 @@ jobs:
           # change. Every other ZeroAlloc repository already uses the PAT.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
+
+  # Marks the analyzer rules and public API that the pending release adds as shipped,
+  # by committing the move onto the release PR branch. Merging that PR then lands the
+  # move in the same commit that tags the release, so AnalyzerReleases.Shipped.md and
+  # PublicAPI.Shipped.txt always say what each published version contains. Without
+  # this the Unshipped files kept growing across every release until #252: nothing was
+  # ever marked shipped, so the analyzers could not flag a change to a shipped rule
+  # or a shipped API.
+  #
+  # release-please rebuilds its branch from main whenever main moves, dropping this
+  # commit; the job then runs again in the same workflow run and re-applies it. The
+  # script is idempotent and commits nothing when nothing is unshipped.
+  ship-release-tracking:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release PR branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          # Same token as release-please, so this push triggers the PR's checks
+          # exactly as release-please's own push does.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Move Unshipped entries to Shipped
+        run: |
+          version=$(jq -r '."."' .release-please-manifest.json)
+          python3 scripts/ship-release-tracking.py "$version"
+          if git diff --quiet; then
+            echo "Nothing unshipped for $version."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: mark analyzer rules and public api shipped in $version"
+          git push
 
   # Publishing lives here rather than in a workflow listening for
   # `release: published`. A release created with GITHUB_TOKEN does not trigger

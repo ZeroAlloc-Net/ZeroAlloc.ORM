@@ -54,3 +54,11 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.
+
+## Release tracking
+
+A new diagnostic goes into `src/ZeroAlloc.ORM.Generator/AnalyzerReleases.Unshipped.md`. The build fails if a descriptor has no entry there or in `AnalyzerReleases.Shipped.md`.
+
+`AnalyzerReleases.Shipped.md` records which release each rule first shipped in, and which releases removed a rule. Once a rule has shipped, changing its severity or category, or removing it, has to be declared under `### Changed Rules` or `### Removed Rules` in the Unshipped file. A silent change to a shipped rule fails the build.
+
+On release, the Unshipped rows move into a `## Release x.y.z` section of the Shipped file. The move is automated: when release-please opens or updates the release PR, the `ship-release-tracking` job in `.github/workflows/release-please.yml` runs `scripts/ship-release-tracking.py <version>` on that branch. The script moves the analyzer rules and the `PublicAPI.Unshipped.txt` entries of every package in one commit. **Release checklist:** before merging a release PR, check that it contains that commit. If it doesn't, run `python3 scripts/ship-release-tracking.py <version>` on the release branch and push the result. The `release-tracking` job in `.github/workflows/ci.yml` fails a release PR while any Unshipped entry remains; `python3 scripts/ship-release-tracking.py --check` runs the same check locally.

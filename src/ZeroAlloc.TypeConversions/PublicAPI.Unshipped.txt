@@ -1,2 +1,1 @@
 #nullable enable
-static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetDbTypeNameFromReader(string? readerMethod) -> string!

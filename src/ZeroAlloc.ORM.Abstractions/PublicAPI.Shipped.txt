@@ -29,9 +29,17 @@ ZeroAlloc.ORM.MaterializeStrategy.FlatRow = 1 -> ZeroAlloc.ORM.MaterializeStrate
 ZeroAlloc.ORM.ParamAttribute
 ZeroAlloc.ORM.ParamAttribute.DbType.get -> System.Data.DbType
 ZeroAlloc.ORM.ParamAttribute.DbType.init -> void
+ZeroAlloc.ORM.ParamAttribute.Direction.get -> System.Data.ParameterDirection
+ZeroAlloc.ORM.ParamAttribute.Direction.init -> void
 ZeroAlloc.ORM.ParamAttribute.Name.get -> string?
 ZeroAlloc.ORM.ParamAttribute.Name.init -> void
 ZeroAlloc.ORM.ParamAttribute.ParamAttribute() -> void
+ZeroAlloc.ORM.ParamAttribute.Precision.get -> byte
+ZeroAlloc.ORM.ParamAttribute.Precision.init -> void
+ZeroAlloc.ORM.ParamAttribute.Scale.get -> byte
+ZeroAlloc.ORM.ParamAttribute.Scale.init -> void
+ZeroAlloc.ORM.ParamAttribute.Size.get -> int
+ZeroAlloc.ORM.ParamAttribute.Size.init -> void
 ZeroAlloc.ORM.QueryAttribute
 ZeroAlloc.ORM.QueryAttribute.Batch.get -> ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.QueryAttribute.Batch.init -> void

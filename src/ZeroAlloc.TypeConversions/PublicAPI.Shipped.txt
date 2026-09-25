@@ -10,6 +10,7 @@ static ZeroAlloc.TypeConversions.ConventionContext.operator ==(ZeroAlloc.TypeCon
 static ZeroAlloc.TypeConversions.ConventionDiscovery.Resolve(Microsoft.CodeAnalysis.ITypeSymbol! type, ZeroAlloc.TypeConversions.ConventionContext! context) -> ZeroAlloc.TypeConversions.ConventionResult!
 static ZeroAlloc.TypeConversions.ConventionResult.operator !=(ZeroAlloc.TypeConversions.ConventionResult? left, ZeroAlloc.TypeConversions.ConventionResult? right) -> bool
 static ZeroAlloc.TypeConversions.ConventionResult.operator ==(ZeroAlloc.TypeConversions.ConventionResult? left, ZeroAlloc.TypeConversions.ConventionResult? right) -> bool
+static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetDbTypeNameFromReader(string? readerMethod) -> string!
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetScalarCastTypeFromReader(string? readerMethod) -> string!
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetScalarReaderMethod(Microsoft.CodeAnalysis.ITypeSymbol! type) -> string?
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.IsPrimitive(Microsoft.CodeAnalysis.ITypeSymbol! type) -> bool
