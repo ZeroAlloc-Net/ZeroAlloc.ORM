@@ -226,7 +226,7 @@ Deferred past v1.0 (see **Roadmap beyond v1.0** below): recursive composites (ZA
 
 - **Postgres integration fixture (Testcontainers)** — `tests/ZeroAlloc.ORM.Integration.Tests/Postgres/` runs the full integration matrix (FlatRow, multi-result-set with real `IAsyncDbBatch`, streaming, stored procedures with `INOUT`/`OUT` params, `[Materialize(Factory)]` against `NUMERIC` columns, composites) against a real Postgres 16 container. Resolves the accumulated v0.3/v0.4/v0.5 deferrals: the runtime `IAsyncDbBatch` branch (v0.3-CLN3), stored-procedure round-trips (v0.4 placeholder), and `Money.FromStorage` against a real decimal provider (v0.5).
 
-- **Diagnostics catalog audit** — every shipping ZAO code now has a dedicated reference page under [`docs/diagnostics/`](docs/diagnostics/) with trigger, fix recipe, code example, and related codes. A new `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown file — broken links can't be shipped. Positive/negative test pairs backfilled for ZAO001 and ZAO043. The catalog table (below) is the canonical adopter-facing index.
+- **Diagnostics catalog audit** — every shipping ZAO code now has a dedicated reference page under [`docs/diagnostics/`](docs/diagnostics/) with trigger, fix recipe, code example, and related codes. A new `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown file — broken links can't be shipped. Positive/negative test pairs backfilled for ZAO001 and ZAO043. The catalog table in [docs/diagnostics/README.md](docs/diagnostics/README.md) is the canonical adopter-facing index; see #242.
 
 - **ZA.Telemetry observability cookbook recipe** — [`docs/cookbook/observability.md`](docs/cookbook/observability.md) shows the composition pattern at the consumer seam: a `partial class OrderRepository` annotated with both `[Query]` (ZA.ORM) and `[Instrument]` (ZA.Telemetry), with the two generators emitting independently. ZA.ORM ships **no built-in `ActivitySource`** — observability lives at the adopter boundary so the package graph stays minimal and consumers pick their own tracing stack. Collision smoke deferred to v0.6-CLN1 (blocked on upstream nullable-annotation fix in ZA.Telemetry's `InstrumentGenerator`).
 
@@ -290,38 +290,11 @@ ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
 
 ## Diagnostics catalog
 
-ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics. Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
+ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics, from signature-shape errors (`ZAO001`–`ZAO009`) through materialization, stored-procedure/parameter, and `BulkInsert` guardrails (`ZAO020`–`ZAO081`). Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
 
-| Code | Severity | Trigger | Link |
-|------|----------|---------|------|
-| ZAO001 | Error | Annotated method must be partial | [ZAO001](docs/diagnostics/ZAO001.md) |
-| ZAO002 | Error | Unsupported return type | [ZAO002](docs/diagnostics/ZAO002.md) |
-| ZAO003 | Error | No `IAsyncDbConnection` found on containing type | [ZAO003](docs/diagnostics/ZAO003.md) |
-| ZAO004 | Error | Containing type must be partial | [ZAO004](docs/diagnostics/ZAO004.md) |
-| ZAO005 | Error | Multiple ORM attributes on one method | [ZAO005](docs/diagnostics/ZAO005.md) |
-| ZAO006 | Warning | Method has multiple `CancellationToken` parameters | [ZAO006](docs/diagnostics/ZAO006.md) |
-| ZAO007 | Error | `IAsyncEnumerable<T>` return without `[EnumeratorCancellation]` | [ZAO007](docs/diagnostics/ZAO007.md) |
-| ZAO008 | Error | Multi-statement SQL with single-result return type | [ZAO008](docs/diagnostics/ZAO008.md) |
-| ZAO009 | Warning | Redundant `async` keyword on generated partial | [ZAO009](docs/diagnostics/ZAO009.md) |
-| ZAO020 | Info | `[Query](FromResource = true)` not yet implemented | [ZAO020](docs/diagnostics/ZAO020.md) |
-| ZAO022 | Info | Return type shape not yet supported | [ZAO022](docs/diagnostics/ZAO022.md) |
-| ZAO032 | Error | Tuple arity exceeds SQL statement count | [ZAO032](docs/diagnostics/ZAO032.md) |
-| ZAO033 | Error | SQL statement count exceeds tuple arity | [ZAO033](docs/diagnostics/ZAO033.md) |
-| ZAO040 | Error | No construction strategy resolved for type | [ZAO040](docs/diagnostics/ZAO040.md) |
-| ZAO041 | Error | No binding strategy resolved for parameter | [ZAO041](docs/diagnostics/ZAO041.md) |
-| ZAO042 | Error | `[StoreAsString]` requires an enum type | [ZAO042](docs/diagnostics/ZAO042.md) |
-| ZAO043 | Error | `[Materialize(Factory)]` references missing method | [ZAO043](docs/diagnostics/ZAO043.md) |
-| ZAO044 | Error | Ambiguous convention discovery | [ZAO044](docs/diagnostics/ZAO044.md) |
-| ZAO050 | Warning | Nullable composite type requires runtime all-or-nothing check | [ZAO050](docs/diagnostics/ZAO050.md) |
-| ZAO051 | Error | Factory parameter does not match any SELECT column | [ZAO051](docs/diagnostics/ZAO051.md) |
-| ZAO052 | Error | Recursive composite types are not supported | [ZAO052](docs/diagnostics/ZAO052.md) |
-| ZAO060 | Error | `[StoredProcedure]` async method has out/ref parameter (reserved) | [ZAO060](docs/diagnostics/ZAO060.md) |
-| ZAO061 | Error | `[StoredProcedure]` name is empty | [ZAO061](docs/diagnostics/ZAO061.md) |
-| ZAO062 | Warning | Named-tuple field does not match any parameter | [ZAO062](docs/diagnostics/ZAO062.md) |
-| ZAO063 | Error | `[Param(Name = ...)]` override is not supported on composite parameters | [ZAO063](docs/diagnostics/ZAO063.md) |
-| ZAO064 | Info | `[StoredProcedure(Batch = ...)]` non-default value is ignored | [ZAO064](docs/diagnostics/ZAO064.md) |
+The full, canonical index of every shipped code — severity, trigger, and page link — lives at **[docs/diagnostics/README.md](docs/diagnostics/README.md)**, not here, so there is exactly one table to keep current.
 
-A unit test (`DiagnosticHelpLinkTests`) enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/` — broken links can't be shipped.
+A `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/`, and that every descriptor has a row in that canonical index — broken links and missing rows can't be shipped.
 
 ## Documentation
 
