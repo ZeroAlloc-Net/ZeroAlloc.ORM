@@ -3264,6 +3264,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 };
                 if (reader is null) return null;
                 var convention = BuildConventionInfo(unwrapped, resolution, reader);
+                var isInt32 = unwrapped.SpecialType == SpecialType.System_Int32;
 
                 outputBuilder.Add(new SprocOutputParam(
                     TupleFieldName: field.Name,
@@ -3271,7 +3272,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     TypeName: unwrapped.ToDisplayString(typeDisplayFormat),
                     IsNullable: isNullable,
                     Convention: convention,
-                    DbTypeName: PrimitiveCatalog.GetDbTypeNameFromReader(reader)));
+                    DbTypeName: PrimitiveCatalog.GetDbTypeNameFromReader(reader),
+                    IsReturnValue: BindsAsReturnValue(matchingParam, isInt32),
+                    IsInt32: isInt32));
                 orderBuilder.Add(new SprocTupleSlot(
                     SprocTupleSlotKind.Output, outputBuilder.Count - 1));
                 matchedAny = true;
@@ -3306,6 +3309,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
             OutputElements: new EquatableArray<SprocOutputParam>(outputBuilder.ToImmutable()),
             ResultElements: new EquatableArray<MultiResultElement>(resultBuilder.ToImmutable()),
             TupleElementOrder: new EquatableArray<SprocTupleSlot>(orderBuilder.ToImmutable()));
+    }
+
+    // #241 — the bound name SqlClient gives a procedure's RETURN value when it
+    // derives the parameters, and the name the RETURN_VALUE convention keys on.
+    private const string ReturnValueParameterName = "RETURN_VALUE";
+
+    // #241 — whether a tuple-matched parameter receives the procedure's RETURN
+    // value. SQL Server fills it only into a parameter with Direction =
+    // ReturnValue; an Output parameter is sent as a named argument, which the
+    // procedure rejects when it declares no such parameter.
+    //
+    //   * `[Param(Direction = ReturnValue)]` always binds as one. ZAO067 reports a
+    //     tuple field that is not int.
+    //   * Any other written Direction wins over the name, so a procedure that
+    //     really declares an `@RETURN_VALUE ... OUTPUT` parameter can still bind
+    //     it with `[Param(Direction = ParameterDirection.Output)]`.
+    //   * Otherwise the convention applies: the bound name, the `[Param(Name)]`
+    //     override or the C# name, is exactly RETURN_VALUE and the tuple field is
+    //     int or int?. A RETURN_VALUE field of another type cannot hold a RETURN
+    //     value; it compiled in 2.0.0 as an ordinary output parameter and stays one.
+    private static bool BindsAsReturnValue(IParameterSymbol parameter, bool tupleFieldIsInt32)
+    {
+        var direction = ReadParamFacets(parameter)?.Direction;
+        if (direction is not null)
+            return string.Equals(direction, "ReturnValue", StringComparison.Ordinal);
+        var boundName = ReadParamNameOverride(parameter) ?? parameter.Name;
+        return tupleFieldIsInt32
+            && string.Equals(boundName, ReturnValueParameterName, StringComparison.Ordinal);
     }
 
     // Classify ONE tuple element. Order of attempts mirrors the single-shape path:
@@ -3709,8 +3740,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                         DbParameters. Name there is ZAO063's;
     //                       * a Size below -1, which every provider rejects;
     //                       * a non-Input Direction on a parameter that no tuple
-    //                         field reads back, or a Direction other than Output or
-    //                         InputOutput on one that a tuple field does read back;
+    //                         field reads back, or Direction = Input on one that a
+    //                         tuple field does read back;
     //                       * an output or input-output parameter of a length-typed
     //                         DbType whose Size is written as 0, or of a fixed-length
     //                         DbType whose Size is not written. SqlClient throws "the
@@ -3723,6 +3754,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                       rounds the value the procedure assigns. The generator
     //                       cannot see the provider, so a Postgres-only adopter, for
     //                       whom the value comes back exact, opts out in .editorconfig.
+    //   ZAO067 (Error)   -- #241. `[Param(Direction = ReturnValue)]` into a tuple
+    //                       field that is not int or int?. SQL Server's RETURN
+    //                       value is an int.
+    //   ZAO068 (Error)   -- #241. More than one parameter bound as the RETURN
+    //                       value. A procedure has one.
     private static void ReportParamFacetDiagnostics(
         IMethodSymbol method,
         ImmutableArray<ParameterInfo> parameters,
@@ -3736,6 +3772,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             foreach (var op in sprocOutputs.OutputElements)
                 outputs[op.MatchingParameterName] = op;
         }
+
+        // #241 — the first parameter bound as the RETURN value; ZAO068 reports
+        // each later one.
+        string? firstReturnValue = null;
 
         for (var i = 0; i < parameters.Length && i < method.Parameters.Length; i++)
         {
@@ -3791,7 +3831,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             if (facets?.Direction is { } direction)
             {
                 var isOutputDirection = string.Equals(direction, "Output", StringComparison.Ordinal)
-                    || string.Equals(direction, "InputOutput", StringComparison.Ordinal);
+                    || string.Equals(direction, "InputOutput", StringComparison.Ordinal)
+                    || string.Equals(direction, "ReturnValue", StringComparison.Ordinal);
                 if (output is null && !string.Equals(direction, "Input", StringComparison.Ordinal))
                 {
                     Report(
@@ -3802,11 +3843,46 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     Report(
                         "Direction = " + direction,
-                        "a parameter that a tuple field reads back must be Output or InputOutput");
+                        "a parameter that a tuple field reads back must be Output, InputOutput or ReturnValue");
                 }
             }
 
             if (output is null) continue;
+
+            if (output.IsReturnValue)
+            {
+                // #241 — only an explicit ReturnValue can reach a non-int field:
+                // the RETURN_VALUE convention applies to int and int? alone.
+                if (!output.IsInt32)
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        DescriptorId: "ZAO067",
+                        Location: location,
+                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                            info.Name,
+                            method.Name,
+                            DisplayTypeName(output.TypeName) + (output.IsNullable ? "?" : string.Empty)))));
+                }
+
+                if (firstReturnValue is null)
+                {
+                    firstReturnValue = info.Name;
+                }
+                else
+                {
+                    diagnostics.Add(new DiagnosticInfo(
+                        DescriptorId: "ZAO068",
+                        Location: location,
+                        MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                            info.Name,
+                            method.Name,
+                            firstReturnValue))));
+                }
+
+                // A RETURN value is an int with no size, precision or scale to
+                // check, and ZAO067 already covers a decimal field.
+                continue;
+            }
 
             var dbType = facets?.DbTypeExpression ?? DbTypePrefix + output.DbTypeName;
             if (IsFixedLengthDbType(dbType))
@@ -3842,6 +3918,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     private const string DbTypePrefix = "global::System.Data.DbType.";
+
+    // A fully-qualified type display without its leading `global::`, for a message.
+    private static string DisplayTypeName(string fullyQualified)
+        => fullyQualified.StartsWith("global::", StringComparison.Ordinal)
+            ? fullyQualified.Substring("global::".Length)
+            : fullyQualified;
 
     // The `[Param]` members written on a parameter, in declaration order, for a
     // ZAO066 message. `DbType = Object` is the attribute's "let the provider
@@ -4239,6 +4321,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO064" => DiagnosticDescriptors.ZAO064_BatchOnStoredProcedureIgnored,
         "ZAO065" => DiagnosticDescriptors.ZAO065_DecimalOutputWithoutScale,
         "ZAO066" => DiagnosticDescriptors.ZAO066_ParamFacetNotApplicable,
+        "ZAO067" => DiagnosticDescriptors.ZAO067_ReturnValueNotInt,
+        "ZAO068" => DiagnosticDescriptors.ZAO068_MultipleReturnValues,
         // v1.3 — BulkInsert misuse diagnostics. Tasks 3/5 introduced both the
         // descriptors and the firing sites but missed wiring them into this
         // lookup, which is the single funnel from `methodModel.Diagnostics`
@@ -5168,6 +5252,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var op = outputs[i];
             var local = "__out_" + op.TupleFieldName;
             var paramLocal = "__p_" + op.MatchingParameterName;
+            if (op.IsReturnValue)
+            {
+                // #241 — only SQL Server fills a ReturnValue parameter; it always
+                // does, with an int. Npgsql neither sends nor sets one, so its
+                // Value stays null, and Convert.ToInt32(null) would read that as a
+                // RETURN value of 0. The generator cannot see the provider, so the
+                // check happens here.
+                var message = SymbolDisplay.FormatLiteral(
+                    $"The provider did not set the RETURN value of the procedure called by '{m.MethodName}' into parameter '{op.MatchingParameterName}'. Only SQL Server procedures have a RETURN value.",
+                    quote: true);
+                sb.AppendLine($"            if ({paramLocal}.Value is null)");
+                sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({message});");
+            }
             var expr = BuildSprocOutputReadbackExpression(op, paramLocal);
             if (op.IsNullable)
             {
@@ -6833,8 +6930,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // value upfront is either ignored or treated as the initial state
                 // by the provider, so leaving it unset is cleaner. InputOutput is
                 // the opt-in for a procedure that reads the initial value.
+                // #241 — a ReturnValue parameter receives the procedure's RETURN
+                // value. The provider never sends it as an argument, so, like an
+                // Output parameter, it gets no Value.
                 var isInputOutput = string.Equals(p.Facets?.Direction, "InputOutput", StringComparison.Ordinal);
-                var direction = isInputOutput ? "InputOutput" : "Output";
+                var direction = output.IsReturnValue ? "ReturnValue"
+                    : isInputOutput ? "InputOutput"
+                    : "Output";
                 sb.AppendLine($"{indent}{local}.Direction = global::System.Data.ParameterDirection.{direction};");
                 EmitParameterFacets(sb, indent, local, p.Facets, output);
                 if (!isInputOutput)

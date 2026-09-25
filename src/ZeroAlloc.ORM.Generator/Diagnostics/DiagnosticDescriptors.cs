@@ -271,8 +271,7 @@ internal static class DiagnosticDescriptors
     // CancellationToken, transaction or BulkInsert collection parameter; DbType,
     // Size, Precision, Scale or Direction on a composite parameter; a Size below
     // -1; a non-Input Direction on a parameter that no named-tuple field reads
-    // back, or a Direction other than Output / InputOutput on one that a field
-    // does read back; an output whose length-typed DbType gets a Size of 0, or a
+    // back, or Direction = Input on one that a field does read back; an output whose length-typed DbType gets a Size of 0, or a
     // fixed-length output without a Size.
     //
     // MessageArgs:
@@ -283,6 +282,36 @@ internal static class DiagnosticDescriptors
     public static readonly DiagnosticDescriptor ZAO066_ParamFacetNotApplicable = Make(
         "ZAO066", "[Param] member does not apply to this parameter",
         "[Param({0})] on parameter '{1}' of method '{2}' cannot be applied: {3}",
+        DiagnosticSeverity.Error);
+
+    // #241 — `[Param(Direction = ParameterDirection.ReturnValue)]` reads the
+    // procedure's RETURN value into a tuple field that is not `int` or `int?`.
+    // SQL Server's RETURN value is always an int, so no other field type can
+    // hold it. Only the explicit Direction is reported: a field named
+    // RETURN_VALUE of another type compiled in 2.0.0 as an ordinary output
+    // parameter, and the convention leaves it one.
+    //
+    // MessageArgs:
+    //   {0} = parameter name
+    //   {1} = method name
+    //   {2} = the tuple field's type
+    public static readonly DiagnosticDescriptor ZAO067_ReturnValueNotInt = Make(
+        "ZAO067", "Return value parameter must be int",
+        "Parameter '{0}' of method '{1}' reads the procedure's RETURN value into a '{2}' tuple field. SQL Server returns an int, so declare the tuple field as int or int?.",
+        DiagnosticSeverity.Error);
+
+    // #241 — more than one parameter of a [StoredProcedure] binds as the RETURN
+    // value, through `[Param(Direction = ParameterDirection.ReturnValue)]` or the
+    // RETURN_VALUE convention. A procedure has one RETURN value and SqlClient
+    // fills one ReturnValue parameter.
+    //
+    // MessageArgs:
+    //   {0} = the later parameter's name
+    //   {1} = method name
+    //   {2} = the first parameter bound as the RETURN value
+    public static readonly DiagnosticDescriptor ZAO068_MultipleReturnValues = Make(
+        "ZAO068", "More than one return value parameter",
+        "Parameter '{0}' of method '{1}' is bound as the procedure's RETURN value, but '{2}' already is. A procedure has one RETURN value; bind only one parameter to it.",
         DiagnosticSeverity.Error);
 
     // v1.3 — BulkInsert shape diagnostics (design 2026-06-02).

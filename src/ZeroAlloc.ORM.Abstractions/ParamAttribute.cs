@@ -78,9 +78,14 @@ public sealed class ParamAttribute : Attribute
     /// <see cref="ParameterDirection.Output"/>, and the argument passed for it is not sent.
     /// Write <see cref="ParameterDirection.InputOutput"/> to send the argument as the
     /// parameter's initial value and read the value the procedure leaves in it.
-    /// Only <see cref="ParameterDirection.Output"/> and <see cref="ParameterDirection.InputOutput"/>
-    /// are accepted, and only on a parameter that matches a tuple field; ZAO066 reports any
-    /// other use.
+    /// Write <see cref="ParameterDirection.ReturnValue"/> to read a SQL Server procedure's
+    /// <c>RETURN</c> value instead; its tuple field must be <c>int</c> or <c>int?</c>
+    /// (ZAO067), and one parameter per method can have it (ZAO068). A parameter bound as
+    /// <c>RETURN_VALUE</c> with an <c>int</c> or <c>int?</c> tuple field and no written
+    /// Direction reads the <c>RETURN</c> value by convention.
+    /// Only <see cref="ParameterDirection.Output"/>, <see cref="ParameterDirection.InputOutput"/>
+    /// and <see cref="ParameterDirection.ReturnValue"/> are accepted, and only on a parameter
+    /// that matches a tuple field; ZAO066 reports any other use.
     /// </remarks>
     public ParameterDirection Direction { get; init; } = ParameterDirection.Input;
 }

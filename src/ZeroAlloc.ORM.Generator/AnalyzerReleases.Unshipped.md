@@ -33,6 +33,8 @@ ZAO063  | ZeroAlloc.ORM | Error    | [Param(Name = ...)] override is not support
 ZAO064  | ZeroAlloc.ORM | Info     | [StoredProcedure(Batch=...)] is ignored
 ZAO065  | ZeroAlloc.ORM | Warning  | Decimal output parameter has no Scale
 ZAO066  | ZeroAlloc.ORM | Error    | [Param] member does not apply to this parameter
+ZAO067  | ZeroAlloc.ORM | Error    | Return value parameter must be int
+ZAO068  | ZeroAlloc.ORM | Error    | More than one return value parameter
 ZAO070  | ZeroAlloc.ORM | Error    | BulkInsert method must take exactly one collection parameter
 ZAO071  | ZeroAlloc.ORM | Error    | BulkInsert SQL must contain exactly one VALUES tuple
 ZAO072  | ZeroAlloc.ORM | Error    | BulkInsert placeholder doesn't match any TRow property

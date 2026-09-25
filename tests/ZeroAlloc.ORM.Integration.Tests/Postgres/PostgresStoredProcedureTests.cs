@@ -256,6 +256,31 @@ public sealed class PostgresStoredProcedureTests
             $$;");
 
     [Fact]
+    public async Task Return_value_parameter_throws_because_Postgres_has_no_RETURN_value()
+    {
+        // #241 — a Postgres procedure has no RETURN value. The generator cannot
+        // see the provider, so it emits the ReturnValue parameter it emits for
+        // SQL Server. Npgsql leaves it out of the CALL, which succeeds, and never
+        // sets it, so its Value stays null. Read as an int that would be 0; the
+        // generated code throws instead.
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(@"
+            CREATE PROCEDURE return_value_proc(IN seed integer, OUT doubled integer)
+                LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                doubled := seed * 2;
+            END;
+            $$;").ConfigureAwait(false);
+
+        var repo = new StoredProcedureRepo(fx.Connection);
+        var act = async () => await repo.ReturnValueAsync(21, 0, null, CancellationToken.None).ConfigureAwait(false);
+
+        (await act.Should().ThrowAsync<ZeroAllocOrmMaterializationException>().ConfigureAwait(false))
+            .WithMessage("*did not set the RETURN value*'ReturnValueAsync'*'RETURN_VALUE'*Only SQL Server*");
+    }
+
+    [Fact]
     public async Task MultiResultSet_via_function_calls_returns_count_and_rows()
     {
         await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);

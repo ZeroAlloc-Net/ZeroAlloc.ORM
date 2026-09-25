@@ -114,6 +114,16 @@ public sealed partial class StoredProcedureRepo(IAsyncDbConnection connection)
     public partial Task<(string? Note, int? Amount, Status? State, OrderId? Orderref)> NullIntoNullableAsync(
         string? note, int? amount, Status? state, OrderId? orderref, CancellationToken ct);
 
+    // #241 — the RETURN_VALUE convention on Postgres, which has no procedure
+    // RETURN value. The generator cannot see the provider, so it emits the same
+    // ReturnValue parameter as for SQL Server; the test pins what Npgsql does.
+    [StoredProcedure("return_value_proc")]
+    public partial Task<(int Doubled, int? RETURN_VALUE)> ReturnValueAsync(
+        int seed,
+        int doubled,
+        int? RETURN_VALUE,
+        CancellationToken ct);
+
     // Multi-result-set via two function calls joined with `;`. Auto-batch
     // mode lets the runtime pick the IAsyncDbBatch path on Postgres
     // (CanCreateBatch == true on Npgsql). Functions encapsulate the same

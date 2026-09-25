@@ -225,8 +225,8 @@ last-scoped identity of the session.
 
 SQL Server sprocs can return an `int` via the `RETURN value` statement,
 alongside any result sets. ZeroAlloc.ORM **discards** the return value by
-default. To capture it, add a tuple field named after the conventional
-`@RETURN_VALUE` parameter:
+default. To capture it, add an `int` or `int?` tuple field named after the
+conventional `RETURN_VALUE` parameter:
 
 ```csharp
 [StoredProcedure("usp_DoWork")]
@@ -234,8 +234,18 @@ public partial Task<(WorkResult Result, int RETURN_VALUE)> DoWorkAsync(
     int input, int RETURN_VALUE, CancellationToken ct);
 ```
 
-The generator binds `@RETURN_VALUE` as a `Direction = Output` parameter
-and reads the procedure's `RETURN` value into the tuple.
+The generator binds `RETURN_VALUE` as a `Direction = ReturnValue`
+parameter, which SqlClient does not send to the procedure, and reads the
+procedure's `RETURN` value into the tuple after the result sets are
+drained. `[Param(Direction = ParameterDirection.ReturnValue)]` does the same
+for a parameter of any name. See
+[Return values](stored-procedures.md#return-values) for the rules and
+diagnostics.
+
+PostgreSQL procedures have no `RETURN` value. Npgsql leaves a
+`ReturnValue` parameter out of the `CALL` and never sets it, so the
+generated method throws `ZeroAllocOrmMaterializationException` there
+instead of returning `0`.
 
 ### `OUTPUT INSERTED.X` vs output parameters
 

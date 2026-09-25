@@ -98,6 +98,43 @@ public sealed partial class SqlServerStoredProcedureRepo(IAsyncDbConnection conn
         int tripled,
         CancellationToken ct);
 
+    // #241 — the procedure's RETURN value, beside an output parameter and a
+    // result set. SQL Server fills it only into a ParameterDirection.ReturnValue
+    // parameter; before #241 the RETURN_VALUE field bound as Output and the call
+    // failed, because the procedure declares no @RETURN_VALUE parameter.
+    [StoredProcedure("dbo.return_value_proc")]
+    public partial Task<(OrderRow Row, int Doubled, int RETURN_VALUE)> ReturnValueByConventionAsync(
+        int seed,
+        int doubled,
+        int RETURN_VALUE,
+        CancellationToken ct);
+
+    // The same procedure through the explicit Direction, into an int? field.
+    [StoredProcedure("dbo.return_value_proc")]
+    public partial Task<(int Doubled, OrderRow Row, int? Status)> ReturnValueByDirectionAsync(
+        int seed,
+        int doubled,
+        [Param(Direction = ParameterDirection.ReturnValue)] int? status,
+        CancellationToken ct);
+
+    // No result set: the RETURN value and the output parameter come back through
+    // ExecuteNonQueryAsync.
+    [StoredProcedure("dbo.return_value_only_proc")]
+    public partial Task<(int Doubled, int RETURN_VALUE)> ReturnValueOutputOnlyAsync(
+        int seed,
+        int doubled,
+        int RETURN_VALUE,
+        CancellationToken ct);
+
+    // A procedure that really declares an @RETURN_VALUE OUTPUT parameter keeps it
+    // an output parameter by writing the Direction.
+    [StoredProcedure("dbo.declared_return_value_proc")]
+    public partial Task<(int Doubled, int RETURN_VALUE)> DeclaredReturnValueParameterAsync(
+        int seed,
+        int doubled,
+        [Param(Direction = ParameterDirection.Output)] int RETURN_VALUE,
+        CancellationToken ct);
+
     // The same procedure with the C# parameters in the reverse order, so the
     // generated parameters are added out of declaration order.
     [StoredProcedure("dbo.scale_proc")]

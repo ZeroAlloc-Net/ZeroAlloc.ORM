@@ -22,8 +22,9 @@ namespace ZeroAlloc.ORM.Generator.Model;
 
 // One output-parameter tuple position. Emit semantics:
 //   1. The C# parameter `MatchingParameterName` is bound with
-//      Direction = ParameterDirection.Output, or InputOutput when its
-//      `[Param(Direction = ...)]` says so, and a DbType from DbTypeName.
+//      Direction = ParameterDirection.Output, InputOutput when its
+//      `[Param(Direction = ...)]` says so, or ReturnValue when IsReturnValue is
+//      set, and a DbType from DbTypeName.
 //   2. After the command runs (reader drained + disposed, or ExecuteNonQueryAsync
 //      returned), the parameter's `.Value` is unboxed through
 //      BuildScalarConvertExpression keyed on TypeName and wrapped via the
@@ -56,13 +57,27 @@ namespace ZeroAlloc.ORM.Generator.Model;
 //                                 element's reader. SqlClient validates an output
 //                                 parameter's type and size before it sends the
 //                                 call, so leaving it unset fails on SQL Server.
+//   IsReturnValue             -- #241. True when the parameter binds with
+//                                 Direction = ReturnValue and receives the
+//                                 procedure's RETURN value instead of being sent
+//                                 as an argument: `[Param(Direction = ReturnValue)]`
+//                                 says so, or the parameter's bound name is
+//                                 exactly RETURN_VALUE, its tuple field is `int`
+//                                 or `int?` and `[Param]` writes no Direction.
+//   IsInt32                   -- #241. True when the tuple element, unwrapped
+//                                 from Nullable<T>, is `int` itself rather than an
+//                                 enum or value object over one. A RETURN value is
+//                                 an int, so ZAO067 reports an explicit ReturnValue
+//                                 into anything else.
 internal sealed record SprocOutputParam(
     string TupleFieldName,
     string MatchingParameterName,
     string TypeName,
     bool IsNullable,
     ConventionInfo? Convention,
-    string DbTypeName);
+    string DbTypeName,
+    bool IsReturnValue,
+    bool IsInt32);
 
 // Discriminator for TupleElementOrder entries — distinguishes "this slot is the
 // i-th OUTPUT element" vs "this slot is the i-th RESULT element". The emit walks
