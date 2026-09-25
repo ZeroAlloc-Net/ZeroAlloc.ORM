@@ -171,6 +171,117 @@ public sealed class SqliteScalarTypesTests
         }
     }
 
+    // #261 — numeric storage. Microsoft.Data.Sqlite reads a REAL or INTEGER date
+    // as a Julian day number, and a REAL or INTEGER TimeSpan as a number of days.
+    // Each row mixes both storage classes; the expected values are what SQLite
+    // itself and GetFieldValue<T> make of them.
+    //   * 1: julianday() of a date with milliseconds, and 1.5 days, both REAL.
+    //   * 2: whole Julian days and a whole number of days, both INTEGER. Julian
+    //        days start at noon, so an INTEGER date reads as 12:00.
+    //   * 3: a REAL Julian day whose fraction needs rounding to the millisecond,
+    //        and a fractional number of days.
+    [Theory]
+    [InlineData(1, "2024-01-02T03:04:05.1230000", "1.12:00:00")]
+    [InlineData(2, "2024-01-01T12:00:00.0000000", "2.00:00:00")]
+    [InlineData(3, "2000-01-01T00:00:00.0010000", "0.06:00:00")]
+    public async Task Numeric_values_read_back_as_scalars(int id, string moment, string span)
+    {
+        var expectedMoment = DateTime.Parse(moment, System.Globalization.CultureInfo.InvariantCulture);
+        var expectedSpan = TimeSpan.Parse(span, System.Globalization.CultureInfo.InvariantCulture);
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await CreateNumericTableAsync(fx).ConfigureAwait(false);
+            var repo = new SqliteScalarTypesRepo(fx.Connection);
+
+            var stamp = await repo.NumericStampAsync(id, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(new DateTimeOffset(expectedMoment, TimeSpan.Zero), stamp);
+            Assert.Equal(TimeSpan.Zero, stamp.Offset);
+            var dateTime = await repo.NumericMomentAsync(id, CancellationToken.None).ConfigureAwait(false);
+            Assert.Equal(expectedMoment, dateTime);
+            Assert.Equal(DateTimeKind.Unspecified, dateTime.Kind);
+            Assert.Equal(expectedSpan, await repo.NumericSpanAsync(id, CancellationToken.None).ConfigureAwait(false));
+
+            Assert.Equal(stamp, await repo.NullableNumericStampAsync(id, CancellationToken.None).ConfigureAwait(false));
+            Assert.Equal(expectedMoment, await repo.NullableNumericMomentAsync(id, CancellationToken.None).ConfigureAwait(false));
+            Assert.Equal(expectedSpan, await repo.NullableNumericSpanAsync(id, CancellationToken.None).ConfigureAwait(false));
+
+            await AssertNumericMatchesReaderAsync(fx, repo, id).ConfigureAwait(false);
+        }
+    }
+
+    // An INTEGER is a Julian day, not Unix seconds. Read as a Julian day, a Unix
+    // timestamp is far past year 9999, so the reader and the scalar both throw
+    // rather than return a wrong date.
+    [Fact]
+    public async Task Unix_seconds_are_not_a_valid_numeric_date_on_either_path()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await CreateNumericTableAsync(fx).ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(
+                "INSERT INTO NumericTyped (Id, Stamp, Moment, Span) VALUES (9, 1700000000, 1700000000, 0);").ConfigureAwait(false);
+            var repo = new SqliteScalarTypesRepo(fx.Connection);
+
+            var cmd = fx.Connection.CreateCommand();
+            await using (cmd.ConfigureAwait(false))
+            {
+                cmd.CommandText = "SELECT Moment FROM NumericTyped WHERE Id = 9";
+                var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+                await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
+                {
+                    Assert.True(await reader.ReadAsync().ConfigureAwait(false));
+                    Assert.NotNull(Record.Exception(() => reader.GetFieldValue<DateTime>(0)));
+                }
+            }
+
+            Assert.NotNull(await Record.ExceptionAsync(() => repo.NumericMomentAsync(9, CancellationToken.None)).ConfigureAwait(false));
+            Assert.NotNull(await Record.ExceptionAsync(() => repo.NumericStampAsync(9, CancellationToken.None)).ConfigureAwait(false));
+        }
+    }
+
+    private static ValueTask CreateNumericTableAsync(SqliteFixture fx) => fx.ExecuteDdlAsync(@"
+        CREATE TABLE NumericTyped (Id INTEGER PRIMARY KEY, Stamp NULL, Moment NULL, Span NULL);
+        INSERT INTO NumericTyped (Id, Stamp, Moment, Span) VALUES
+            (1, julianday('2024-01-02 03:04:05.123'), julianday('2024-01-02 03:04:05.123'), 1.5),
+            (2, 2460311, 2460311, 2),
+            (3, 2451544.500000011574, 2451544.500000011574, 0.25);");
+
+    private static async Task AssertNumericMatchesReaderAsync(SqliteFixture fx, SqliteScalarTypesRepo repo, int id)
+    {
+        DateTimeOffset stamp;
+        DateTime moment;
+        TimeSpan span;
+        var cmd = fx.Connection.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "SELECT Stamp, Moment, Span, typeof(Stamp), typeof(Span) FROM NumericTyped WHERE Id = " +
+                id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
+            {
+                Assert.True(await reader.ReadAsync().ConfigureAwait(false));
+                // Guard the fixture: the values must really be stored as numbers.
+                Assert.NotEqual("text", reader.GetString(3), StringComparer.Ordinal);
+                Assert.NotEqual("text", reader.GetString(4), StringComparer.Ordinal);
+                stamp = reader.GetFieldValue<DateTimeOffset>(0);
+                moment = reader.GetFieldValue<DateTime>(1);
+                span = reader.GetFieldValue<TimeSpan>(2);
+            }
+        }
+
+        var scalarStamp = await repo.NumericStampAsync(id, CancellationToken.None).ConfigureAwait(false);
+        Assert.Equal(stamp, scalarStamp);
+        Assert.Equal(stamp.Offset, scalarStamp.Offset);
+        var scalarMoment = await repo.NumericMomentAsync(id, CancellationToken.None).ConfigureAwait(false);
+        Assert.Equal(moment, scalarMoment);
+        Assert.Equal(moment.Kind, scalarMoment.Kind);
+        Assert.Equal(span, await repo.NumericSpanAsync(id, CancellationToken.None).ConfigureAwait(false));
+    }
+
     private static ValueTask CreateTableAsync(SqliteFixture fx) => fx.ExecuteDdlAsync(
         "CREATE TABLE Typed (Id INTEGER PRIMARY KEY, Stamp TEXT NULL, Span TEXT NULL, Ident NULL);");
 

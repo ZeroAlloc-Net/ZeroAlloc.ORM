@@ -55,6 +55,28 @@ as a 16-byte BLOB. A column read asks the provider for the type through
 over the UTF-8 text of any other BLOB. A scalar
 command and a row query read the same value from the same column.
 
+A date can also be stored as a number, for example by SQLite's own
+`julianday()` function, and a `TimeSpan` as a number of days. `ExecuteScalar`
+returns a REAL as a `double` and an INTEGER as a `long`. `GetFieldValue<T>`
+reads either as a Julian day number for `DateTime` and `DateTimeOffset`, and
+as days for `TimeSpan`, so a scalar command does the same:
+
+| Target | REAL or INTEGER value | Result |
+| --- | --- | --- |
+| `DateTime` | Julian day, rounded to the millisecond | `Kind` is `Unspecified` |
+| `DateTimeOffset` | Julian day, rounded to the millisecond | offset zero |
+| `TimeSpan` | days | `TimeSpan.FromDays` |
+
+An INTEGER is a whole Julian day, which starts at noon, not a count of Unix
+seconds. Read as a Julian day, a Unix timestamp lies far beyond year 9999, so
+both the reader path and the scalar path throw. Convert it in SQL instead, with
+`datetime(col, 'unixepoch')`.
+
+Stored-procedure output parameters share this conversion, so the numeric arms
+also apply to them on every provider: a `long` output read into a `TimeSpan` is
+taken as a number of days, and a `double` or `long` read into a `DateTime` or
+`DateTimeOffset` as a Julian day.
+
 ### `CanCreateBatch = false`
 
 The AdoNet.Async wrapper over Microsoft.Data.Sqlite reports
