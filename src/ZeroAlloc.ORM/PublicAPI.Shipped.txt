@@ -1,5 +1,6 @@
 #nullable enable
 const ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.DefaultLockKey = 6503566551803710793 -> long
+const ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.DefaultLockName = "ZAORM_MIGRATIONS" -> string!
 override ZeroAlloc.ORM.Migrations.Migration.Equals(object? obj) -> bool
 override ZeroAlloc.ORM.Migrations.Migration.GetHashCode() -> int
 override ZeroAlloc.ORM.Migrations.Migration.ToString() -> string!
@@ -46,10 +47,21 @@ ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.InsertAppliedVersionSql.get -> s
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectAppliedVersionsSql.get -> string!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SqliteMigrationDialect() -> void
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.CreateHistoryTableSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.InsertAppliedVersionSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SqlServerMigrationDialect(string! lockName = "ZAORM_MIGRATIONS") -> void
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException() -> void
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException(string! message) -> void
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException(string! message, System.Exception! inner) -> void
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException() -> void
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException(string! message) -> void
+ZeroAlloc.ORM.ZeroAllocOrmMigrationConflictException.ZeroAllocOrmMigrationConflictException(string! message, System.Exception! inner) -> void
 ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException
 ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException.ZeroAllocOrmVersionMismatchException() -> void
 ZeroAlloc.ORM.ZeroAllocOrmVersionMismatchException.ZeroAllocOrmVersionMismatchException(string! message) -> void

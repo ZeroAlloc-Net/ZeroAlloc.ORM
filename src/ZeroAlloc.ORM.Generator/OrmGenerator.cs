@@ -2952,7 +2952,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                 targetTypeDisplay,
                 factoryName,
-                $"Found {overloadCount} matching static overloads; overload selection by signature is not supported. Reduce to a single static '{factoryName}' or use a distinct factory name."))));
+                overloadCount.ToString(System.Globalization.CultureInfo.InvariantCulture)))));
     }
 
     // v0.2 Phase E — multi-arg "class with a named-param ctor" shape. A type qualifies
