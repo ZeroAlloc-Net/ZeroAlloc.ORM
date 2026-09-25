@@ -4175,8 +4175,52 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         sb.AppendLine("}");
 
-        var hint = $"{repo.ContainingTypeName}.g.cs";
+        var hint = BuildHintName(repo);
         context.AddSource(hint, SourceText.From(sb.ToString(), Encoding.UTF8));
+    }
+
+    // #236 — the hint name used to be the bare simple type name ("{ContainingTypeName}.g.cs"),
+    // which collides whenever two repository classes share a name in different namespaces (or
+    // nested inside different containing types). Roslyn reports that as CS8785 and drops BOTH
+    // generated sources, not just the second one.
+    //
+    // ContainingTypeFullName is already the grouping key the `grouped` pipeline in Initialize()
+    // uses (see `g.Key` there), so it is unique per repo by construction: namespace, every
+    // containing type, and generic type parameters (which is what distinguishes two same-named
+    // types that only differ by arity, e.g. `Repository` vs `Repository<T>`) are all already
+    // folded in via SymbolDisplayFormat.FullyQualifiedFormat. Building the hint from it keeps
+    // the file name unique for the same reason the group itself is unique, instead of
+    // re-deriving a weaker key here that could drift out of sync with the real one.
+    //
+    // Sanitisation mirrors ZeroAlloc.Resilience's "{Namespace}_{Type}.Resilience.g.cs" hint:
+    // only characters a file name can't carry as-is -- generic angle brackets and the
+    // comma/space separating a multi-parameter generic list -- are replaced, collapsing runs
+    // of them into one underscore. Namespace and containing-type dots are left alone; they are
+    // valid in a hint name and keep it readable.
+    private static string BuildHintName(QueryRepositoryModel repo)
+    {
+        const string globalPrefix = "global::";
+        var qualified = repo.ContainingTypeFullName.StartsWith(globalPrefix, StringComparison.Ordinal)
+            ? repo.ContainingTypeFullName.Substring(globalPrefix.Length)
+            : repo.ContainingTypeFullName;
+
+        var sanitized = new StringBuilder(qualified.Length);
+        var lastWasUnderscore = false;
+        foreach (var c in qualified)
+        {
+            if (c is '<' or '>' or ',' or ' ')
+            {
+                if (!lastWasUnderscore) sanitized.Append('_');
+                lastWasUnderscore = true;
+            }
+            else
+            {
+                sanitized.Append(c);
+                lastWasUnderscore = false;
+            }
+        }
+
+        return $"{sanitized}.g.cs";
     }
 
     // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
