@@ -374,6 +374,84 @@ public sealed class SqlServerStoredProcedureTests : IAsyncLifetime
         Assert.Equal(42, doubled);
     }
 
+    // #241 — RETURN 42 beside an output parameter and a result set.
+    [Fact]
+    public async Task Return_value_convention_reads_the_RETURN_value()
+    {
+        await CreateReturnValueProcAsync();
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+        var (row, doubled, returnValue) = await repo.ReturnValueByConventionAsync(21, 0, 0, CancellationToken.None);
+
+        Assert.Equal(new OrderRow(21, 7, 9.5m), row);
+        Assert.Equal(42, doubled);
+        Assert.Equal(42, returnValue);
+    }
+
+    [Fact]
+    public async Task Return_value_direction_reads_the_RETURN_value()
+    {
+        await CreateReturnValueProcAsync();
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+        var (doubled, row, status) = await repo.ReturnValueByDirectionAsync(5, 0, null, CancellationToken.None);
+
+        Assert.Equal(10, doubled);
+        Assert.Equal(new OrderRow(5, 7, 9.5m), row);
+        Assert.Equal(42, status);
+    }
+
+    [Fact]
+    public async Task Return_value_is_read_without_a_result_set()
+    {
+        await ExecuteAsync("""
+            CREATE PROCEDURE dbo.return_value_only_proc @seed INT, @doubled INT OUTPUT
+            AS
+            BEGIN
+                SET @doubled = @seed * 2;
+                RETURN @seed + 1;
+            END
+            """);
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+        var (doubled, returnValue) = await repo.ReturnValueOutputOnlyAsync(21, 0, 0, CancellationToken.None);
+
+        Assert.Equal(42, doubled);
+        Assert.Equal(22, returnValue);
+    }
+
+    [Fact]
+    public async Task Explicit_Output_binds_a_declared_RETURN_VALUE_parameter()
+    {
+        await ExecuteAsync("""
+            CREATE PROCEDURE dbo.declared_return_value_proc
+                @seed INT, @doubled INT OUTPUT, @RETURN_VALUE INT OUTPUT
+            AS
+            BEGIN
+                SET @doubled = @seed * 2;
+                SET @RETURN_VALUE = @seed * 3;
+                RETURN 99;
+            END
+            """);
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+        var (doubled, returnValue) = await repo.DeclaredReturnValueParameterAsync(21, 0, 0, CancellationToken.None);
+
+        Assert.Equal(42, doubled);
+        Assert.Equal(63, returnValue);
+    }
+
+    private Task CreateReturnValueProcAsync() => ExecuteAsync("""
+        CREATE PROCEDURE dbo.return_value_proc @seed INT, @doubled INT OUTPUT
+        AS
+        BEGIN
+            SET NOCOUNT ON;
+            SET @doubled = @seed * 2;
+            SELECT @seed AS Id, 7 AS CustomerId, CAST(9.5 AS DECIMAL(18,2)) AS Total;
+            RETURN 42;
+        END
+        """);
+
     private Task CreateScaleProcAsync() => ExecuteAsync("""
         CREATE PROCEDURE dbo.scale_proc @amount INT, @doubled INT OUTPUT, @tripled INT OUTPUT
         AS

@@ -213,7 +213,7 @@ public partial Task<(string Code, decimal Total, int Attempts)> QuoteAsync(
 | `DbType` | Replaces the inferred `DbType`. |
 | `Size` | Replaces the default `-1`. A fixed-length `DbType`, `StringFixedLength` or `AnsiStringFixedLength`, has no default and needs one: `NCHAR(10)` is `Size = 10`. |
 | `Precision`, `Scale` | Set on the parameter. There is no default. |
-| `Direction` | `Output`, the default, or `InputOutput` to send the argument as the initial value. |
+| `Direction` | `Output`, the default, `InputOutput` to send the argument as the initial value, or `ReturnValue` to read the procedure's `RETURN` value. See [Return values](#return-values). |
 
 ### `decimal` outputs need a scale on SQL Server
 
@@ -250,6 +250,75 @@ size SqlClient would reject.
 | SQL Server (Microsoft.Data.SqlClient 7.1) | `MAX`: `NVARCHAR(MAX)`, `VARBINARY(MAX)`. `0` on a variable-length output throws "the Size property has an invalid size of 0". |
 | PostgreSQL (Npgsql 10) | No limit. A positive size truncates an input value; an `OUT` argument is sent as `NULL`, so it has no effect there. |
 | SQLite (Microsoft.Data.Sqlite 10) | No limit. A positive size truncates an input value. SQLite has no stored procedures, and the provider rejects `Direction = Output`. |
+
+## Return values
+
+A SQL Server procedure can end with `RETURN <int>`, alongside its output
+parameters and result sets. The generator discards that value unless a
+tuple field asks for it. SQL Server fills it only into a parameter whose
+direction is `ParameterDirection.ReturnValue`, never into an output
+parameter, so the field has to bind as one. There are two ways:
+
+```csharp
+// CREATE PROCEDURE dbo.usp_Allocate @customerId INT, @newOrderId INT OUTPUT
+// AS BEGIN
+//     ...
+//     SELECT Id, CustomerId, Total FROM Orders WHERE Id = @newOrderId;
+//     RETURN 42;
+// END
+
+// 1) By name: a parameter named RETURN_VALUE with an int or int? tuple field.
+[StoredProcedure("dbo.usp_Allocate")]
+public partial Task<(OrderRow Row, int NewOrderId, int RETURN_VALUE)> AllocateAsync(
+    int customerId, int newOrderId, int RETURN_VALUE, CancellationToken ct);
+
+// 2) By direction, under any name.
+[StoredProcedure("dbo.usp_Allocate")]
+public partial Task<(OrderRow Row, int NewOrderId, int Status)> AllocateAsync(
+    int customerId,
+    int newOrderId,
+    [Param(Direction = ParameterDirection.ReturnValue)] int status,
+    CancellationToken ct);
+```
+
+The argument passed for the return-value parameter is never sent. The value
+is read after the result sets are drained, like an output parameter. SQL
+Server always sets it. If the parameter is left unset, the generated method
+throws `ZeroAllocOrmMaterializationException`. A database `NULL` reads as
+`null` into an `int?` field and throws the same exception for an `int`
+field.
+
+- **The name is exact.** The convention applies when the parameter's bound
+  name, its `[Param(Name)]` or else its C# name, is exactly `RETURN_VALUE`,
+  in upper case, and the tuple field is `int` or `int?`. That is the name
+  SqlClient gives the return value when it derives a procedure's parameters.
+- **A written `Direction` wins.** If the procedure really declares an
+  `@RETURN_VALUE ... OUTPUT` parameter, bind it with
+  `[Param(Direction = ParameterDirection.Output)] int RETURN_VALUE`.
+- **Only `int` fits.** `[Param(Direction = ParameterDirection.ReturnValue)]`
+  on any other field type is [ZAO067](../diagnostics/ZAO067.md). A field
+  named `RETURN_VALUE` of another type is an ordinary output parameter.
+- **One per method.** A second return-value parameter is
+  [ZAO068](../diagnostics/ZAO068.md).
+- **SQL Server only.** A PostgreSQL procedure has no `RETURN` value, and
+  SQLite has no procedures. The generator cannot see which provider runs the
+  procedure, so it cannot report this at build time. On PostgreSQL, Npgsql
+  leaves the parameter out of the `CALL` and never sets it, and the generated
+  method throws `ZeroAllocOrmMaterializationException` after the call rather
+  than read the unset value as `0`. Return the value through an `OUT`
+  parameter there.
+- **A PostgreSQL `OUT` or `INOUT` parameter named `RETURN_VALUE`.** Npgsql
+  names each `CALL` argument in quotes, `"RETURN_VALUE" := NULL`, so before
+  this change the field matched only a parameter declared with that quoted,
+  upper-case name. The convention now binds it as a return value, which
+  Npgsql leaves out of the `CALL`, and the call fails with `42883`,
+  procedure does not exist. Write
+  `[Param(Direction = ParameterDirection.Output)] int RETURN_VALUE`, or
+  `InputOutput` for an `INOUT` parameter, to keep it an argument, as on
+  SQL Server. An unquoted `return_value` folds to lower case and never
+  matched `"RETURN_VALUE"`, before this change or after. Bind it as
+  `int return_value`, an ordinary output parameter that the convention
+  does not touch.
 
 ## Recipe 4 — Multi-result-set sproc
 
@@ -340,9 +409,11 @@ notable differences:
   See [Output parameter types and facets](#output-parameter-types-and-facets).
 - **SQL Server `RETURN value`.** SQL Server sprocs can return an `int` via
   `RETURN value` alongside any result sets. The generator treats the return
-  value as **discarded by default**. If you need to capture it, add a tuple
-  field matching the conventional `@RETURN_VALUE` parameter name and the
-  generator binds it as an `Output` parameter against that slot.
+  value as **discarded by default**. To capture it, add an `int` tuple field
+  named `RETURN_VALUE` with a matching parameter, or mark any `int`
+  parameter `[Param(Direction = ParameterDirection.ReturnValue)]`. The
+  generator binds it as a `ParameterDirection.ReturnValue` parameter, which
+  is not sent to the procedure. See [Return values](#return-values).
 - **SQL Server `OUTPUT INSERTED.X`.** This is a result-set-producing clause,
   not an output parameter — pair it with `[Command(Kind = Identity)]` for a
   single id or `[Query]` for multi-column inserts. See
@@ -389,6 +460,10 @@ identifier folding, batch support).
   `[Param(Scale = ...)]`; SQL Server rounds it to a whole number.
 - [ZAO066](../diagnostics/ZAO066.md) — `[Param]` facet or direction that
   cannot apply to the parameter.
+- [ZAO067](../diagnostics/ZAO067.md) — `Direction = ReturnValue` into a tuple
+  field that is not `int` or `int?`.
+- [ZAO068](../diagnostics/ZAO068.md) — More than one parameter bound as the
+  procedure's `RETURN` value.
 
 ## See also
 

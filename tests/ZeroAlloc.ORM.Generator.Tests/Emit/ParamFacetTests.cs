@@ -232,15 +232,15 @@ public class ParamFacetTests
         Assert.Single(Diagnostics(result, "ZAO066"));
     }
 
-    [Theory]
-    [InlineData("ParameterDirection.Input")]
-    [InlineData("ParameterDirection.ReturnValue")]
-    public void Unsupported_direction_on_a_tuple_output_reports_ZAO066(string direction)
+    // ReturnValue on a tuple-matched parameter is supported since #241; see
+    // ReturnValueTests, ZAO067Tests and ZAO068Tests.
+    [Fact]
+    public void Input_direction_on_a_tuple_output_reports_ZAO066()
     {
-        var result = Run($$"""
+        var result = Run("""
             [StoredProcedure("usp_X")]
             public partial Task<(int Id, int Status)> RunAsync(
-                int id, [Param(Direction = {{direction}})] int status, CancellationToken ct);
+                int id, [Param(Direction = ParameterDirection.Input)] int status, CancellationToken ct);
             """);
 
         Assert.Single(Diagnostics(result, "ZAO066"));
