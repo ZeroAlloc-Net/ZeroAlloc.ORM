@@ -91,6 +91,29 @@ public sealed partial class StoredProcedureRepo(IAsyncDbConnection connection)
         [Param(Direction = System.Data.ParameterDirection.InputOutput)] string label,
         CancellationToken ct);
 
+    // #244 — null_output_proc leaves all four outputs NULL. Each method
+    // declares exactly one of them non-nullable: a string, an int, an enum and a
+    // value object. The last method declares all four nullable.
+    [StoredProcedure("null_output_proc")]
+    public partial Task<(string Note, int? Amount, Status? State, OrderId? Orderref)> NullIntoStringAsync(
+        string note, int? amount, Status? state, OrderId? orderref, CancellationToken ct);
+
+    [StoredProcedure("null_output_proc")]
+    public partial Task<(string? Note, int Amount, Status? State, OrderId? Orderref)> NullIntoIntAsync(
+        string? note, int amount, Status? state, OrderId? orderref, CancellationToken ct);
+
+    [StoredProcedure("null_output_proc")]
+    public partial Task<(string? Note, int? Amount, Status State, OrderId? Orderref)> NullIntoEnumAsync(
+        string? note, int? amount, Status state, OrderId? orderref, CancellationToken ct);
+
+    [StoredProcedure("null_output_proc")]
+    public partial Task<(string? Note, int? Amount, Status? State, OrderId Orderref)> NullIntoValueObjectAsync(
+        string? note, int? amount, Status? state, OrderId orderref, CancellationToken ct);
+
+    [StoredProcedure("null_output_proc")]
+    public partial Task<(string? Note, int? Amount, Status? State, OrderId? Orderref)> NullIntoNullableAsync(
+        string? note, int? amount, Status? state, OrderId? orderref, CancellationToken ct);
+
     // Multi-result-set via two function calls joined with `;`. Auto-batch
     // mode lets the runtime pick the IAsyncDbBatch path on Postgres
     // (CanCreateBatch == true on Npgsql). Functions encapsulate the same

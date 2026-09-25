@@ -42,7 +42,7 @@ partial class Repo
                     while (await __reader.ReadAsync(ct).ConfigureAwait(false)) { }
                 }
             }
-            int? __out_OptionalCount = __p_optionalCount.Value is global::System.DBNull ? null : global::System.Convert.ToInt32(__p_optionalCount.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
+            int? __out_OptionalCount = __p_optionalCount.Value is null or global::System.DBNull ? null : global::System.Convert.ToInt32(__p_optionalCount.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             return (__elem0, __out_OptionalCount);
         }
         finally

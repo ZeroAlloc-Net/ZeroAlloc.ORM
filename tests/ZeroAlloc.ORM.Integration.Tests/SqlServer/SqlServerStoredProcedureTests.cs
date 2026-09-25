@@ -136,6 +136,86 @@ public sealed class SqlServerStoredProcedureTests : IAsyncLifetime
         Assert.Equal(7, result.Present);
     }
 
+    // #244 — a NULL output into a non-nullable tuple element throws
+    // ZeroAllocOrmMaterializationException naming the procedure and the
+    // parameter. Before, a string became "" and a value type threw a bare
+    // InvalidCastException from Convert.
+    [Fact]
+    public async Task Null_output_into_non_nullable_string_throws_naming_the_parameter()
+    {
+        await CreateNullOutputProcAsync();
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoStringAsync("seed", null, null, null, CancellationToken.None), "note");
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_int_throws_naming_the_parameter()
+    {
+        await CreateNullOutputProcAsync();
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoIntAsync(null, 0, null, null, CancellationToken.None), "amount");
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_enum_throws_naming_the_parameter()
+    {
+        await CreateNullOutputProcAsync();
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoEnumAsync(null, null, Status.Pending, null, CancellationToken.None), "state");
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_value_object_throws_naming_the_parameter()
+    {
+        await CreateNullOutputProcAsync();
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoValueObjectAsync(null, null, null, new OrderId(0), CancellationToken.None), "orderref");
+    }
+
+    [Fact]
+    public async Task Null_output_into_nullable_targets_reads_back_as_null()
+    {
+        await CreateNullOutputProcAsync();
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        var result = await repo.NullIntoNullableAsync("seed", 1, Status.Cancelled, new OrderId(1), CancellationToken.None);
+
+        Assert.Null(result.Note);
+        Assert.Null(result.Amount);
+        Assert.Null(result.State);
+        Assert.Null(result.Orderref);
+    }
+
+    private static async Task AssertNullOutputThrowsAsync(Func<Task> call, string parameterName)
+    {
+        var ex = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(call).ConfigureAwait(false);
+        Assert.Contains("'dbo.null_output_proc'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{parameterName}'", ex.Message, StringComparison.Ordinal);
+    }
+
+    private Task CreateNullOutputProcAsync() => ExecuteAsync("""
+        CREATE PROCEDURE dbo.null_output_proc
+            @note NVARCHAR(100) OUTPUT,
+            @amount INT OUTPUT,
+            @state INT OUTPUT,
+            @orderref INT OUTPUT
+        AS
+        BEGIN
+            SET @note = NULL;
+            SET @amount = NULL;
+            SET @state = NULL;
+            SET @orderref = NULL;
+        END
+        """);
+
     [Fact]
     public async Task Fixed_length_outputs_with_a_Size_round_trip()
     {

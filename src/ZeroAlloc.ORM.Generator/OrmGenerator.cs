@@ -5156,8 +5156,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Nullable outputs declare the local with an explicit `T?` type because
         // the readback expression is a ternary that returns `null` on DBNull;
         // `var` would infer `object` and break the final tuple's positional type.
-        // Non-nullable outputs keep `var` for snapshot stability with the pre-Fix-1
-        // emit shape.
+        //
+        // Non-nullable outputs (#244) first reject a NULL value with a
+        // ZeroAllocOrmMaterializationException naming the procedure and the
+        // parameter, then keep `var` for the conversion. Without the guard,
+        // Convert.ToString turned DBNull into "" and every other funnel threw a
+        // bare InvalidCastException that named nothing.
         var outputs = mat.OutputElements;
         for (var i = 0; i < outputs.Length; i++)
         {
@@ -5171,6 +5175,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             else
             {
+                EmitSprocOutputNullGuard(sb, m.ProcedureName, ResolveBoundParameterName(m, op), op, paramLocal, "            ");
                 sb.AppendLine($"            var {local} = {expr};");
             }
         }
@@ -5250,6 +5255,46 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
     }
 
+    // #244 — reject a NULL value in a non-nullable output position before the
+    // conversion runs. The provider reports an output the procedure left NULL as
+    // DBNull.Value; a plain null is treated the same so a provider that never
+    // wrote the parameter cannot slip through either. The exception type is the
+    // one the ORM uses for every other value it cannot materialize, and the
+    // message names the procedure, the parameter and the escape hatch.
+    // The name the DbParameter is bound under, so the NULL-output message names
+    // the parameter the procedure declares. Mirrors the binding emit: the
+    // `[Param(Name = ...)]` override wins over the C# name, and the lookup is
+    // case-insensitive like the output-parameter map EmitSprocWithOutputParams
+    // hands to the binding.
+    private static string ResolveBoundParameterName(QueryMethodModel m, SprocOutputParam op)
+    {
+        foreach (var p in m.MethodParameters)
+        {
+            if (string.Equals(p.Name, op.MatchingParameterName, StringComparison.OrdinalIgnoreCase))
+                return p.ParamNameOverride ?? p.Name;
+        }
+        return op.MatchingParameterName;
+    }
+
+    private static void EmitSprocOutputNullGuard(
+        StringBuilder sb,
+        string procedureName,
+        string boundParameterName,
+        SprocOutputParam op,
+        string paramLocal,
+        string indent)
+    {
+        var typeDisplay = op.TypeName.StartsWith("global::", StringComparison.Ordinal)
+            ? op.TypeName.Substring("global::".Length)
+            : op.TypeName;
+        var message =
+            $"Stored procedure '{procedureName}' returned NULL for output parameter " +
+            $"'{boundParameterName}', but tuple element '{op.TupleFieldName}' is the " +
+            $"non-nullable type '{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+        sb.AppendLine($"{indent}if ({paramLocal}.Value is null or global::System.DBNull)");
+        sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(message, quote: true)});");
+    }
+
     // Build the expression that converts a DbParameter's boxed `.Value` into
     // the tuple-element CLR type. Mirrors BuildScalarConvertExpression's funnel
     // (Convert.ToXxx with InvariantCulture for the wide-numeric tolerance) and
@@ -5263,14 +5308,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                                 throwing InvalidCastException when the
     //                                 procedure leaves the output unassigned.
     //   * `op.IsNullable == false` — the adopter has declared a non-nullable
-    //                                 element; the cast/Convert.ToXxx funnel
-    //                                 INTENTIONALLY throws InvalidCastException
-    //                                 on DBNull. This matches the documented
-    //                                 contract: declare `int?` if NULL is a
-    //                                 legal value for the output position;
-    //                                 otherwise treat DBNull as a procedure
-    //                                 contract violation. Symmetric with the
-    //                                 scalar-materialization path's null handling.
+    //                                 element. EmitSprocOutputNullGuard runs
+    //                                 before this expression and throws
+    //                                 ZeroAllocOrmMaterializationException on
+    //                                 NULL (#244), so the expression only ever
+    //                                 sees a value. Declare `int?` / `string?`
+    //                                 if NULL is a legal value for the output.
     //
     // The `.Value!` bang suppresses the nullable-reference warning on the boxed
     // accessor; null-vs-DBNull is handled at the expression level above.
@@ -5306,9 +5349,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             // Branch on DBNull so the readback short-circuits to null instead of
             // funnelling through Convert.ToXxx (which throws InvalidCastException
-            // on DBNull). The local is typed `T?` upstream so the literal `null`
-            // assigns cleanly for both value and reference element types.
-            return $"{paramLocal}.Value is global::System.DBNull ? null : {nonNullExpr}";
+            // on DBNull). A plain null is matched too, the same as the
+            // non-nullable guard: Convert.ToInt32(null) returns 0, which would
+            // turn a parameter the provider never wrote into a zero (#244). The
+            // local is typed `T?` upstream so the literal `null` assigns cleanly
+            // for both value and reference element types.
+            return $"{paramLocal}.Value is null or global::System.DBNull ? null : {nonNullExpr}";
         }
         return nonNullExpr;
     }
