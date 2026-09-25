@@ -193,9 +193,14 @@ would produce:
 
 | Postgres type | Npgsql returns | Read as | Conversion |
 |---------------|----------------|---------|------------|
-| `timestamptz` | UTC `DateTime` | `DateTimeOffset` | The same instant, offset `+00:00` |
+| `timestamptz` | UTC `DateTime` | `DateTimeOffset` | The same instant, offset `+00:00`; the local offset under the legacy switch |
 | `time` | `TimeOnly` | `TimeSpan` | The time of day |
 | `date` | `DateOnly` | `DateTime` | Midnight, `DateTimeKind.Unspecified` |
+
+Under Npgsql's legacy timestamp switch, `Npgsql.EnableLegacyTimestampBehavior`,
+a `timestamptz` comes back as a local `DateTime` instead. The conversion keeps
+the instant and gives the `DateTimeOffset` the machine's local offset rather
+than `+00:00`.
 
 An `interval` output comes back as `TimeSpan` already, including values of a
 day or more. A `timestamp` output read as `DateTimeOffset` throws

@@ -40,20 +40,22 @@ public sealed class PostgresTemporalOutputTests
     {
         await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
         await fx.ExecuteDdlAsync(@"
-            CREATE PROCEDURE clock_proc(OUT clock time, OUT late time)
+            CREATE PROCEDURE clock_proc(OUT clock time, OUT late time, OUT absent time)
                 LANGUAGE plpgsql
             AS $$
             BEGIN
                 clock := '13:14:15.123456';
                 late := '23:59:59.999999';
+                absent := NULL;
             END;
             $$;").ConfigureAwait(false);
 
         var repo = new PostgresTemporalOutputRepo(fx.Connection);
-        var (clock, late) = await repo.ClockAsync(default, null, CancellationToken.None).ConfigureAwait(false);
+        var (clock, late, absent) = await repo.ClockAsync(default, null, null, CancellationToken.None).ConfigureAwait(false);
 
         clock.Should().Be(Clock);
         late.Should().Be(TimeSpan.FromDays(1) - TimeSpan.FromTicks(10));
+        absent.Should().BeNull();
     }
 
     [Fact]
@@ -108,7 +110,37 @@ public sealed class PostgresTemporalOutputTests
 
         var repo = new PostgresTemporalOutputRepo(fx.Connection);
 
-        (await repo.ScalarStampAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(Stamp);
+        var stamp = await repo.ScalarStampAsync(CancellationToken.None).ConfigureAwait(false);
+        stamp.Should().Be(Stamp);
+        stamp.Offset.Should().Be(TimeSpan.Zero, "Npgsql reads timestamptz as UTC, as GetFieldValue<DateTimeOffset> does");
         (await repo.ScalarClockAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(Clock);
+    }
+
+    [Fact]
+    public async Task Scalar_date_reads_back_as_DateTime()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+
+        var repo = new PostgresTemporalOutputRepo(fx.Connection);
+        var day = await repo.ScalarDayAsync(CancellationToken.None).ConfigureAwait(false);
+
+        day.Should().Be(new DateTime(2024, 1, 2));
+        day.Kind.Should().Be(DateTimeKind.Unspecified);
+    }
+
+    [Fact]
+    public async Task Nullable_temporal_scalars_read_NULL_as_null_and_convert_a_value()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+
+        var repo = new PostgresTemporalOutputRepo(fx.Connection);
+
+        (await repo.ScalarMaybeStampAsync(false, CancellationToken.None).ConfigureAwait(false)).Should().BeNull();
+        var stamp = await repo.ScalarMaybeStampAsync(true, CancellationToken.None).ConfigureAwait(false);
+        stamp.Should().Be(Stamp);
+        stamp!.Value.Offset.Should().Be(TimeSpan.Zero);
+
+        (await repo.ScalarMaybeClockAsync(false, CancellationToken.None).ConfigureAwait(false)).Should().BeNull();
+        (await repo.ScalarMaybeClockAsync(true, CancellationToken.None).ConfigureAwait(false)).Should().Be(Clock);
     }
 }

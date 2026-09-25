@@ -22,9 +22,10 @@ public sealed partial class PostgresTemporalOutputRepo(IAsyncDbConnection connec
         CancellationToken ct);
 
     [StoredProcedure("clock_proc")]
-    public partial Task<(TimeSpan Clock, TimeSpan? Late)> ClockAsync(
+    public partial Task<(TimeSpan Clock, TimeSpan? Late, TimeSpan? Absent)> ClockAsync(
         TimeSpan clock,
         TimeSpan? late,
+        TimeSpan? absent,
         CancellationToken ct);
 
     [StoredProcedure("interval_proc")]
@@ -47,4 +48,14 @@ public sealed partial class PostgresTemporalOutputRepo(IAsyncDbConnection connec
 
     [Command("SELECT TIME '13:14:15.123456'", Kind = CommandKind.Scalar)]
     public partial Task<TimeSpan> ScalarClockAsync(CancellationToken ct);
+
+    [Command("SELECT DATE '2024-01-02'", Kind = CommandKind.Scalar)]
+    public partial Task<DateTime> ScalarDayAsync(CancellationToken ct);
+
+    // A nullable scalar keeps the NULL short-circuit in front of the conversion.
+    [Command("SELECT CASE WHEN @present THEN TIMESTAMPTZ '2024-01-02 03:04:05.123456+02' END", Kind = CommandKind.Scalar)]
+    public partial Task<DateTimeOffset?> ScalarMaybeStampAsync(bool present, CancellationToken ct);
+
+    [Command("SELECT CASE WHEN @present THEN TIME '13:14:15.123456' END", Kind = CommandKind.Scalar)]
+    public partial Task<TimeSpan?> ScalarMaybeClockAsync(bool present, CancellationToken ct);
 }
