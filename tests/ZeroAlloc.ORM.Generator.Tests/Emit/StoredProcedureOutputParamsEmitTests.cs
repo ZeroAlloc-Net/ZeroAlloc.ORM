@@ -75,6 +75,31 @@ public class StoredProcedureOutputParamsEmitTests
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
+    // #241 — the int? form: the unset-parameter check stays, and a database NULL
+    // reads as null through the readback's DBNull guard instead of throwing.
+    [Fact]
+    public void SprocWithOutputParams_nullable_return_value_reads_NULL_as_null()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InsertOrder")]
+                public partial Task<(OrderRow Result, int NewOrderId, int? RETURN_VALUE)> InsertAsync(
+                    int customerId, int newOrderId, int? RETURN_VALUE, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
     [Fact]
     public void SprocWithOutputParams_result_row_plus_two_outputs_emits_both_readbacks()
     {

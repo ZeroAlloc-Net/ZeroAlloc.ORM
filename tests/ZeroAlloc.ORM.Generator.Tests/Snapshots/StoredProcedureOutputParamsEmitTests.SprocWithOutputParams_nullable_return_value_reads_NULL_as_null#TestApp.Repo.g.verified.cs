@@ -8,7 +8,7 @@ partial class Repo
 {
     // EmitShape.SprocWithOutputParams — InsertAsync
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<(global::TestApp.OrderRow Result, int NewOrderId, int RETURN_VALUE)> InsertAsync(int @customerId, int @newOrderId, int @RETURN_VALUE, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<(global::TestApp.OrderRow Result, int NewOrderId, int? RETURN_VALUE)> InsertAsync(int @customerId, int @newOrderId, int? @RETURN_VALUE, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -50,9 +50,7 @@ partial class Repo
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             if (__p_RETURN_VALUE.Value is null)
                 throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The provider did not set the RETURN value of the procedure called by 'InsertAsync' into parameter 'RETURN_VALUE'. Only SQL Server procedures have a RETURN value.");
-            if (__p_RETURN_VALUE.Value is global::System.DBNull)
-                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("The RETURN value of the procedure called by 'InsertAsync' is NULL, but its tuple field for parameter 'RETURN_VALUE' is int. Declare it int? to read NULL.");
-            var __out_RETURN_VALUE = global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
+            int? __out_RETURN_VALUE = __p_RETURN_VALUE.Value is global::System.DBNull ? null : global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             return (__elem0, __out_NewOrderId, __out_RETURN_VALUE);
         }
         finally

@@ -65,12 +65,46 @@ public class ReturnValueTests
         Assert.DoesNotContain("__p_status.Value =", generated, System.StringComparison.Ordinal);
         // Only SQL Server sets a return value; on another provider Value stays
         // null, which the generated code reports instead of reading it as 0.
-        Assert.Contains("if (__p_status.Value is null or global::System.DBNull)", generated, System.StringComparison.Ordinal);
+        Assert.Contains("if (__p_status.Value is null)", generated, System.StringComparison.Ordinal);
         Assert.DoesNotContain("if (__p_doubled.Value is null", generated, System.StringComparison.Ordinal);
         // It is read back after the reader is drained, like an output parameter.
         Assert.Contains("var __out_Status = global::System.Convert.ToInt32(__p_status.Value!", generated, System.StringComparison.Ordinal);
         Assert.Contains("__p_doubled.Direction = global::System.Data.ParameterDirection.Output;", generated, System.StringComparison.Ordinal);
     }
+
+    // Value null means the provider never set the parameter, as Npgsql does not:
+    // both int and int? throw. Value DBNull is a database NULL: int? reads it as
+    // null, int throws the same exception type rather than InvalidCastException.
+    [Fact]
+    public void Int_return_value_throws_for_an_unset_parameter_and_for_NULL()
+    {
+        var generated = Generate("""
+            [StoredProcedure("usp_X")]
+            public partial Task<(OrderRow Row, int RETURN_VALUE)> RunAsync(
+                int seed, int RETURN_VALUE, CancellationToken ct);
+            """);
+
+        Assert.Contains("if (__p_RETURN_VALUE.Value is null)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The provider did not set the RETURN value", Normalize(generated), System.StringComparison.Ordinal);
+        Assert.Contains("if (__p_RETURN_VALUE.Value is global::System.DBNull)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The RETURN value of the procedure called by 'RunAsync' is NULL", Normalize(generated), System.StringComparison.Ordinal);
+        Assert.Contains("var __out_RETURN_VALUE = global::System.Convert.ToInt32(__p_RETURN_VALUE.Value!", generated, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Nullable_int_return_value_throws_for_an_unset_parameter_and_reads_NULL_as_null()
+    {
+        var generated = Generate("""
+            [StoredProcedure("usp_X")]
+            public partial Task<(OrderRow Row, int? RETURN_VALUE)> RunAsync(
+                int seed, int? RETURN_VALUE, CancellationToken ct);
+            """);
+
+        Assert.Contains("if (__p_RETURN_VALUE.Value is null)\n                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"The provider did not set the RETURN value", Normalize(generated), System.StringComparison.Ordinal);
+        Assert.DoesNotContain("if (__p_RETURN_VALUE.Value is global::System.DBNull)", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("is NULL", generated, System.StringComparison.Ordinal);
+        Assert.Contains("int? __out_RETURN_VALUE = __p_RETURN_VALUE.Value is global::System.DBNull ? null : global::System.Convert.ToInt32(", generated, System.StringComparison.Ordinal);
+    }
+
+    private static string Normalize(string text) => text.Replace("\r\n", "\n", System.StringComparison.Ordinal);
 
     [Theory]
     [InlineData("int")]

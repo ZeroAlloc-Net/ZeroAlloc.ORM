@@ -282,7 +282,11 @@ public partial Task<(OrderRow Row, int NewOrderId, int Status)> AllocateAsync(
 ```
 
 The argument passed for the return-value parameter is never sent. The value
-is read after the result sets are drained, like an output parameter.
+is read after the result sets are drained, like an output parameter. SQL
+Server always sets it. If the parameter is left unset, the generated method
+throws `ZeroAllocOrmMaterializationException`. A database `NULL` reads as
+`null` into an `int?` field and throws the same exception for an `int`
+field.
 
 - **The name is exact.** The convention applies when the parameter's bound
   name, its `[Param(Name)]` or else its C# name, is exactly `RETURN_VALUE`,
