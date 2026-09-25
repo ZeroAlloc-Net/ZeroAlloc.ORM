@@ -44,9 +44,10 @@ namespace ZeroAlloc.ORM.Generator.Model;
 //                                 single-arg-ctor / enum the UnderlyingReader on
 //                                 Convention drives the cast target instead.
 //   IsNullable                -- true when the tuple element type is annotated
-//                                 nullable (`int?` / `string?`). Currently
-//                                 forwarded for symmetry with ColumnBinding; the
-//                                 emit may guard `.Value` for DBNull when set.
+//                                 nullable (`int?` / `string?`). When set, the
+//                                 readback maps DBNull to null; when clear, the
+//                                 emit throws ZeroAllocOrmMaterializationException
+//                                 on DBNull, naming the procedure and parameter.
 //   Convention                -- ConventionInfo for value-object / enum / etc.
 //                                 wrapping. Null for bare primitives.
 //   DbTypeName                -- v2.0, #235. `System.Data.DbType` member name

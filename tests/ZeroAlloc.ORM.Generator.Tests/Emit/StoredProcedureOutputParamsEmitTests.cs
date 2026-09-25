@@ -141,8 +141,8 @@ public class StoredProcedureOutputParamsEmitTests
         // procedure leaves the output parameter at DBNull. The `is DBNull ?
         // null : ...` ternary keeps the contract symmetric with scalar
         // materialization's null tolerance. Non-nullable output positions
-        // intentionally pass DBNull straight into the cast and throw — the
-        // adopter opts in to NULL tolerance by declaring `T?`.
+        // throw ZeroAllocOrmMaterializationException on DBNull instead (#244) —
+        // the adopter opts in to NULL tolerance by declaring `T?`.
         var source = """
             using System.Data.Async;
             using System.Threading;
@@ -189,6 +189,37 @@ public class StoredProcedureOutputParamsEmitTests
                 [StoredProcedure("usp_GetHeadsAndInsertTail")]
                 public partial Task<(IReadOnlyList<OrderRow> Heads, OrderRow Tail, int NewOrderId)> GetHeadsAndInsertTailAsync(
                     int customerId, int newOrderId, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public void SprocWithOutputParams_non_nullable_outputs_emit_null_guard_naming_procedure_and_parameter()
+    {
+        // #244 — a non-nullable output left NULL by the procedure throws
+        // ZeroAllocOrmMaterializationException naming the procedure and the
+        // parameter, for a string, a value type, an enum, a string-stored enum
+        // and a value object alike. Before, a string silently became "" through
+        // Convert.ToString and a value type threw a bare InvalidCastException.
+        // The nullable elements keep their `is DBNull ? null : ...` readback.
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public enum Status { Pending, Cancelled }
+            [StoreAsString] public enum Named { Pending, Cancelled }
+            public sealed record OrderId(int Value);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("dbo.usp_Outputs")]
+                public partial Task<(string Label, int Count, Status State, Named Name, OrderId OrderRef, string? Note, int? Maybe)> RunAsync(
+                    string label, int count, Status state, Named name, OrderId orderRef, string? note, int? maybe, CancellationToken ct);
             }
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));

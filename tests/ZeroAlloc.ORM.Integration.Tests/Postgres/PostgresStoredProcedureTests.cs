@@ -160,6 +160,101 @@ public sealed class PostgresStoredProcedureTests
         label.Should().Be("hi!");
     }
 
+    // #244 — a NULL OUT value into a non-nullable tuple element throws
+    // ZeroAllocOrmMaterializationException naming the procedure and the
+    // parameter. Before, a string became "" and a value type threw a bare
+    // InvalidCastException from Convert.
+    [Fact]
+    public async Task Null_output_into_non_nullable_string_throws_naming_the_parameter()
+    {
+        await using var fx = await CreateFixtureWithNullOutputProcAsync().ConfigureAwait(false);
+        var repo = new StoredProcedureRepo(fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoStringAsync("seed", null, null, null, CancellationToken.None), "note").ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_int_throws_naming_the_parameter()
+    {
+        await using var fx = await CreateFixtureWithNullOutputProcAsync().ConfigureAwait(false);
+        var repo = new StoredProcedureRepo(fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoIntAsync(null, 0, null, null, CancellationToken.None), "amount").ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_enum_throws_naming_the_parameter()
+    {
+        await using var fx = await CreateFixtureWithNullOutputProcAsync().ConfigureAwait(false);
+        var repo = new StoredProcedureRepo(fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoEnumAsync(null, null, Status.Pending, null, CancellationToken.None), "state").ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Null_output_into_non_nullable_value_object_throws_naming_the_parameter()
+    {
+        await using var fx = await CreateFixtureWithNullOutputProcAsync().ConfigureAwait(false);
+        var repo = new StoredProcedureRepo(fx.Connection);
+
+        await AssertNullOutputThrowsAsync(
+            () => repo.NullIntoValueObjectAsync(null, null, null, new OrderId(0), CancellationToken.None), "orderref").ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Null_output_into_nullable_targets_reads_back_as_null()
+    {
+        await using var fx = await CreateFixtureWithNullOutputProcAsync().ConfigureAwait(false);
+        var repo = new StoredProcedureRepo(fx.Connection);
+
+        var result = await repo.NullIntoNullableAsync("seed", 1, Status.Cancelled, new OrderId(1), CancellationToken.None).ConfigureAwait(false);
+
+        result.Note.Should().BeNull();
+        result.Amount.Should().BeNull();
+        result.State.Should().BeNull();
+        result.Orderref.Should().BeNull();
+    }
+
+    private static async Task AssertNullOutputThrowsAsync(Func<Task> call, string parameterName)
+    {
+        var thrown = await call.Should().ThrowAsync<ZeroAllocOrmMaterializationException>().ConfigureAwait(false);
+        thrown.Which.Message.Should().Contain("'null_output_proc'").And.Contain($"'{parameterName}'");
+    }
+
+    private static async Task<PostgresFixture> CreateFixtureWithNullOutputProcAsync()
+    {
+        var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        try
+        {
+            await CreateNullOutputProcAsync(fx).ConfigureAwait(false);
+            return fx;
+        }
+        catch
+        {
+            await fx.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static ValueTask CreateNullOutputProcAsync(PostgresFixture fx) => fx.ExecuteDdlAsync(@"
+            CREATE PROCEDURE null_output_proc(
+                OUT note text,
+                OUT amount integer,
+                OUT state integer,
+                OUT orderref integer)
+                LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                note := NULL;
+                amount := NULL;
+                state := NULL;
+                orderref := NULL;
+            END;
+            $$;");
+
     [Fact]
     public async Task MultiResultSet_via_function_calls_returns_count_and_rows()
     {

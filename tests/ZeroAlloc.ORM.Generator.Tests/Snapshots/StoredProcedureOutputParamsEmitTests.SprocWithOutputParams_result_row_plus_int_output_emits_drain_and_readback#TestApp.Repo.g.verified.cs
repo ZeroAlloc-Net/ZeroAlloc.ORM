@@ -42,6 +42,8 @@ partial class Repo
                     while (await __reader.ReadAsync(ct).ConfigureAwait(false)) { }
                 }
             }
+            if (__p_newOrderId.Value is null or global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Stored procedure 'usp_InsertOrder' returned NULL for output parameter 'newOrderId', but tuple element 'NewOrderId' is the non-nullable type 'int'. Declare it as 'int?' to receive null.");
             var __out_NewOrderId = global::System.Convert.ToInt32(__p_newOrderId.Value!, global::System.Globalization.CultureInfo.InvariantCulture);
             return (__elem0, __out_NewOrderId);
         }

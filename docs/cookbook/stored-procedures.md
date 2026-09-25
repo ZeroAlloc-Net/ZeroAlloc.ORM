@@ -97,6 +97,25 @@ initial value, as an `INOUT` or a T-SQL `OUTPUT` parameter that is incremented
 can, mark it `[Param(Direction = ParameterDirection.InputOutput)]`; see
 [Output parameter types and facets](#output-parameter-types-and-facets).
 
+### NULL output values
+
+A procedure can leave an output parameter `NULL`. What the tuple element
+receives depends on whether you declared it nullable:
+
+- **Nullable element** (`string?`, `int?`, `Status?`, `OrderId?`): `NULL`
+  reads back as `null`.
+- **Non-nullable element** (`string`, `int`, an enum, a value object): `NULL`
+  throws `ZeroAllocOrmMaterializationException`. The message names the
+  procedure and the output parameter, for example
+  `Stored procedure 'usp_InsertOrder' returned NULL for output parameter
+  'newOrderId', but tuple element 'NewOrderId' is the non-nullable type 'int'.`
+
+A non-nullable `string` output that is `NULL` **now throws instead of returning
+`""`**; before this change the empty string silently replaced the `NULL`.
+Declare the element as `string?` to receive `null`. A non-nullable value type
+used to throw a bare `InvalidCastException` that did not say which parameter
+was `NULL`; it now throws the same exception as a `string`.
+
 ### Reader-drain semantics
 
 The generator emits a reader-drain loop **before** reading output-parameter
