@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.0.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.0.0...v2.0.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* bind the stored-procedure RETURN value as ParameterDirection.ReturnValue ([#259](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/259)) ([f86fcec](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f86fcecd5984e911ff4dc9699a3ad89b4aa761da))
+* convert temporal stored-procedure outputs from provider default types ([#258](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/258)) ([92b2e5f](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/92b2e5f9ff47db45b0e7e22f83715797ff8c7bf2))
+* dispatch nullable nested composites through their materialize factory ([#268](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/268)) ([d8ae370](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/d8ae370132b7a1098b7ad8d324f4b38f1995d041)), closes [#264](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/264)
+* guard the bulkinsert identity readback against a null value ([#273](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/273)) ([6ce275f](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/6ce275ff93380b0bdd2178bd8d96d9fc91959ece)), closes [#263](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/263)
+* mark released analyzer rules and public api as shipped and automate the move ([#267](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/267)) ([fdc7173](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/fdc7173167395e2adf342d71226155241a715e33)), closes [#252](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/252)
+* read sqlite numeric dates and time spans on the scalar path ([#269](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/269)) ([081574d](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/081574d46cc7dbc3924640b68caf8de1ab5d1a12)), closes [#261](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/261)
+* throw materialization exception for no-row scalars and match sqlite 10 time zones ([#271](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/271)) ([a5f8af7](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a5f8af76f1fadfa16af1a94f0bf21dcb884335e1)), closes [#260](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/260) [#265](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/265)
+* throw on a null scalar result and parse sqlite text scalars ([#262](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/262)) ([0aa0b4a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/0aa0b4a19caae00cbdea4f628ff6ea596043288c))
+* throw on a null stored-procedure output for a non-nullable tuple element ([#253](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/253)) ([047af6a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/047af6af65aca926904b5d0f1f682dc81ffd54bd))
+* throw the documented exception for NULL in a non-nullable column ([#266](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/266)) ([3f249be](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/3f249bea60ac1f0912e5c4dff8e79d55418bb0a6)), closes [#249](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/249)
+
+
+### Tests
+
+* guard the diagnostics docs index against drift ([#251](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/251)) ([66052e1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/66052e189488d2f2f7c61198fdce965907cbc416)), closes [#242](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/242)
+
 ## [2.0.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v1.7.1...v2.0.0) (2026-09-25)
 
 
