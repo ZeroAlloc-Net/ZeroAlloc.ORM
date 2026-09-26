@@ -11,13 +11,14 @@ namespace ZeroAlloc.ORM.Integration.Tests.Postgres;
 // (CustomerId, Total) VALUES (@CustomerId, @Total) RETURNING Id") binds to the
 // lowercase schema we seed below — no Postgres-specific repo needed.
 //
-// Five cells — same shape as Sqlite, with two Postgres-specific upgrades:
+// Six cells — same shape as Sqlite, with two Postgres-specific upgrades:
 //
 //   * Insert_5_rows_returns_rows_affected               — rows-affected path.
 //   * Insert_5_rows_with_returning_returns_identity_list — RETURNING Id path.
 //   * Insert_5000_rows_forces_chunking                  — 12 chunks at 450/chunk.
 //   * Empty_collection_returns_zero                     — empty short-circuit.
 //   * Insert_row_with_value_object_column               — TRow with VO column.
+//   * Insert_with_RETURNING_NULL...                     — #263: NULL identity guard.
 //
 // Why 5000 rows (vs Sqlite's 1000)? Postgres's parameter ceiling (65535) gives a
 // much larger budget than Sqlite's ~999 default, so the chunk-multi-row path on
@@ -208,6 +209,34 @@ public sealed class PostgresBulkInsertTests
         seen.Should().HaveCount(3);
         seen.Select(r => r.CustomerId).Should().BeEquivalentTo(ExpectedCustomersVo);
         seen.Select(r => r.Total).Should().BeEquivalentTo(ExpectedTotalsVo);
+    }
+
+    // #263 — the identity readback had no NULL guard. RETURNING NULL forces a
+    // NULL identity for every row; Npgsql throws InvalidCastException for a
+    // NULL read through GetInt32, unlike Sqlite's InvalidOperationException —
+    // proving the guard's exception-type filter covers Npgsql too.
+    [Fact]
+    public async Task Insert_with_RETURNING_NULL_throws_naming_the_column_and_method()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await SeedSchemaAsync(fx).ConfigureAwait(false);
+
+        var repo = new BulkInsertRepo(fx.Connection);
+        var rows = new[] { new BulkOrderRow(10, 1.00m) };
+
+        var ex = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.InsertOrdersReturningNullIdAsync(rows, CancellationToken.None)).ConfigureAwait(false);
+
+        ex.InnerException.Should().BeOfType<InvalidCastException>();
+        ex.Message.Should().Contain("is NULL");
+        ex.Message.Should().Contain(
+            "ZeroAlloc.ORM.Integration.Tests.BulkInsertRepo.InsertOrdersReturningNullIdAsync");
+        ex.Message.Should().Contain("non-nullable 'int'");
+
+        // The row was still inserted — the exception fires while draining the
+        // RETURNING reader, after Postgres already committed the INSERT.
+        var seen = await QueryAllOrdersAsync(fx).ConfigureAwait(false);
+        seen.Should().HaveCount(1);
     }
 
     // Schema: Postgres folds unquoted identifiers to lowercase, so the repo's

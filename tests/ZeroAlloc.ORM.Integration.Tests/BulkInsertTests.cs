@@ -4,7 +4,7 @@ using Xunit;
 namespace ZeroAlloc.ORM.Integration.Tests;
 
 // v1.3 Phase Task 9 — Sqlite round-trip coverage for [Command(Kind = BulkInsert)].
-// Five cells validate runtime behaviour of the chunked-INSERT pipeline emitted
+// Six cells validate runtime behaviour of the chunked-INSERT pipeline emitted
 // by EmitBulkInsertCommand. The generator's snapshot tests already pin the
 // EMIT SHAPE; these tests prove the SHAPE works against a real provider.
 //
@@ -13,6 +13,7 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 //   * Insert_1000_rows_forces_chunking                  — 1000 / 450 = 3 chunks.
 //   * Empty_collection_returns_zero                     — empty short-circuit.
 //   * Insert_row_with_value_object_column               — TRow with VO property.
+//   * Insert_with_RETURNING_NULL...                     — #263: NULL identity guard.
 //
 // 450 = 900 / 2 placeholders per row (CustomerId, Total), folded as a constant
 // by the generator.
@@ -206,6 +207,43 @@ public class BulkInsertTests
             seen.Should().HaveCount(3);
             seen.Select(r => r.CustomerId).Should().BeEquivalentTo(ExpectedCustomersVo);
             seen.Select(r => r.Total).Should().BeEquivalentTo(ExpectedTotalsVo);
+        }
+    }
+
+    // #263 — the identity readback had no NULL guard: a NULL identity (a
+    // provider returning one, or here a RETURNING clause with no real
+    // identity column) used to surface as a bare provider cast error instead
+    // of the documented ZeroAllocOrmMaterializationException.
+    [Fact]
+    public async Task Insert_with_RETURNING_NULL_throws_naming_the_column_and_method()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await SeedSchemaAsync(fx).ConfigureAwait(false);
+
+            var repo = new BulkInsertRepo(fx.Connection);
+            var rows = new[] { new BulkOrderRow(10, 1.00m) };
+
+            var ex = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+                () => repo.InsertOrdersReturningNullIdAsync(rows, CancellationToken.None)).ConfigureAwait(false);
+
+            // Microsoft.Data.Sqlite throws InvalidOperationException for a NULL
+            // read through GetInt32, same as NullColumnGuardTests (#249). The
+            // provider's own exception is kept as InnerException.
+            ex.InnerException.Should().BeOfType<InvalidOperationException>();
+            ex.Message.Should().Contain("is NULL");
+            ex.Message.Should().Contain(
+                "ZeroAlloc.ORM.Integration.Tests.BulkInsertRepo.InsertOrdersReturningNullIdAsync");
+            ex.Message.Should().Contain("non-nullable 'int'");
+
+            // No row was left half-inserted: the exception fires while draining
+            // the reader, after the INSERT already committed inside Sqlite's
+            // implicit per-statement transaction — the row exists, just without
+            // a usable identity.
+            var seen = await QueryAllOrdersAsync(fx).ConfigureAwait(false);
+            seen.Should().HaveCount(1);
         }
     }
 

@@ -54,7 +54,24 @@ partial class Repo
                 await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
                 while (await __reader.ReadAsync(ct).ConfigureAwait(false))
                 {
-                    __ids.Add(__reader.GetInt32(0));
+                    try
+                    {
+                        __ids.Add(__reader.GetInt32(0));
+                    }
+                    catch (global::System.Exception __ex) when (__NullIdentity(__reader, __ex) is { } __nullIdentity)
+                    {
+                        throw __nullIdentity;
+                    }
+
+                    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                    static global::System.Exception? __NullIdentity(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+                    {
+                        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                            return null;
+                        if (!__r.IsDBNull(0))
+                            return null;
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but BulkInsert identity command 'TestApp.Repo.InsertOrdersAsync' expects the non-nullable 'int'. The SQL must produce a non-null identity value.", __inner);
+                    }
                 }
 
                 __offset += __thisChunk;
