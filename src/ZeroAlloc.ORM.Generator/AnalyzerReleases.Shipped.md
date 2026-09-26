@@ -105,3 +105,12 @@ Rule ID | Category      | Severity | Notes
 ZAO065  | ZeroAlloc.ORM | Warning  | Decimal output parameter has no Scale
 ZAO066  | ZeroAlloc.ORM | Error    | [Param] member does not apply to this parameter
 ZAO081  | ZeroAlloc.ORM | Error    | Containing type must be partial (nested repository)
+
+## Release 2.0.1
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO067  | ZeroAlloc.ORM | Error    | Return value parameter must be int
+ZAO068  | ZeroAlloc.ORM | Error    | More than one return value parameter
