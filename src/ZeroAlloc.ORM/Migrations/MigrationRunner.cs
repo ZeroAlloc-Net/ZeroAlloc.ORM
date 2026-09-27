@@ -30,7 +30,9 @@ namespace ZeroAlloc.ORM.Migrations;
 ///         silent replay), sort ascending.</item>
 ///   <item>For each pending migration: BEGIN TRANSACTION, execute the migration
 ///         body, INSERT the history row, COMMIT. On exception: ROLLBACK,
-///         release the lock, and rethrow.</item>
+///         release the lock, and rethrow. If the ROLLBACK also throws, its
+///         exception is attached to the rethrown one under
+///         <see cref="RollbackExceptionDataKey"/>.</item>
 ///   <item>Release the dialect's apply-lock and return the applied list with
 ///         <see cref="Migration.AppliedAt"/> populated to UTC now.</item>
 /// </list>
@@ -43,6 +45,18 @@ namespace ZeroAlloc.ORM.Migrations;
 /// </summary>
 public sealed class MigrationRunner
 {
+    /// <summary>
+    /// The <see cref="Exception.Data"/> key under which <see cref="RunAsync"/> records a
+    /// rollback failure. When a migration fails and rolling back its transaction also
+    /// throws, the runner still rethrows the migration's original exception unchanged,
+    /// and stores the rollback exception in that exception's <see cref="Exception.Data"/>
+    /// under this key. Its presence means the rollback did not complete, so the database
+    /// may be in an unknown state. The entry is absent when the rollback succeeded, and
+    /// is not added when the original exception's <see cref="Exception.Data"/> is
+    /// read-only or fixed-size.
+    /// </summary>
+    public const string RollbackExceptionDataKey = "ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackException";
+
     private readonly IAsyncDbConnection _connection;
     private readonly IMigrationSource _source;
     private readonly IMigrationDialect _dialect;
@@ -77,7 +91,9 @@ public sealed class MigrationRunner
     /// Propagated verbatim when a migration's SQL fails. The transaction for the
     /// failing migration is rolled back; earlier migrations in this call have
     /// already committed and remain in the history table; later migrations are
-    /// never attempted.
+    /// never attempted. If the rollback itself throws, the original exception is
+    /// still the one propagated, and the rollback exception is stored in its
+    /// <see cref="Exception.Data"/> under <see cref="RollbackExceptionDataKey"/>.
     /// </exception>
     public async Task<IReadOnlyList<Migration>> RunAsync(CancellationToken ct = default)
     {
@@ -198,7 +214,7 @@ public sealed class MigrationRunner
                 await tx.CommitAsync(ct).ConfigureAwait(false);
                 return appliedAt;
             }
-            catch
+            catch (Exception ex)
             {
                 // Cancellation-aware rollback: BeginTransactionAsync sets the
                 // transaction's Connection; the underlying provider's
@@ -211,18 +227,33 @@ public sealed class MigrationRunner
                 }
                 catch (Exception rollbackEx)
                 {
-                    // Intentionally observe-and-discard: the original
-                    // migration-body exception is the one we want callers to
-                    // see (it points at the failing migration's SQL). The
-                    // transaction's Dispose runs via the `await using` block
-                    // above as a final safety net for provider state. The
-                    // rollback exception is kept assigned so the catch is not empty,
-                    // which Roslynator's RCS1075 rejects for a catch of Exception.
-                    _ = rollbackEx;
+                    // The original exception stays the one callers see (it points
+                    // at the failing migration's SQL), but a failed rollback means
+                    // the database may be in an unknown state, so record it on the
+                    // original rather than losing it.
+                    AttachRollbackFailure(ex, rollbackEx);
                 }
                 throw;
             }
         }
+    }
+
+    /// <summary>
+    /// Stores <paramref name="rollbackFailure"/> in <paramref name="original"/>'s
+    /// <see cref="Exception.Data"/> under <see cref="RollbackExceptionDataKey"/>. Skipped
+    /// when that dictionary cannot take the entry — read-only, or fixed-size without the
+    /// key — so this never throws from inside the catch handler and never replaces the
+    /// original exception.
+    /// </summary>
+    private static void AttachRollbackFailure(Exception original, Exception rollbackFailure)
+    {
+        var data = original.Data;
+        if (data.IsReadOnly || (data.IsFixedSize && !data.Contains(RollbackExceptionDataKey)))
+        {
+            return;
+        }
+
+        data[RollbackExceptionDataKey] = rollbackFailure;
     }
 
     private async Task ExecuteNonQueryAsync(string sql, CancellationToken ct)

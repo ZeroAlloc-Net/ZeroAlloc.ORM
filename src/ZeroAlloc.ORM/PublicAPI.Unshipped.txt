@@ -1,1 +1,2 @@
 #nullable enable
+const ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackExceptionDataKey = "ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackException" -> string!
