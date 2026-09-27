@@ -1,0 +1,9 @@
+root = false
+
+# Every Dapper_AOT benchmark must run through Dapper.AOT's build-time interceptors.
+# Dapper.AOT reports a Dapper call it cannot intercept as DAP001, at Info severity,
+# and leaves that call on reflection-based vanilla Dapper. At Info the fallback is
+# silent: the benchmark keeps its Dapper_AOT name but measures a different library
+# (see #289). Raising DAP001 to an error makes any such fallback fail the build.
+[*.cs]
+dotnet_diagnostic.DAP001.severity = error
