@@ -4,7 +4,6 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;
-using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks;
 
@@ -19,7 +18,7 @@ namespace ZeroAlloc.ORM.Benchmarks;
 // real-provider numbers behind a `--filter "*Postgres*"` gate.
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-public class SingleRowReadBench
+public class SingleRowReadBench : IAsyncDisposable
 {
     private SqliteConnection _raw = null!;
     private IAsyncDbConnection _conn = null!;
@@ -46,8 +45,11 @@ public class SingleRowReadBench
     }
 
     [GlobalCleanup]
-    public async Task Cleanup()
+    public async Task Cleanup() => await DisposeAsync().ConfigureAwait(false);
+
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _conn.DisposeAsync().ConfigureAwait(false);
         await _raw.DisposeAsync().ConfigureAwait(false);
     }
@@ -57,18 +59,24 @@ public class SingleRowReadBench
     [Benchmark(Baseline = true)]
     public async Task<OrderRow?> HandWrittenAdoNet()
     {
-        await using var cmd = _raw.CreateCommand();
-        cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
-        var p = cmd.CreateParameter();
-        p.ParameterName = "@id";
-        p.Value = 1;
-        cmd.Parameters.Add(p);
-        await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        if (!await reader.ReadAsync().ConfigureAwait(false))
+        var cmd = _raw.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
         {
-            return null;
+            cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@id";
+            p.Value = 1;
+            cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+            }
         }
-        return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
     }
 
     // Dapper.AOT — the [module: DapperAot] above triggers the build-time
@@ -81,13 +89,4 @@ public class SingleRowReadBench
 
     [Benchmark]
     public Task<OrderRow?> ZeroAlloc_ORM() => _repo.GetByIdAsync(1, default);
-}
-
-// ZA.ORM repository — generator emits the GetByIdAsync body. Uses the same
-// primary-constructor connection-injection convention as the integration tests
-// (the generator discovers the IAsyncDbConnection parameter automatically).
-public sealed partial class OrderRepository(IAsyncDbConnection connection)
-{
-    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
-    public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
 }

@@ -4,8 +4,6 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;
-using System.Runtime.CompilerServices;
-using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks;
 
@@ -15,7 +13,7 @@ namespace ZeroAlloc.ORM.Benchmarks;
 // SingleRowReadBench (hand-written / Dapper.AOT / ZA.ORM).
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-public class MultiRowReadBench
+public class MultiRowReadBench : IAsyncDisposable
 {
     private const int RowCount = 1000;
 
@@ -38,45 +36,57 @@ public class MultiRowReadBench
         }
 
         // Seed 1000 rows in a single transaction for fast setup.
-        await using var tx = (SqliteTransaction)await _raw.BeginTransactionAsync().ConfigureAwait(false);
-        var ins = _raw.CreateCommand();
-        ins.Transaction = tx;
-        ins.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES ($id, $cust, $total)";
-        var pId = ins.CreateParameter(); pId.ParameterName = "$id"; ins.Parameters.Add(pId);
-        var pCust = ins.CreateParameter(); pCust.ParameterName = "$cust"; ins.Parameters.Add(pCust);
-        var pTotal = ins.CreateParameter(); pTotal.ParameterName = "$total"; ins.Parameters.Add(pTotal);
-        await using (ins.ConfigureAwait(false))
+        var tx = (SqliteTransaction)await _raw.BeginTransactionAsync().ConfigureAwait(false);
+        await using (tx.ConfigureAwait(false))
         {
-            for (var i = 1; i <= RowCount; i++)
+            var ins = _raw.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES ($id, $cust, $total)";
+            var pId = ins.CreateParameter(); pId.ParameterName = "$id"; ins.Parameters.Add(pId);
+            var pCust = ins.CreateParameter(); pCust.ParameterName = "$cust"; ins.Parameters.Add(pCust);
+            var pTotal = ins.CreateParameter(); pTotal.ParameterName = "$total"; ins.Parameters.Add(pTotal);
+            await using (ins.ConfigureAwait(false))
             {
-                pId.Value = i;
-                pCust.Value = 100 + (i % 50);
-                pTotal.Value = 9.99m + i;
-                await ins.ExecuteNonQueryAsync().ConfigureAwait(false);
+                for (var i = 1; i <= RowCount; i++)
+                {
+                    pId.Value = i;
+                    pCust.Value = 100 + (i % 50);
+                    pTotal.Value = 9.99m + i;
+                    await ins.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
             }
+            await tx.CommitAsync().ConfigureAwait(false);
         }
-        await tx.CommitAsync().ConfigureAwait(false);
 
         _repo = new MultiRowRepository(_conn);
     }
 
     [GlobalCleanup]
-    public async Task Cleanup()
+    public async Task Cleanup() => await DisposeAsync().ConfigureAwait(false);
+
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _conn.DisposeAsync().ConfigureAwait(false);
         await _raw.DisposeAsync().ConfigureAwait(false);
     }
 
     [Benchmark(Baseline = true)]
-    public async Task<List<OrderRow>> HandWrittenAdoNet()
+    public async Task<IReadOnlyList<OrderRow>> HandWrittenAdoNet()
     {
         var list = new List<OrderRow>(capacity: RowCount);
-        await using var cmd = _raw.CreateCommand();
-        cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id";
-        await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        while (await reader.ReadAsync().ConfigureAwait(false))
+        var cmd = _raw.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
         {
-            list.Add(new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2)));
+            cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id";
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    list.Add(new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2)));
+                }
+            }
         }
         return list;
     }
@@ -86,7 +96,7 @@ public class MultiRowReadBench
     // the hand-written / ZA.ORM pre-sized lists. Using `[.. rows]` would force
     // a fresh collection-expression spread and pay an unfair allocation tax.
     [Benchmark]
-    public async Task<List<OrderRow>> Dapper_AOT()
+    public async Task<IReadOnlyList<OrderRow>> Dapper_AOT()
     {
         var rows = await _raw.QueryAsync<OrderRow>(
             "SELECT Id, CustomerId, Total FROM Orders ORDER BY Id").ConfigureAwait(false);
@@ -97,7 +107,7 @@ public class MultiRowReadBench
     // `IAsyncEnumerable<T>` is the canonical streaming form. The benchmark
     // materializes to List<T> so the comparison stays apples-to-apples.
     [Benchmark]
-    public async Task<List<OrderRow>> ZeroAlloc_ORM()
+    public async Task<IReadOnlyList<OrderRow>> ZeroAlloc_ORM()
     {
         var list = new List<OrderRow>(capacity: RowCount);
         await foreach (var row in _repo.StreamAllAsync(default).ConfigureAwait(false))
@@ -106,11 +116,4 @@ public class MultiRowReadBench
         }
         return list;
     }
-}
-
-public sealed partial class MultiRowRepository(IAsyncDbConnection connection)
-{
-    [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
-    public partial IAsyncEnumerable<OrderRow> StreamAllAsync(
-        [EnumeratorCancellation] CancellationToken ct);
 }

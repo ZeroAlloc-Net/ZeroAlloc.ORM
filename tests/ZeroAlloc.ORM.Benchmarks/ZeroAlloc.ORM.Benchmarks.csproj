@@ -4,10 +4,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>ZeroAlloc.ORM.Benchmarks</RootNamespace>
     <IsPackable>false</IsPackable>
-    <!-- Mirrors ZA.Rest's BDN project: benchmarks are JIT-targeted (not AOT-published),
-         so AOT call-site warnings are suppressed and warnings are not treated as errors.
-         The ZA.ORM-emitted code itself remains AOT-clean — verified by ZA.ORM.AotSmoke. -->
-    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- TreatWarningsAsErrors is inherited as true from Directory.Build.props; every
+         warning in this project fails the build except EPS06. The 8 EPS06 warnings
+         (ErrorProne.NET.Structs, "hidden copy of a non-readonly struct") come entirely from
+         Dapper.AOT's own generated interceptor code: the flagged file is regenerated on every
+         build from our Dapper call sites, and the struct causing the copy
+         (Dapper.UnifiedCommand) lives inside the Dapper.AOT package, not in this repo.
+         Dapper.AOT 1.1.0 is already the latest release, and dropping it would remove one of
+         the three baselines this project benchmarks against. EPS06 stays visible as a
+         warning, it just does not fail the build. Tracked in #287; remove this line once
+         Dapper.AOT stops emitting the hidden copies. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);EPS06</WarningsNotAsErrors>
     <!-- Server GC + concurrent GC make BDN numbers more representative of
          production workloads (matching ZA.Rest's BDN setup). -->
     <ServerGarbageCollection>true</ServerGarbageCollection>

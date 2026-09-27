@@ -4,7 +4,6 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Data.Async;
 using System.Data.Async.Adapters;
-using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks;
 
@@ -16,7 +15,7 @@ namespace ZeroAlloc.ORM.Benchmarks;
 // negligible (one increment) and consistent across all three baselines.
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-public class InsertBench
+public class InsertBench : IAsyncDisposable
 {
     private SqliteConnection _raw = null!;
     private IAsyncDbConnection _conn = null!;
@@ -41,8 +40,11 @@ public class InsertBench
     }
 
     [GlobalCleanup]
-    public async Task Cleanup()
+    public async Task Cleanup() => await DisposeAsync().ConfigureAwait(false);
+
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _conn.DisposeAsync().ConfigureAwait(false);
         await _raw.DisposeAsync().ConfigureAwait(false);
     }
@@ -51,12 +53,15 @@ public class InsertBench
     public async Task<int> HandWrittenAdoNet()
     {
         var id = ++_nextId;
-        await using var cmd = _raw.CreateCommand();
-        cmd.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)";
-        var pId = cmd.CreateParameter(); pId.ParameterName = "@id"; pId.Value = id; cmd.Parameters.Add(pId);
-        var pCust = cmd.CreateParameter(); pCust.ParameterName = "@cust"; pCust.Value = 100; cmd.Parameters.Add(pCust);
-        var pTotal = cmd.CreateParameter(); pTotal.ParameterName = "@total"; pTotal.Value = 9.99m; cmd.Parameters.Add(pTotal);
-        return await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        var cmd = _raw.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)";
+            var pId = cmd.CreateParameter(); pId.ParameterName = "@id"; pId.Value = id; cmd.Parameters.Add(pId);
+            var pCust = cmd.CreateParameter(); pCust.ParameterName = "@cust"; pCust.Value = 100; cmd.Parameters.Add(pCust);
+            var pTotal = cmd.CreateParameter(); pTotal.ParameterName = "@total"; pTotal.Value = 9.99m; cmd.Parameters.Add(pTotal);
+            return await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
     }
 
     [Benchmark]
@@ -74,10 +79,4 @@ public class InsertBench
         var id = ++_nextId;
         return _repo.InsertAsync(id, 100, 9.99m, default);
     }
-}
-
-public sealed partial class InsertRepository(IAsyncDbConnection connection)
-{
-    [Command("INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)")]
-    public partial Task<int> InsertAsync(int id, int cust, decimal total, CancellationToken ct);
 }
