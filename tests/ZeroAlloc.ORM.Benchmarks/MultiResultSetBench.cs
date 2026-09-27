@@ -108,24 +108,44 @@ public class MultiResultSetBench : IAsyncDisposable
         }
     }
 
-    // Dapper.AOT supports multi-result via QueryMultipleAsync. For an apples-
-    // to-apples comparison we materialize the same shape (head + line list).
+    // Dapper.AOT does not intercept QueryMultiple / QueryMultipleAsync: it reports DAP001 and
+    // leaves the call on reflection-based vanilla Dapper, because Dapper's GridReader cannot
+    // be constructed from outside Dapper. What Dapper.AOT does support for reading several
+    // result sets is GetRowParser<T>(), which it intercepts with the same generated
+    // RowFactory its QueryAsync / QueryFirstOrDefaultAsync interceptors use. So the command
+    // and reader are driven exactly as in HandWrittenAdoNet, and Dapper.AOT materializes the
+    // rows; the difference from the baseline is Dapper.AOT's row mapping and nothing else.
+    // The DAP001 = error rule in this project's .editorconfig keeps this call-site on the
+    // AOT path.
     [Benchmark]
     public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> Dapper_AOT()
     {
-        using var multi = await _raw.QueryMultipleAsync(
-            """
-            SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
-            SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
-            """,
-            new { id = 1 }).ConfigureAwait(false);
-        var head = await multi.ReadFirstOrDefaultAsync<OrderRow>().ConfigureAwait(false);
-        if (head is null)
+        var cmd = _raw.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
         {
-            return null;
+            cmd.CommandText = """
+                SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
+                SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
+                """;
+            var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                var head = reader.GetRowParser<OrderRow>()(reader);
+                await reader.NextResultAsync().ConfigureAwait(false);
+                var parseLine = reader.GetRowParser<OrderLineRow>();
+                var lines = new List<OrderLineRow>(capacity: LineCount);
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    lines.Add(parseLine(reader));
+                }
+                return (head, lines);
+            }
         }
-        var lines = (await multi.ReadAsync<OrderLineRow>().ConfigureAwait(false)).AsList();
-        return (head, lines);
     }
 
     [Benchmark]

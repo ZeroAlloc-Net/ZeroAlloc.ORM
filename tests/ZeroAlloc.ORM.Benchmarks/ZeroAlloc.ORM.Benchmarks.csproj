@@ -6,14 +6,13 @@
     <IsPackable>false</IsPackable>
     <!-- TreatWarningsAsErrors is inherited as true from Directory.Build.props; every
          warning in this project fails the build except EPS06. The 8 EPS06 warnings
-         (ErrorProne.NET.Structs, "hidden copy of a non-readonly struct") come entirely from
-         Dapper.AOT's own generated interceptor code: the flagged file is regenerated on every
-         build from our Dapper call sites, and the struct causing the copy
-         (Dapper.UnifiedCommand) lives inside the Dapper.AOT package, not in this repo.
-         Dapper.AOT 1.1.0 is already the latest release, and dropping it would remove one of
-         the three baselines this project benchmarks against. EPS06 stays visible as a
-         warning, it just does not fail the build. Tracked in #287; remove this line once
-         Dapper.AOT stops emitting the hidden copies. -->
+         (ErrorProne.NET.Structs, "hidden copy of a non-readonly struct") land in
+         Dapper.AOT's generated interceptor code and name Dapper.UnifiedCommand, which is a
+         readonly struct: the compiler emits no copy there. They are false positives from
+         ErrorProne.NET.Structs 0.1.2, the version Directory.Build.props pins, which does
+         not recognise readonly structs loaded from referenced assemblies. EPS06 stays
+         visible as a warning, it just does not fail the build. Tracked in #287; remove
+         this line once the analyzer is on a version without the false positive. -->
     <WarningsNotAsErrors>$(WarningsNotAsErrors);EPS06</WarningsNotAsErrors>
     <!-- Server GC + concurrent GC make BDN numbers more representative of
          production workloads (matching ZA.Rest's BDN setup). -->
