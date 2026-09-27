@@ -638,17 +638,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ZAO002 path at the top of TransformMethod covers the "return type isn't
         // even Task<T>" case via IsSupportedReturnType; THIS branch covers the
         // more subtle "Task<T> but T isn't a supported shape on this Kind" case.
+        //
+        // #280 — this branch used to reuse ZAO002_BadReturnType's message, which
+        // says "Expected Task<T>, ValueTask<T>, ..." for a method that, in the
+        // common case, already returns Task<T>. It now reports through
+        // ZAO002_UnsupportedScalarOrIdentityType with a `reason` built by
+        // DescribeScalarOrIdentityShapeFailure so the message names the actual
+        // problem (T has no reader, T is nullable on Identity, or the return type
+        // isn't Task<T>/ValueTask<T> at all) instead of pointing the adopter back
+        // at the shape they already used. Same diagnostic ID, category and
+        // severity — no new rule, just an accurate message for this case.
         if (shape == EmitShape.Unknown
             && isCommandAttribute
             && (commandKind == CommandKindModel.Scalar || commandKind == CommandKindModel.Identity)
             && IsSupportedReturnType(method.ReturnType))
         {
+            var kindName = commandKind == CommandKindModel.Scalar ? "Scalar" : "Identity";
+            var reason = DescribeScalarOrIdentityShapeFailure(method.ReturnType, commandKind);
             diagnostics.Add(new DiagnosticInfo(
-                DescriptorId: "ZAO002",
+                DescriptorId: "ZAO002_ScalarOrIdentity",
                 Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                     method.Name,
-                    method.ReturnType.ToDisplayString()))));
+                    method.ReturnType.ToDisplayString(),
+                    kindName,
+                    reason))));
         }
 
         // ZAO032 — MultiResultSet tuple arity exceeds the SQL statement count. Detection
@@ -1704,6 +1718,63 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 _ => null,
             },
             shape: EmitShape.CommandIdentity);
+
+    // Human-readable list of the types PrimitiveCatalog recognizes for
+    // Kind=Scalar (mirrors the doc comment atop PrimitiveCatalog.cs), plus the
+    // non-primitive conventions Scalar also accepts.
+    private const string ScalarSupportedTypesText =
+        "int, long, short, byte, bool, decimal, double, float, string, DateTime, DateTimeOffset, TimeSpan, "
+        + "DateOnly, TimeOnly, Guid, or byte[] (also an enum, or a value object or factory wrapping one of "
+        + "those)";
+
+    // Identity narrows PrimitiveCatalog's set to the three types IsIdentityPrimitive
+    // accepts, and is never nullable (see ClassifyCommandIdentity's allowNullable: false).
+    private const string IdentitySupportedTypesText =
+        "int, long, or Guid, always non-null (or a value object or factory wrapping one of those)";
+
+    // #280 — builds the `reason` argument for ZAO002_UnsupportedScalarOrIdentityType.
+    // Called only when ClassifyCommandScalar/ClassifyCommandIdentity returned
+    // EmitShape.Unknown for a return type that otherwise passed the general
+    // IsSupportedReturnType check, so the return type is Task, ValueTask,
+    // Task<T>, or ValueTask<T> for some T. Three distinct causes land here, and
+    // each gets a reason that names the actual problem instead of restating the
+    // return-type shape the adopter already used:
+    //   * the return type isn't Task<T>/ValueTask<T> with a type argument at all
+    //     (a bare Task/ValueTask) — Scalar/Identity need a value to read;
+    //   * Kind = Identity with a nullable T — Identity's SQL contract
+    //     (RETURNING / SCOPE_IDENTITY()) guarantees a non-null value, so nullable
+    //     result types are rejected regardless of the underlying type;
+    //   * T itself has no reader for the kind (checked last, since it's the only
+    //     cause where naming T and the supported-type list is the right fix).
+    private static string DescribeScalarOrIdentityShapeFailure(ITypeSymbol returnType, CommandKindModel commandKind)
+    {
+        var isIdentity = commandKind == CommandKindModel.Identity;
+        var supportedTypesText = isIdentity ? IdentitySupportedTypesText : ScalarSupportedTypesText;
+
+        if (returnType is not INamedTypeSymbol named
+            || named.TypeArguments.Length != 1
+            || (named.Name != "Task" && named.Name != "ValueTask"))
+        {
+            var kindWord = isIdentity ? "identity" : "scalar";
+            return $"a {kindWord} command must return Task<T> or ValueTask<T> carrying a value; "
+                + $"supported types are {supportedTypesText}";
+        }
+
+        var inner = named.TypeArguments[0];
+        var isNullable = inner.NullableAnnotation == NullableAnnotation.Annotated
+            || (inner is INamedTypeSymbol n
+                && n.IsGenericType
+                && n.ConstructedFrom?.SpecialType == SpecialType.System_Nullable_T);
+
+        if (isIdentity && isNullable)
+        {
+            return $"the result cannot be nullable; supported types are {supportedTypesText}";
+        }
+
+        var unwrapped = UnwrapNullableValueType(inner).WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        var readerWord = isIdentity ? "identity" : "scalar";
+        return $"'{unwrapped.ToDisplayString()}' has no {readerWord} reader; supported types are {supportedTypesText}";
+    }
 
     // v1.3 — [Command(Kind = BulkInsert)] classifier. Runs four shape checks; any
     // failure adds a hard ZAO070-073 diagnostic and returns EmitShape.Unknown so
@@ -4300,6 +4371,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         "ZAO001" => DiagnosticDescriptors.ZAO001_NotPartial,
         "ZAO002" => DiagnosticDescriptors.ZAO002_BadReturnType,
+        "ZAO002_ScalarOrIdentity" => DiagnosticDescriptors.ZAO002_UnsupportedScalarOrIdentityType,
         "ZAO003" => DiagnosticDescriptors.ZAO003_NoConnection,
         "ZAO004" => DiagnosticDescriptors.ZAO004_TypeNotPartial,
         "ZAO005" => DiagnosticDescriptors.ZAO005_MultipleAttributes,

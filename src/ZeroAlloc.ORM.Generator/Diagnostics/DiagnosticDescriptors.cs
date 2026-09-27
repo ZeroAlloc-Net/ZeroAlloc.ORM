@@ -32,6 +32,27 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO002"));
 
+    // #280 — the ZAO002-for-Scalar/Identity branch in OrmGenerator.TransformMethod
+    // (right after the ClassifyEmitShape call) used to report through
+    // ZAO002_BadReturnType above, which told the adopter "Expected Task<T>,
+    // ValueTask<T>, ..." even when the method already returned Task<T> — the
+    // real defect is that T (or, for Identity, a nullable T) isn't a shape the
+    // command kind can materialize. This descriptor shares ZAO002's ID, category
+    // and severity (it is the same rule; a shipped rule's ID/category/severity
+    // cannot change without a new rule) but carries a `reason` argument the call
+    // site fills in, mirroring ZAO043's reason-threading precedent, so one
+    // message format covers all three ways this branch reports Unknown: T has no
+    // reader for the kind, T is nullable on Identity (which forbids it), or the
+    // return type isn't Task<T>/ValueTask<T> at all (e.g. a bare Task).
+    public static readonly DiagnosticDescriptor ZAO002_UnsupportedScalarOrIdentityType = new(
+        id: "ZAO002",
+        title: "Unsupported return type",
+        messageFormat: "Method '{0}' has return type '{1}'. [Command(Kind = {2})] cannot use this return type: {3}.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO002"));
+
     public static readonly DiagnosticDescriptor ZAO003_NoConnection = new(
         id: "ZAO003",
         title: "No IAsyncDbConnection found on containing type",
