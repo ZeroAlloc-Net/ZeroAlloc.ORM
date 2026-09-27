@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests;
@@ -89,7 +89,7 @@ public class CommandNonQueryTests
                 probe.CommandText = "SELECT Total FROM Orders WHERE Id = 1";
                 var result = await probe.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
                 // Seeded value was 10.00; the [Command] UPDATE adds 1 to it.
-                // Direct Xunit Assert.Equal (not FluentAssertions Should) keeps the
+                // Direct Xunit Assert.Equal (not AwesomeAssertions Should) keeps the
                 // assertion EPS06-clean on the decimal struct.
                 Assert.Equal(11.00m, Convert.ToDecimal(result, System.Globalization.CultureInfo.InvariantCulture));
             }

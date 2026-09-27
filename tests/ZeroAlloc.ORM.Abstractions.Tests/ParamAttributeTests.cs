@@ -1,7 +1,7 @@
 using System;
 using System.Data;
 using System.Linq;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Abstractions.Tests;
