@@ -169,7 +169,8 @@ baked into the dialect.
 
 When a migration's SQL throws, the runner:
 
-1. Rolls back the **failing migration's own** transaction.
+1. Rolls back the **failing migration's own** transaction — see
+   [When the rollback fails too](#when-the-rollback-fails-too) if that throws.
 2. Leaves all **earlier** successfully-committed migrations in place
    (their transactions already committed, so the history table records
    them as applied).
@@ -197,6 +198,33 @@ The recovery path is a **forward-fix migration**: write `004_fix_xxx.sql`
 will skip every already-applied migration and apply only the new one.
 Rolling back to a prior version is out of v1.1 scope — see
 [When NOT to use this runner](#when-not-to-use-this-runner).
+
+### When the rollback fails too
+
+If rolling back the failing migration's transaction also throws (a dropped
+connection, a provider that already aborted the transaction on its own), the
+runner still rethrows the **original** exception unchanged: same type, same
+message, same stack. The rollback exception is not discarded; it is stored in
+the original exception's `Data` under `MigrationRunner.RollbackExceptionDataKey`.
+
+Its presence means the rollback did not complete, so the database may be in an
+unknown state. Inspect it before retrying:
+
+```csharp
+catch (DbException ex)
+{
+    if (ex.Data[MigrationRunner.RollbackExceptionDataKey] is Exception rollbackEx)
+    {
+        logger.LogCritical(rollbackEx,
+            "Migration failed and its rollback failed too; verify the database state before retrying");
+    }
+    throw;
+}
+```
+
+The entry is absent when the rollback succeeded. It is also not added when
+the original exception's `Data` dictionary is read-only or fixed-size, so the
+runner never replaces the original exception with an error of its own.
 
 ## Version collisions
 
