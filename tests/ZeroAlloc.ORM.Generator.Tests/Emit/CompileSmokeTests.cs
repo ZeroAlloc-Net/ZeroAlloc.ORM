@@ -1650,6 +1650,76 @@ public class CompileSmokeTests
         Assert.Empty(errors);
     }
 
+    private const string DateOnlyTimeOnlySource = """
+        using System;
+        using System.Collections.Generic;
+        using System.Data;
+        using System.Data.Async;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+
+        namespace TestApp;
+
+        public sealed record ShiftRow(int Id, DateOnly Day, TimeOnly Start, DateOnly? EndDay, TimeOnly? End);
+
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [Query("SELECT Id, Day, Start, EndDay, End FROM Shifts WHERE Day = @day AND (@start IS NULL OR Start = @start)")]
+            public partial Task<IReadOnlyList<ShiftRow>> ListAsync(DateOnly day, TimeOnly? start, CancellationToken ct);
+
+            [Command("INSERT INTO Shifts (Id, Day, Start, EndDay, End) VALUES (@id, @day, @start, @endDay, @end)")]
+            public partial Task<int> InsertAsync(int id, DateOnly day, TimeOnly start, DateOnly? endDay, TimeOnly? end, CancellationToken ct);
+
+            [Command("SELECT Day FROM Shifts WHERE Id = @id", Kind = CommandKind.Scalar)]
+            public partial Task<DateOnly> DayAsync(int id, CancellationToken ct);
+
+            [Command("SELECT End FROM Shifts WHERE Id = @id", Kind = CommandKind.Scalar)]
+            public partial Task<TimeOnly?> EndAsync(int id, CancellationToken ct);
+
+            [StoredProcedure("usp_Shift")]
+            public partial Task<(DateOnly Day, TimeOnly Start, DateOnly? EndDay, TimeOnly? End)> ShiftAsync(
+                [Param(Direction = ParameterDirection.InputOutput)] DateOnly day,
+                [Param(Direction = ParameterDirection.InputOutput)] TimeOnly start,
+                DateOnly? endDay,
+                TimeOnly? end,
+                CancellationToken ct);
+
+            [Command("INSERT INTO Shifts (Id, Day, Start, EndDay, End) VALUES (@Id, @Day, @Start, @EndDay, @End)", Kind = CommandKind.BulkInsert)]
+            public partial Task<int> BulkInsertAsync(IReadOnlyList<ShiftRow> rows, CancellationToken ct);
+        }
+        """;
+
+    [Fact]
+    public void DateOnly_and_TimeOnly_emit_compiles_without_shape_diagnostics()
+    {
+        // #256 — DateOnly and TimeOnly used to have no binding strategy, so a
+        // parameter reported ZAO041 and a return shape ZAO022 and nothing was
+        // emitted. Every surface that takes a primitive must now accept them:
+        // row columns, parameters, scalar commands, stored-procedure outputs and
+        // bulk-insert rows, each in its non-nullable and nullable form.
+        var source = DateOnlyTimeOnlySource;
+        var (runResult, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
+        var generatorDiagnostics = runResult.Diagnostics
+            .Select(d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")
+            .ToArray();
+        Assert.True(generatorDiagnostics.Length == 0, string.Join("; ", generatorDiagnostics));
+
+        var errors = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")
+            .ToArray();
+        Assert.True(errors.Length == 0, string.Join("; ", errors));
+
+        // All six methods were emitted, not skipped.
+        var generated = string.Concat(runResult.GeneratedTrees.Select(t => t.ToString()));
+        foreach (var method in new[] { "ListAsync", "InsertAsync", "DayAsync", "EndAsync", "ShiftAsync", "BulkInsertAsync" })
+            Assert.Matches($@"partial async [^\r\n]* {method}\(", generated);
+    }
+
     /// <summary>
     /// Fails if the snippet did not bind against the real ADO.NET surface.
     /// </summary>

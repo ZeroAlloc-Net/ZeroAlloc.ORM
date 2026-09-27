@@ -102,6 +102,24 @@ switch on, a row query reads these values with the local offset while a scalar
 command does not. A `DateTimeOffset` stored as TEXT with an explicit offset
 reads the same on both paths.
 
+### `DateOnly` and `TimeOnly` stored as TEXT
+
+Microsoft.Data.Sqlite writes a `DateOnly` parameter as TEXT `yyyy-MM-dd` and a
+`TimeOnly` as TEXT `HH:mm:ss.fffffff`, and `GetFieldValue<T>` parses them back.
+A `[Command(Kind = Scalar)]` result or an output value is converted the same
+way:
+
+| Target | Stored value | Result |
+| --- | --- | --- |
+| `DateOnly` | TEXT | `DateOnly.Parse` with `InvariantCulture` |
+| `DateOnly` | REAL or INTEGER | the date of the Julian day, as for `DateTime` above |
+| `TimeOnly` | TEXT | `TimeOnly.Parse` with `InvariantCulture` |
+| `TimeOnly` | REAL or INTEGER | throws, as `GetFieldValue<TimeOnly>` does |
+
+A `DateTime` value written as `yyyy-MM-dd HH:mm:ss` does not read as a
+`DateOnly` on either path, because `DateOnly.Parse` rejects the time part.
+Store the date alone, or select `date(col)`.
+
 ### `CanCreateBatch = false`
 
 The AdoNet.Async wrapper over Microsoft.Data.Sqlite reports
@@ -272,13 +290,23 @@ a pure `OUT` parameter. Against an `interval`, the generator leaves `DbType`
 unset for that one case (#255) so Npgsql infers `NpgsqlDbType.Interval` from
 the value, rather than the `DbType.Time` an output otherwise declares — `time`
 rejects 24 hours or more with `22008: time out of range`. An `[Param(DbType =
-...)]` override still applies if you need one.
+...)]` override still applies if you need one. `TimeOnly` keeps declaring
+`DbType.Time` on InputOutput: it cannot exceed 24 hours by construction, so
+the `interval` ceiling that motivates leaving `TimeSpan` unset does not apply.
 
 An **InputOutput** `DateTimeOffset` against `timestamptz` has a narrower rule
 that ZA.ORM does not work around: Npgsql only writes an offset of zero
 (UTC). A non-zero offset throws `ArgumentException` from Npgsql's own
 converter, "only offset 0 (UTC) is supported" — convert to UTC with
 `stamp.ToUniversalTime()` before passing it as an INOUT argument.
+
+A `DateOnly` or `TimeOnly` tuple field or return type needs no conversion: it
+is the type Npgsql returns for `date` and `time`. SQL Server returns a `date`
+as `DateTime` and a `time` as `TimeSpan` instead, so there the generator
+converts them to `DateOnly` and `TimeOnly`. A `DateTime` with a time of day,
+such as a `datetime2` value, throws `InvalidCastException` when read as
+`DateOnly` rather than losing the time, and a `TimeSpan` outside a single day
+throws when read as `TimeOnly`.
 
 ### `BulkInsert` parameter cap
 

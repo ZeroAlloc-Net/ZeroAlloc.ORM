@@ -69,6 +69,13 @@ namespace ZeroAlloc.ORM.Generator.Model;
 //                                 enum or value object over one. A RETURN value is
 //                                 an int, so ZAO067 reports an explicit ReturnValue
 //                                 into anything else.
+//   IsTimeSpan                -- #255. True when the reader that produced
+//                                 DbTypeName is GetFieldValue<TimeSpan> —
+//                                 TimeSpan specifically, not TimeOnly, which also
+//                                 maps to DbTypeName "Time" (#256) but has no
+//                                 24-hour ceiling to work around. Distinct from
+//                                 DbTypeName == "Time" so the two temporal types
+//                                 stay independently addressable.
 internal sealed record SprocOutputParam(
     string TupleFieldName,
     string MatchingParameterName,
@@ -77,7 +84,8 @@ internal sealed record SprocOutputParam(
     ConventionInfo? Convention,
     string DbTypeName,
     bool IsReturnValue,
-    bool IsInt32);
+    bool IsInt32,
+    bool IsTimeSpan);
 
 // Discriminator for TupleElementOrder entries — distinguishes "this slot is the
 // i-th OUTPUT element" vs "this slot is the i-th RESULT element". The emit walks

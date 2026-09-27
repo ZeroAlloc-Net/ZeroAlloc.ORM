@@ -361,4 +361,62 @@ public class StoredProcedureOutputParamsEmitTests
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void SprocWithOutputParams_inout_timeonly_still_declares_DbType_Time()
+    {
+        // #255 review — DbTypeName is "Time" for both TimeSpan and TimeOnly
+        // (#256), so the InputOutput-unset rule above must key on the actual
+        // element type, not the shared DbType name, or it would also unset
+        // DbType for an InputOutput TimeOnly. TimeOnly cannot exceed 24 hours
+        // by construction, so it has no interval ceiling to work around, and
+        // it keeps the explicit DbType.Time an Output parameter always had.
+        var source = """
+            using System;
+            using System.Data;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InOutClock")]
+                public partial Task<(TimeOnly Start, TimeOnly Fixed)> RunAsync(
+                    [Param(Direction = ParameterDirection.InputOutput)] TimeOnly start,
+                    TimeOnly @fixed,
+                    CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    [Fact]
+    public void SprocWithOutputParams_DateOnly_and_TimeOnly_outputs_declare_Date_and_Time()
+    {
+        // #256 — a DateOnly output declares DbType.Date and a TimeOnly output
+        // DbType.Time. The boxed value is the provider's default CLR type for the
+        // column: Npgsql returns DateOnly and TimeOnly, SqlClient DateTime and
+        // TimeSpan, and Microsoft.Data.Sqlite TEXT or a Julian day number. Each
+        // readback converts those the way GetFieldValue<T> does for the column.
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_Shift")]
+                public partial Task<(DateOnly Day, TimeOnly Start, DateOnly? MaybeDay, TimeOnly? MaybeStart)> ShiftAsync(
+                    DateOnly day, TimeOnly start, DateOnly? maybeDay, TimeOnly? maybeStart, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

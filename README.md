@@ -73,7 +73,7 @@ The first tuple field is the result-set materialization (here: rows-affected). S
 ### Added in v0.1
 
 - `[Query]` with scalar (`Task<int>`, `Task<T?>`) and FlatRow (`Task<TRow?>`) return shapes.
-- 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants.
+- 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants. `DateOnly` and `TimeOnly` joined them later (#256), in parameters, columns, scalars and stored-procedure outputs.
 - `[Param(Name = "...")]` SQL-side parameter name override.
 - Compile-time diagnostics (ZAO001–ZAO009 + informational ZAO020–ZAO022) for signature contract violations.
 - NativeAOT-clean publish (verified by `aot-smoke` CI gate).

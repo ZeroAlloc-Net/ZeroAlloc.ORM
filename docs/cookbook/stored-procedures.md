@@ -182,6 +182,7 @@ the procedure, so the generator declares them for you:
   | `Guid` | `Guid` |
   | `DateTime` | `DateTime2` |
   | `DateTimeOffset`, `TimeSpan` | `DateTimeOffset`, `Time` |
+  | `DateOnly`, `TimeOnly` | `Date`, `Time` |
 
   `DateTime` maps to `DateTime2` because on SQL Server `DbType.DateTime` is the
   legacy `datetime` type, which rounds a `datetime2` output to 1/300 of a
@@ -401,7 +402,8 @@ notable differences:
 - **PostgreSQL date and time outputs.** Npgsql returns a `timestamptz`
   output as a UTC `DateTime`, a `time` as `TimeOnly` and a `date` as
   `DateOnly`. The generator converts them for a `DateTimeOffset`, `TimeSpan`
-  or `DateTime` tuple field. See
+  or `DateTime` tuple field; a `DateOnly` or `TimeOnly` field takes them as
+  they are. See
   [Date and time outputs](provider-quirks.md#date-and-time-outputs).
 - **PostgreSQL INOUT `interval` and `timestamptz`.** An InputOutput
   `TimeSpan` against an `interval` leaves `DbType` unset so Npgsql infers
