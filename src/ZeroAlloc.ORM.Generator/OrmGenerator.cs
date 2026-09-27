@@ -5730,6 +5730,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                       Microsoft.Data.Sqlite 10 reads it.
     //   * TimeSpan       <- double or long, TimeSpan.FromDays.
     // A long is never read as Unix seconds, because the reader path does not.
+    //
+    // DateOnly and TimeOnly (#256) follow the same rule, per provider:
+    //   * DateOnly <- DateOnly, Npgsql's default for `date`.
+    //              <- DateTime at midnight, SqlClient's default for `date`. A
+    //                 DateTime with a time of day, such as a datetime2 value,
+    //                 falls through to the cast and throws rather than dropping
+    //                 the time.
+    //              <- string, DateOnly.Parse with InvariantCulture, and double or
+    //                 long, the date of the Julian day, as Microsoft.Data.Sqlite
+    //                 10's GetFieldValue<DateOnly> reads TEXT, REAL and INTEGER.
+    //   * TimeOnly <- TimeOnly, Npgsql's default for `time`.
+    //              <- TimeSpan, SqlClient's default for `time`. TimeOnly.FromTimeSpan
+    //                 throws for a value outside one day.
+    //              <- string, TimeOnly.Parse with InvariantCulture, as
+    //                 Microsoft.Data.Sqlite reads TEXT. It has no numeric form for
+    //                 TimeOnly, so a double or long falls through to the cast and
+    //                 throws, as the reader path does.
     // Microsoft.Data.Sqlite's Pre10TimeZoneHandling switch, which restores the
     // local-offset readings of earlier versions, is not honoured here: generated
     // code cannot see which package version or switch the consumer uses, so it
@@ -5758,6 +5775,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             "global::System.DateTime" => $"({subject} switch {{ global::System.DateOnly __v => __v.ToDateTime(global::System.TimeOnly.MinValue), string __v => global::System.DateTime.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.AdjustToUniversal), double __v => {FromJulianDay("__v")}, long __v => {FromJulianDay("__v")}, var __v => global::System.Convert.ToDateTime(__v, global::System.Globalization.CultureInfo.InvariantCulture) }})",
             "global::System.DateTimeOffset" => $"({subject} switch {{ global::System.DateTimeOffset __v => __v, global::System.DateTime __v when __v.Kind != global::System.DateTimeKind.Unspecified => new global::System.DateTimeOffset(__v), string __v => global::System.DateTimeOffset.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture, global::System.Globalization.DateTimeStyles.AssumeUniversal), double __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), long __v => new global::System.DateTimeOffset({FromJulianDay("__v")}, global::System.TimeSpan.Zero), var __v => (global::System.DateTimeOffset)__v }})",
             "global::System.TimeSpan" => $"({subject} switch {{ global::System.TimeSpan __v => __v, global::System.TimeOnly __v => __v.ToTimeSpan(), string __v => global::System.TimeSpan.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => global::System.TimeSpan.FromDays(__v), long __v => global::System.TimeSpan.FromDays((double)__v), var __v => (global::System.TimeSpan)__v }})",
+            "global::System.DateOnly" => $"({subject} switch {{ global::System.DateOnly __v => __v, global::System.DateTime __v when __v.TimeOfDay == global::System.TimeSpan.Zero => global::System.DateOnly.FromDateTime(__v), string __v => global::System.DateOnly.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), double __v => global::System.DateOnly.FromDateTime({FromJulianDay("__v")}), long __v => global::System.DateOnly.FromDateTime({FromJulianDay("__v")}), var __v => (global::System.DateOnly)__v }})",
+            "global::System.TimeOnly" => $"({subject} switch {{ global::System.TimeOnly __v => __v, global::System.TimeSpan __v => global::System.TimeOnly.FromTimeSpan(__v), string __v => global::System.TimeOnly.Parse(__v, global::System.Globalization.CultureInfo.InvariantCulture), var __v => (global::System.TimeOnly)__v }})",
             "global::System.Guid" => $"({subject} switch {{ global::System.Guid __v => __v, string __v => global::System.Guid.Parse(__v), byte[] {{ Length: 16 }} __v => new global::System.Guid(__v), byte[] __v => global::System.Guid.Parse(global::System.Text.Encoding.UTF8.GetString(__v)), var __v => (global::System.Guid)__v }})",
             // No Convert.ToXxx exists for byte[]; fall back to a direct cast.
             _ => $"({targetType}){subject}",
