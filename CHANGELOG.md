@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.1.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.0.1...v2.1.0) (2026-09-27)
+
+
+### Features
+
+* support DateOnly and TimeOnly in parameters and materialization ([#281](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/281)) ([c3d5d75](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c3d5d7597cbb240b98f862dc17ba54bae45fb618)), closes [#256](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/256)
+
+
+### Bug Fixes
+
+* keep the rollback failure when a failed migration's rollback also throws ([#295](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/295)) ([addee45](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/addee4596275b88cf3e977628e6399ac4bf92e7b)), closes [#294](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/294)
+* leave DbType unset for InputOutput TimeSpan against Postgres interval ([#282](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/282)) ([e19d4ac](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e19d4acddbd2fc494f99255e2084e99300b7602c)), closes [#255](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/255)
+* ZAO002 now names the real defect for Scalar/Identity commands ([#288](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/288)) ([f924437](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f924437a2d465f14b46d04f17f9e75320caa8a09))
+
+
+### Code Refactoring
+
+* remove ErrorProne.NET, enforce readonly structs with IDE0250/IDE0251 ([#293](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/293)) ([41aec37](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/41aec376890d2ae84450ab82102b35854c73b8b3)), closes [#287](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/287)
+
+
+### Tests
+
+* replace FluentAssertions with AwesomeAssertions ([#286](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/286)) ([2fc6421](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/2fc6421803679baba2fd30ec97201bec94e07f36))
+* run MultiResultSetBench.Dapper_AOT through Dapper.AOT ([#292](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/292)) ([e5dc887](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e5dc887875db7167a682ed5c2b80ae1bc5dc2535)), closes [#289](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/289)
+
 ## [2.0.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.0.0...v2.0.1) (2026-09-26)
 
 
