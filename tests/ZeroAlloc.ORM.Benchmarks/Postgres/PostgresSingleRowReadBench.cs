@@ -3,7 +3,6 @@ using BenchmarkDotNet.Order;
 using Dapper;
 using Npgsql;
 using System.Data.Async;
-using ZeroAlloc.ORM;
 
 namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 
@@ -14,7 +13,7 @@ namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [BenchmarkCategory("Postgres")]
-public class PostgresSingleRowReadBench
+public class PostgresSingleRowReadBench : IAsyncDisposable
 {
     private PostgresBenchFixture _fx = null!;
     private NpgsqlConnection _raw = null!;
@@ -34,20 +33,32 @@ public class PostgresSingleRowReadBench
     }
 
     [GlobalCleanup]
-    public async Task Cleanup() => await _fx.DisposeAsync().ConfigureAwait(false);
+    public async Task Cleanup() => await DisposeAsync().ConfigureAwait(false);
+
+    public async ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        await _fx.DisposeAsync().ConfigureAwait(false);
+    }
 
     [Benchmark(Baseline = true)]
     public async Task<OrderRow?> HandWrittenAdoNet()
     {
-        await using var cmd = _raw.CreateCommand();
-        cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
-        var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
-        await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        if (!await reader.ReadAsync().ConfigureAwait(false))
+        var cmd = _raw.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
         {
-            return null;
+            cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+            }
         }
-        return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
     }
 
     [Benchmark]
@@ -58,10 +69,4 @@ public class PostgresSingleRowReadBench
 
     [Benchmark]
     public Task<OrderRow?> ZeroAlloc_ORM() => _repo.GetByIdAsync(1, default);
-}
-
-public sealed partial class PostgresOrderRepository(IAsyncDbConnection connection)
-{
-    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
-    public partial Task<OrderRow?> GetByIdAsync(int id, CancellationToken ct);
 }
