@@ -216,8 +216,8 @@ public sealed class MigrationRunner
                     // see (it points at the failing migration's SQL). The
                     // transaction's Dispose runs via the `await using` block
                     // above as a final safety net for provider state. The
-                    // rollback exception is kept assigned so ErrorProne's
-                    // ERP022 doesn't flag the catch as a true silent swallow.
+                    // rollback exception is kept assigned so the catch is not empty,
+                    // which Roslynator's RCS1075 rejects for a catch of Exception.
                     _ = rollbackEx;
                 }
                 throw;

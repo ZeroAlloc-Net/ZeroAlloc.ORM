@@ -63,7 +63,7 @@ internal readonly record struct EquatableArray<T>(ImmutableArray<T> Values) : IE
             _index = -1;
         }
 
-        public T Current => _values[_index];
+        public readonly T Current => _values[_index];
 
         public bool MoveNext()
         {

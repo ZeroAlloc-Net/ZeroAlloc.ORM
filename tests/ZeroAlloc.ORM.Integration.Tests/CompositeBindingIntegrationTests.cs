@@ -26,9 +26,7 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 //
 // Sqlite stores decimals as TEXT; the integer-valued decimals used here
 // round-trip via Microsoft.Data.Sqlite without loss (same caveat as
-// CompositeTests). AwesomeAssertions `.Should().Be(decimal)` trips EPS06
-// (hidden struct copy), so decimal assertions use Xunit.Assert.Equal
-// matching the CommandNonQueryTests pattern.
+// CompositeTests).
 public class CompositeBindingIntegrationTests
 {
     [Fact]

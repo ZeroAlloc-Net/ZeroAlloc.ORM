@@ -1,0 +1,7 @@
+root = true
+
+[*.cs]
+# A readonly struct or member cannot be copied defensively. Enforced as build warnings
+# through EnforceCodeStyleInBuild in Directory.Build.props.
+dotnet_diagnostic.IDE0250.severity = warning
+dotnet_diagnostic.IDE0251.severity = warning
