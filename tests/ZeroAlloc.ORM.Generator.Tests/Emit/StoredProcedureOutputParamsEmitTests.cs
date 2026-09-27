@@ -327,4 +327,38 @@ public class StoredProcedureOutputParamsEmitTests
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void SprocWithOutputParams_inout_timespan_leaves_DbType_unset()
+    {
+        // #255 — an InputOutput TimeSpan writes its initial value before
+        // execution, unlike a pure Output parameter. Declaring DbType.Time
+        // makes Npgsql encode that value as a Postgres `time`, which rejects
+        // 24 hours or more ("time out of range"); a Postgres `interval`
+        // parameter has no such ceiling. Leaving DbType unset lets each
+        // provider infer its native type from the CLR value instead:
+        // NpgsqlDbType.Interval on Npgsql, DbType.Time on SqlClient. An
+        // Output-only TimeSpan (no initial value to infer from) still
+        // declares DbType.Time explicitly.
+        var source = """
+            using System;
+            using System.Data;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_InOutSpan")]
+                public partial Task<(TimeSpan Span, TimeSpan Fixed)> RunAsync(
+                    [Param(Direction = ParameterDirection.InputOutput)] TimeSpan span,
+                    TimeSpan @fixed,
+                    CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }
