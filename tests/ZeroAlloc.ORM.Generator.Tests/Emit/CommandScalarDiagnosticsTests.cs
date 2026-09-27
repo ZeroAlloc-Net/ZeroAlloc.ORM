@@ -67,8 +67,6 @@ public class CommandScalarDiagnosticsTests
         var result = GeneratorHarness.RunGenerator(source);
         var trees = result.Results[0].GeneratedSources;
 
-        // EPS06-safe: explicit foreach avoids the hidden ImmutableArray<T> copy
-        // LINQ would introduce by boxing the struct into IEnumerable<T>.
         var anyImplemented = false;
         foreach (var tree in trees)
         {

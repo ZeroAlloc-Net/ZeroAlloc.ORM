@@ -4,16 +4,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>ZeroAlloc.ORM.Benchmarks</RootNamespace>
     <IsPackable>false</IsPackable>
-    <!-- TreatWarningsAsErrors is inherited as true from Directory.Build.props; every
-         warning in this project fails the build except EPS06. The 8 EPS06 warnings
-         (ErrorProne.NET.Structs, "hidden copy of a non-readonly struct") land in
-         Dapper.AOT's generated interceptor code and name Dapper.UnifiedCommand, which is a
-         readonly struct: the compiler emits no copy there. They are false positives from
-         ErrorProne.NET.Structs 0.1.2, the version Directory.Build.props pins, which does
-         not recognise readonly structs loaded from referenced assemblies. EPS06 stays
-         visible as a warning, it just does not fail the build. Tracked in #287; remove
-         this line once the analyzer is on a version without the false positive. -->
-    <WarningsNotAsErrors>$(WarningsNotAsErrors);EPS06</WarningsNotAsErrors>
     <!-- Server GC + concurrent GC make BDN numbers more representative of
          production workloads (matching ZA.Rest's BDN setup). -->
     <ServerGarbageCollection>true</ServerGarbageCollection>

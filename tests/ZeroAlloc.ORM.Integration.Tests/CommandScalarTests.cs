@@ -46,9 +46,6 @@ public class CommandScalarTests
             // Two of the three seeded rows share CustomerId = 42 with totals 10 + 20.
             var sum = await repo.SumTotalsForCustomerAsync(42, CancellationToken.None).ConfigureAwait(false);
 
-            // Direct Xunit Assert.Equal (not AwesomeAssertions Should) keeps the
-            // assertion EPS06-clean on the decimal struct, matching the pattern in
-            // CommandNonQueryTests.
             Assert.Equal(30.00m, sum);
         }
     }
@@ -67,10 +64,6 @@ public class CommandScalarTests
             var repo = new CommandRepo(fx.Connection);
             var max = await repo.MaxCreatedAsync(CancellationToken.None).ConfigureAwait(false);
 
-            // Direct Assert.Null instead of AwesomeAssertions Should().BeNull() —
-            // the latter trips EPS06 (hidden Nullable<DateTime> copy via property
-            // expression). Mirrors the EPS06-safe assertion style used elsewhere
-            // in the test surface for nullable value types.
             Assert.Null(max);
         }
     }
