@@ -1,4 +1,5 @@
 #nullable enable
+const ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackExceptionDataKey = "ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackException" -> string!
 const ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.DefaultLockKey = 6503566551803710793 -> long
 const ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.DefaultLockName = "ZAORM_MIGRATIONS" -> string!
 override ZeroAlloc.ORM.Migrations.Migration.Equals(object? obj) -> bool
