@@ -327,4 +327,31 @@ public class StoredProcedureOutputParamsEmitTests
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void SprocWithOutputParams_DateOnly_and_TimeOnly_outputs_declare_Date_and_Time()
+    {
+        // #256 — a DateOnly output declares DbType.Date and a TimeOnly output
+        // DbType.Time. The boxed value is the provider's default CLR type for the
+        // column: Npgsql returns DateOnly and TimeOnly, SqlClient DateTime and
+        // TimeSpan, and Microsoft.Data.Sqlite TEXT or a Julian day number. Each
+        // readback converts those the way GetFieldValue<T> does for the column.
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_Shift")]
+                public partial Task<(DateOnly Day, TimeOnly Start, DateOnly? MaybeDay, TimeOnly? MaybeStart)> ShiftAsync(
+                    DateOnly day, TimeOnly start, DateOnly? maybeDay, TimeOnly? maybeStart, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

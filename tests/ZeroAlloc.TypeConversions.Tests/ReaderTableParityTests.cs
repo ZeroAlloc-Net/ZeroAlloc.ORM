@@ -105,6 +105,8 @@ public class ReaderTableParityTests
             "GetFieldValue<global::System.DateTimeOffset>",
             "GetFieldValue<global::System.TimeSpan>",
             "GetFieldValue<byte[]>",
+            "GetFieldValue<global::System.DateOnly>",
+            "GetFieldValue<global::System.TimeOnly>",
         ]);
     }
 }

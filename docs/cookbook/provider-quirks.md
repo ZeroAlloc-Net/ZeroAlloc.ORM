@@ -102,6 +102,24 @@ switch on, a row query reads these values with the local offset while a scalar
 command does not. A `DateTimeOffset` stored as TEXT with an explicit offset
 reads the same on both paths.
 
+### `DateOnly` and `TimeOnly` stored as TEXT
+
+Microsoft.Data.Sqlite writes a `DateOnly` parameter as TEXT `yyyy-MM-dd` and a
+`TimeOnly` as TEXT `HH:mm:ss.fffffff`, and `GetFieldValue<T>` parses them back.
+A `[Command(Kind = Scalar)]` result or an output value is converted the same
+way:
+
+| Target | Stored value | Result |
+| --- | --- | --- |
+| `DateOnly` | TEXT | `DateOnly.Parse` with `InvariantCulture` |
+| `DateOnly` | REAL or INTEGER | the date of the Julian day, as for `DateTime` above |
+| `TimeOnly` | TEXT | `TimeOnly.Parse` with `InvariantCulture` |
+| `TimeOnly` | REAL or INTEGER | throws, as `GetFieldValue<TimeOnly>` does |
+
+A `DateTime` value written as `yyyy-MM-dd HH:mm:ss` does not read as a
+`DateOnly` on either path, because `DateOnly.Parse` rejects the time part.
+Store the date alone, or select `date(col)`.
+
 ### `CanCreateBatch = false`
 
 The AdoNet.Async wrapper over Microsoft.Data.Sqlite reports
@@ -266,6 +284,14 @@ An `interval` output comes back as `TimeSpan` already, including values of a
 day or more. A `timestamp` output read as `DateTimeOffset` throws
 `InvalidCastException`, as a `timestamp` column does: without a time zone it
 names no instant.
+
+A `DateOnly` or `TimeOnly` tuple field or return type needs no conversion: it
+is the type Npgsql returns for `date` and `time`. SQL Server returns a `date`
+as `DateTime` and a `time` as `TimeSpan` instead, so there the generator
+converts them to `DateOnly` and `TimeOnly`. A `DateTime` with a time of day,
+such as a `datetime2` value, throws `InvalidCastException` when read as
+`DateOnly` rather than losing the time, and a `TimeSpan` outside a single day
+throws when read as `TimeOnly`.
 
 ### `BulkInsert` parameter cap
 

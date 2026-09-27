@@ -7,8 +7,8 @@ namespace ZeroAlloc.TypeConversions;
 // Used by both result materialization (scalar return, FlatRow column read) and
 // (future) parameter binding diagnostics. v0.1 surface (Section 3 of the design
 // doc): int, long, short, byte, bool, decimal, double, float, string, DateTime,
-// DateTimeOffset, TimeSpan, Guid, byte[]. Unsigned / sbyte / char are deferred
-// to v0.2.
+// DateTimeOffset, TimeSpan, Guid, byte[]. DateOnly and TimeOnly joined in #256.
+// Unsigned / sbyte / char are deferred to v0.2.
 public static class PrimitiveCatalog
 {
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
@@ -33,6 +33,10 @@ public static class PrimitiveCatalog
             _ when string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal) => "GetGuid",
             _ when string.Equals(type.ToDisplayString(), "System.DateTimeOffset", StringComparison.Ordinal) => "GetFieldValue<global::System.DateTimeOffset>",
             _ when string.Equals(type.ToDisplayString(), "System.TimeSpan", StringComparison.Ordinal) => "GetFieldValue<global::System.TimeSpan>",
+            // #256 — Npgsql, SqlClient and Microsoft.Data.Sqlite all implement
+            // GetFieldValue<DateOnly> and GetFieldValue<TimeOnly>.
+            _ when string.Equals(type.ToDisplayString(), "System.DateOnly", StringComparison.Ordinal) => "GetFieldValue<global::System.DateOnly>",
+            _ when string.Equals(type.ToDisplayString(), "System.TimeOnly", StringComparison.Ordinal) => "GetFieldValue<global::System.TimeOnly>",
             _ when IsByteArray(type) => "GetFieldValue<byte[]>",
             _ => null,
         };
@@ -71,6 +75,8 @@ public static class PrimitiveCatalog
             "GetGuid" => "global::System.Guid",
             "GetFieldValue<global::System.DateTimeOffset>" => "global::System.DateTimeOffset",
             "GetFieldValue<global::System.TimeSpan>" => "global::System.TimeSpan",
+            "GetFieldValue<global::System.DateOnly>" => "global::System.DateOnly",
+            "GetFieldValue<global::System.TimeOnly>" => "global::System.TimeOnly",
             "GetFieldValue<byte[]>" => "byte[]",
             _ => throw new InvalidOperationException(
                 $"PrimitiveCatalog.GetScalarCastTypeFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
@@ -88,6 +94,10 @@ public static class PrimitiveCatalog
     // way loses its fraction. Since Npgsql 6, DbType.DateTime maps to `timestamptz`
     // and DbType.DateTime2 to `timestamp`, which suits an Unspecified or Local
     // DateTime, so DateTime2 is the right choice there too.
+    //
+    // DateOnly maps to Date and TimeOnly to Time, which each supported provider
+    // declares as its date-only and time-of-day type: `date` and `time` on SQL
+    // Server and Postgres, TEXT on Microsoft.Data.Sqlite.
     //
     // Throws for an unrecognized reader, like GetScalarCastTypeFromReader: the table is
     // populated by GetScalarReaderMethod, so a miss is a generator bug.
@@ -107,6 +117,8 @@ public static class PrimitiveCatalog
             "GetGuid" => "Guid",
             "GetFieldValue<global::System.DateTimeOffset>" => "DateTimeOffset",
             "GetFieldValue<global::System.TimeSpan>" => "Time",
+            "GetFieldValue<global::System.DateOnly>" => "Date",
+            "GetFieldValue<global::System.TimeOnly>" => "Time",
             "GetFieldValue<byte[]>" => "Binary",
             _ => throw new InvalidOperationException(
                 $"PrimitiveCatalog.GetDbTypeNameFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
