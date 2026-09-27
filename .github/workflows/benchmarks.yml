@@ -9,8 +9,9 @@ name: Benchmarks
 #                      executes. Takes about a minute; the numbers it prints are meaningless.
 #   full  (manual)     real measurements, via "Run workflow". Uploads BenchmarkDotNet.Artifacts.
 #
-# BenchmarkDotNet exits 0 when a filter matches nothing, so the smoke job asserts that at least
-# one benchmark actually ran rather than trusting the exit code.
+# The smoke job runs the org's shared gate. BenchmarkDotNet exits 0 when a filter matches nothing
+# and counts a crashed benchmark as executed, so the gate checks that every benchmark reported a
+# result instead. See ZeroAlloc-Net/.github .github/workflows/benchmark-smoke.yml.
 
 on:
   pull_request:
@@ -33,42 +34,11 @@ env:
 
 jobs:
   smoke:
-    name: smoke
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          # Installs the SDK global.json pins. Without it the job never installs
-          # that SDK at all and only works when the runner image happens to ship one
-          # satisfying the pin, which is how a publish failed on a lagging image.
-          global-json-file: global.json
-          dotnet-version: 10.0.x
-
-      - name: Build
-        run: dotnet build tests/ZeroAlloc.ORM.Benchmarks -c Release
-
-      # --iterationCount and friends override whatever job the benchmark classes declare via
-      # attributes. --job Dry does not: it is *added* alongside an attribute-declared job, so a
-      # class carrying [SimpleJob] would still run a full measurement.
-      - name: Run benchmarks (one operation each)
-        run: |
-          set -o pipefail
-          dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release --no-build -- \
-            --filter '*' \
-            --iterationCount 1 --warmupCount 1 --invocationCount 1 --unrollFactor 1 \
-            2>&1 | tee "$RUNNER_TEMP/bench.log"
-
-          executed=$(grep -oE 'executed benchmarks: [0-9]+' "$RUNNER_TEMP/bench.log" | tail -1 | grep -oE '[0-9]+$')
-          echo "executed=${executed:-0}"
-          if [ "${executed:-0}" -eq 0 ]; then
-            echo "::error::No benchmarks ran. The filter matched nothing, or no class is discoverable."
-            exit 1
-          fi
+    uses: ZeroAlloc-Net/.github/.github/workflows/benchmark-smoke.yml@ci/benchmark-smoke-gate
+    with:
+      project: tests/ZeroAlloc.ORM.Benchmarks
+      timeout-minutes: 20
 
   full:
     name: full
