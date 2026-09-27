@@ -35,7 +35,7 @@ env:
 jobs:
   smoke:
     if: github.event_name != 'workflow_dispatch'
-    uses: ZeroAlloc-Net/.github/.github/workflows/benchmark-smoke.yml@ci/benchmark-smoke-gate
+    uses: ZeroAlloc-Net/.github/.github/workflows/benchmark-smoke.yml@main
     with:
       project: tests/ZeroAlloc.ORM.Benchmarks
       timeout-minutes: 20
