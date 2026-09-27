@@ -285,6 +285,21 @@ day or more. A `timestamp` output read as `DateTimeOffset` throws
 `InvalidCastException`, as a `timestamp` column does: without a time zone it
 names no instant.
 
+An **InputOutput** `TimeSpan` sends its initial value before execute, unlike
+a pure `OUT` parameter. Against an `interval`, the generator leaves `DbType`
+unset for that one case (#255) so Npgsql infers `NpgsqlDbType.Interval` from
+the value, rather than the `DbType.Time` an output otherwise declares — `time`
+rejects 24 hours or more with `22008: time out of range`. An `[Param(DbType =
+...)]` override still applies if you need one. `TimeOnly` keeps declaring
+`DbType.Time` on InputOutput: it cannot exceed 24 hours by construction, so
+the `interval` ceiling that motivates leaving `TimeSpan` unset does not apply.
+
+An **InputOutput** `DateTimeOffset` against `timestamptz` has a narrower rule
+that ZA.ORM does not work around: Npgsql only writes an offset of zero
+(UTC). A non-zero offset throws `ArgumentException` from Npgsql's own
+converter, "only offset 0 (UTC) is supported" — convert to UTC with
+`stamp.ToUniversalTime()` before passing it as an INOUT argument.
+
 A `DateOnly` or `TimeOnly` tuple field or return type needs no conversion: it
 is the type Npgsql returns for `date` and `time`. SQL Server returns a `date`
 as `DateTime` and a `time` as `TimeSpan` instead, so there the generator

@@ -3278,7 +3278,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     Convention: convention,
                     DbTypeName: PrimitiveCatalog.GetDbTypeNameFromReader(reader),
                     IsReturnValue: BindsAsReturnValue(matchingParam, isInt32),
-                    IsInt32: isInt32));
+                    IsInt32: isInt32,
+                    IsTimeSpan: reader == "GetFieldValue<global::System.TimeSpan>"));
                 orderBuilder.Add(new SprocTupleSlot(
                     SprocTupleSlotKind.Output, outputBuilder.Count - 1));
                 matchedAny = true;
@@ -7293,6 +7294,21 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // Size = -1, which SqlClient reads as MAX; Npgsql and Microsoft.Data.Sqlite
     // treat -1 as "no limit". Precision and Scale have no default: a guessed scale
     // silently rounds, and ZAO065 flags the decimal case instead.
+    //
+    // #255 — an InputOutput TimeSpan is the one case that keeps the default
+    // unset. DbType.Time makes Npgsql write the initial value as a Postgres
+    // `time`, which rejects 24 hours or more ("time out of range"); a Postgres
+    // `interval` has no such ceiling. An InputOutput parameter always carries
+    // an initial CLR value (unlike a pure Output, whose Value stays unset until
+    // the provider fills it), so each provider infers its native type from
+    // that value instead: NpgsqlDbType.Interval on Npgsql, DbType.Time on
+    // SqlClient — the same type the explicit default would have chosen there.
+    // An explicit `[Param(DbType = ...)]` still overrides this.
+    //
+    // Keyed on IsTimeSpan, not DbTypeName == "Time": TimeOnly (#256) shares the
+    // "Time" DbType name but cannot exceed 24 hours by construction, so it has
+    // no interval ceiling to work around and keeps its explicit DbType.Time on
+    // InputOutput, same as Output.
     private static void EmitParameterFacets(
         StringBuilder sb,
         string indent,
@@ -7304,8 +7320,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var size = facets?.Size;
         if (output is not null)
         {
-            dbType ??= "global::System.Data.DbType." + output.DbTypeName;
-            if (size is null && IsVariableLengthDbType(dbType)) size = -1;
+            var isInputOutputTimeSpan = output.IsTimeSpan
+                && string.Equals(facets?.Direction, "InputOutput", StringComparison.Ordinal);
+            if (!isInputOutputTimeSpan)
+                dbType ??= "global::System.Data.DbType." + output.DbTypeName;
+            if (dbType is not null && size is null && IsVariableLengthDbType(dbType)) size = -1;
         }
 
         var inv = System.Globalization.CultureInfo.InvariantCulture;

@@ -405,6 +405,13 @@ notable differences:
   or `DateTime` tuple field; a `DateOnly` or `TimeOnly` field takes them as
   they are. See
   [Date and time outputs](provider-quirks.md#date-and-time-outputs).
+- **PostgreSQL INOUT `interval` and `timestamptz`.** An InputOutput
+  `TimeSpan` against an `interval` leaves `DbType` unset so Npgsql infers
+  `NpgsqlDbType.Interval` from the value instead of the `DbType.Time` an
+  output parameter otherwise declares; `time` rejects 24 hours or more. An
+  InputOutput `DateTimeOffset` against `timestamptz` still needs a zero
+  offset — Npgsql's own rule, not one ZA.ORM works around. See
+  [Date and time outputs](provider-quirks.md#date-and-time-outputs).
 - **SQL Server output parameters.** SqlClient needs a `DbType` and, for a
   string or binary output, a non-zero `Size` on every output parameter. The
   generator sets both; a `decimal` output also needs `[Param(Scale = ...)]`.
