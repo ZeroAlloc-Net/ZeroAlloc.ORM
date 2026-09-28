@@ -28,6 +28,15 @@ internal static class GeneratorHarness
         return (driver.GetRunResult(), compileDiagnostics);
     }
 
+    // The compilation after the generator ran, for tests that inspect the emitted code
+    // semantically or need diagnostics below error severity. The generated files carry
+    // `#nullable enable`, so nullable warnings in emitted code surface here.
+    public static (GeneratorDriverRunResult RunResult, Compilation Compilation) RunGeneratorAndGetCompilation(string source)
+    {
+        var (driver, updatedCompilation) = RunDriver(source);
+        return (driver.GetRunResult(), updatedCompilation);
+    }
+
     private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(string source)
     {
         var syntaxTree = CSharpSyntaxTree.ParseText(source);
