@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.1.0...v2.1.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* bind nullable value-object parameters through their inner value ([#299](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/299)) ([cb75e32](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/cb75e32d61b2f06b8634484bb920c4bb9ac8b381))
+* report ZAO diagnostics at source locations #pragma can suppress ([#301](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/301)) ([676060c](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/676060ca65e5faf9c4344d847d4cf9dc11f71186))
+
 ## [2.1.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.0.1...v2.1.0) (2026-09-27)
 
 
