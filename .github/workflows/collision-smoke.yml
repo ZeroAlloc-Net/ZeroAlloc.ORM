@@ -60,7 +60,8 @@ jobs:
       - name: Run AOT-published collision smoke
         run: |
           chmod +x ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
-          ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
+          # A hang fails fast: timeout exits 124, see ZeroAlloc-Net/ZeroAlloc.Cache#182.
+          timeout --kill-after=10s 120s ./collision-out/ZeroAlloc.ORM.GeneratorCollision.AotSmoke
 
       - name: Report binary size
         run: |
@@ -99,7 +100,8 @@ jobs:
       - name: Run AOT-published telemetry collision smoke
         run: |
           chmod +x ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
-          ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
+          # A hang fails fast: timeout exits 124, see ZeroAlloc-Net/ZeroAlloc.Cache#182.
+          timeout --kill-after=10s 120s ./telemetry-collision-out/ZeroAlloc.ORM.TelemetryCollision.AotSmoke
 
       - name: Report binary size
         run: |
