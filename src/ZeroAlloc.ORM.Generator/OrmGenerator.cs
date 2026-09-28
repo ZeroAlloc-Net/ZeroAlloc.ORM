@@ -1949,10 +1949,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
             };
             var convention = BuildConventionInfo(underlying, resolution, underlyingReader);
 
+            var isPropNullable = matchedProp.Type.NullableAnnotation == NullableAnnotation.Annotated
+                || !SymbolEqualityComparer.Default.Equals(underlying, matchedProp.Type);
             resolvedBindings.Add(new BulkInsertPlaceholderBinding(
                 PlaceholderName: placeholder,
                 PropertyName: matchedProp.Name,
-                Convention: convention));
+                Convention: convention,
+                IsNullable: isPropNullable));
         }
         if (anyUnresolved)
         {
@@ -5207,11 +5210,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //   * ValueObject / SingleArgCtor / StaticFactory
     //                                            -> row.PropertyName.<ValueProperty>
     //
-    // v1.3 limitation: BulkInsertPlaceholderBinding does not carry an
-    // IsNullable flag, so the emit does NOT wrap the expression in a
-    // `(object?)... ?? DBNull.Value` guard. A future iteration that extends
-    // the binding with nullability metadata can fold the null-coalesce in
-    // here without disturbing the surrounding emit shape.
+    // The caller wraps the expression in `(object?)... ?? DBNull.Value`, so a
+    // nullable value-object property unwraps through `?.` and a null row value
+    // binds DBNull instead of throwing or binding the struct itself.
     private static string BuildBulkInsertParameterValueExpression(BulkInsertPlaceholderBinding binding, string rowLocal)
     {
         var direct = $"{rowLocal}.{binding.PropertyName}";
@@ -5228,7 +5229,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         if (conv.ValuePropertyName is { } propName)
         {
-            return $"{direct}.{propName}";
+            return $"{direct}{NullConditionalAccess(binding.IsNullable)}{propName}";
         }
         return direct;
     }
@@ -7232,7 +7233,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 }
                 else if (conv.ValuePropertyName is { } propName)
                 {
-                    valueExpr = $"@{p.Name}.{propName}";
+                    // A nullable value object binds its inner value, or null: `@p?.Value`.
+                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
+                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
                 }
             }
 
@@ -7338,7 +7341,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 }
                 else if (conv.ValuePropertyName is { } propName)
                 {
-                    valueExpr = $"@{p.Name}.{propName}";
+                    // A nullable value object binds its inner value, or null: `@p?.Value`.
+                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
+                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
                 }
             }
 
@@ -7537,7 +7542,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 }
                 else if (conv.ValuePropertyName is { } propName)
                 {
-                    valueExpr = $"@{p.Name}.{propName}";
+                    // A nullable value object binds its inner value, or null: `@p?.Value`.
+                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
+                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
                 }
             }
 
@@ -7830,7 +7837,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 }
                 else if (conv.ValuePropertyName is { } propName)
                 {
-                    valueExpr = $"@{p.Name}.{propName}";
+                    // A nullable value object binds its inner value, or null: `@p?.Value`.
+                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
+                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
                 }
             }
 
@@ -8031,7 +8040,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             if (conv.ValuePropertyName is { } propName)
             {
-                return $"{baseExpr}.{propName}";
+                return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";
             }
         }
         return baseExpr;
@@ -8073,7 +8082,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             if (conv.ValuePropertyName is { } propName)
             {
-                return $"{baseExpr}.{propName}";
+                return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";
             }
         }
         return baseExpr;
@@ -8084,6 +8093,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // must match the user's signature exactly or partial-method binding fails with
     // CS8795 / CS0759. The CT parameter is referenced in the body via
     // m.CancellationTokenParameterName so we never assume a hardcoded name.
+    // Member access for a value object's inner property. A nullable value object,
+    // `Sku?` or a nullable reference `SkuRef?`, must go through `?.`: on `Sku?` a plain
+    // `.Value` is Nullable<T>.Value and yields the struct, not its inner value, and on
+    // `SkuRef?` it dereferences null. The caller coalesces the result to DBNull.Value.
+    private static string NullConditionalAccess(bool isNullable) => isNullable ? "?." : ".";
+
     private static string BuildParameterList(EquatableArray<ParameterInfo> methodParameters)
     {
         var sb = new StringBuilder();

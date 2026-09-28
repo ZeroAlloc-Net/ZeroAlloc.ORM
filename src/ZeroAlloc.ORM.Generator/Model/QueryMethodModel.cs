@@ -134,10 +134,13 @@ internal enum BulkInsertReturnKind
 //                      assigning to DbParameter.Value. Null for primitive
 //                      properties — the emit path mirrors the single-row
 //                      [Command] parameter-binding shape.
+//   IsNullable       — the property is `T?`; a value-object property then unwraps
+//                      through `?.` so a null row value binds DBNull.
 internal sealed record BulkInsertPlaceholderBinding(
     string PlaceholderName,
     string PropertyName,
-    ConventionInfo? Convention);
+    ConventionInfo? Convention,
+    bool IsNullable);
 
 // v1.3 — Materialization plan for an EmitShape.BulkInsertCommand method. Populated
 // by ClassifyBulkInsertCommand when all four shape checks pass (parameter shape,

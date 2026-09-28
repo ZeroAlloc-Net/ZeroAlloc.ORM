@@ -62,7 +62,8 @@ jobs:
         if: steps.check.outputs.exists == 'true'
         run: |
           chmod +x ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
-          ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
+          # A hang fails fast: timeout exits 124, see ZeroAlloc-Net/ZeroAlloc.Cache#182.
+          timeout --kill-after=10s 120s ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
 
       - name: Report binary size
         if: steps.check.outputs.exists == 'true'
