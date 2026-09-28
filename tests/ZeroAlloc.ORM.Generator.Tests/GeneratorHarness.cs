@@ -37,18 +37,31 @@ internal static class GeneratorHarness
         return (driver.GetRunResult(), updatedCompilation);
     }
 
-    private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(string source)
+    // The file path RunGeneratorOnFile gives its source tree.
+    public const string TestFilePath = "/src/Repo.cs";
+
+    // Runs the generator on a tree with a file path and returns that tree, so a test can
+    // assert that a diagnostic is bound to it: a source location, not an external-file one.
+    public static (GeneratorDriverRunResult RunResult, SyntaxTree Tree) RunGeneratorOnFile(string source)
     {
-        var syntaxTree = CSharpSyntaxTree.ParseText(source);
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, path: TestFilePath);
+        var (driver, _) = RunDriver(CreateCompilation(new[] { syntaxTree }));
+        return (driver.GetRunResult(), syntaxTree);
+    }
 
-        var references = BuildReferences();
-
-        var compilation = CSharpCompilation.Create(
+    // A compilation of the given trees with the references every harness run uses.
+    public static CSharpCompilation CreateCompilation(IEnumerable<SyntaxTree> syntaxTrees)
+        => CSharpCompilation.Create(
             assemblyName: "TestAssembly",
-            syntaxTrees: new[] { syntaxTree },
-            references: references,
+            syntaxTrees: syntaxTrees,
+            references: BuildReferences(),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
+    private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(string source)
+        => RunDriver(CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) }));
+
+    private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(Compilation compilation)
+    {
         var generator = new ZeroAlloc.ORM.Generator.OrmGenerator();
         GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out _);

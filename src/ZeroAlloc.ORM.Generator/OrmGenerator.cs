@@ -45,7 +45,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 fullyQualifiedMetadataName: QueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
                 transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Query))
-            .Where(static m => m is not null)!;
+            .Where(static m => m is not null)
+            .WithTrackingName("QueryMethods")!;
 
         // v0.4 Phase A — [Command] attribute pickup. Re-uses the same TransformMethod
         // pathway (parameter binding, connection-access resolution, ZAO* diagnostics)
@@ -69,7 +70,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 fullyQualifiedMetadataName: CommandAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
                 transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.Command))
-            .Where(static m => m is not null)!;
+            .Where(static m => m is not null)
+            .WithTrackingName("CommandMethods")!;
 
         // v0.4 Phase D — [StoredProcedure] attribute pickup. Third pipeline; identical
         // structural pattern to [Command]. Sets IsStoredProcedure = true so emit
@@ -83,7 +85,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 fullyQualifiedMetadataName: StoredProcedureAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
                 transform: static (ctx, _) => TransformMethod(ctx, AttributePipelineKind.StoredProcedure))
-            .Where(static m => m is not null)!;
+            .Where(static m => m is not null)
+            .WithTrackingName("StoredProcedureMethods")!;
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
@@ -129,7 +132,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (seen.Add(key)) union.Add(m);
                 }
                 return union.ToImmutable();
-            });
+            })
+            .WithTrackingName("AllMethods");
 
         var grouped = allMethods.Collect()
             .SelectMany(static (methods, _) =>
@@ -147,7 +151,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                ContainingTypeLocation: first.ContainingTypeLocation,
                                Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()),
                                ContainingTypeChain: first.ContainingTypeChain);
-                       }));
+                       }))
+            .WithTrackingName("Repositories");
 
         context.RegisterSourceOutput(grouped, (sourceCtx, repo) =>
         {
@@ -164,20 +169,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: "ZeroAlloc.ORM.StoreAsStringAttribute",
                 predicate: static (node, _) => node is BaseTypeDeclarationSyntax,
-                transform: static (ctx, _) =>
+                transform: static (ctx, ct) =>
                 {
                     if (ctx.TargetSymbol is INamedTypeSymbol typeSymbol
                         && typeSymbol.TypeKind != TypeKind.Enum)
                     {
+                        // Anchor at the misapplied [StoreAsString] attribute, not the whole
+                        // type declaration, so the squiggle and a #pragma cover just it.
+                        var attributeLocation = ctx.Attributes.Length > 0
+                            ? ctx.Attributes[0].ApplicationSyntaxReference?.GetSyntax(ct).GetLocation()
+                            : null;
                         return new DiagnosticInfo(
                             DescriptorId: "ZAO042",
-                            Location: LocationInfo.From(ctx.TargetNode.GetLocation()),
+                            Location: LocationInfo.From(
+                                attributeLocation
+                                ?? ((BaseTypeDeclarationSyntax)ctx.TargetNode).Identifier.GetLocation()),
                             MessageArgs: new EquatableArray<string>(
                                 ImmutableArray.Create(typeSymbol.ToDisplayString())));
                     }
                     return null;
                 })
-            .Where(static d => d is not null);
+            .Where(static d => d is not null)
+            .WithTrackingName("StoreAsStringDiagnostics");
 
         context.RegisterSourceOutput(storeAsStringDiagnostics, (sourceCtx, diag) =>
         {
@@ -740,7 +753,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Phase F review Fix 2 — anchor each ZAO062 at the specific tuple-
         // element syntax rather than the whole return type. Stacking
         // diagnostics at the same span confuses IDEs (dedupe vs multi-squiggle
-        // is inconsistent). LocationInfo is cache-safe (FilePath + spans), so
+        // is inconsistent). LocationInfo is cache-safe (syntax tree + span), so
         // we can compute per-element spans here at the syntax-bound diagnostic
         // emit site without leaking Roslyn symbols into the model.
         if (shape == EmitShape.SprocWithOutputParams
@@ -1011,7 +1024,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         // the no-op at runtime via "parameter @custom not found".
                         if (paramNameOverride is not null)
                         {
-                            var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                            var paramLocation = p.Locations.FirstOrDefault();
                             diagnostics.Add(new DiagnosticInfo(
                                 DescriptorId: "ZAO063",
                                 Location: LocationInfo.From(paramLocation),
@@ -1041,7 +1054,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                 // through above).
                                 if (isCompositeNullableValueType)
                                 {
-                                    var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                                    var paramLocation = p.Locations.FirstOrDefault();
                                     diagnostics.Add(new DiagnosticInfo(
                                         DescriptorId: "ZAO050",
                                         Location: LocationInfo.From(paramLocation),
@@ -1068,7 +1081,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     if (resolution.Kind == ConventionKind.Unknown
                         || (resolution.Kind == ConventionKind.MultiArgCtor && compositeTypeFullName is null))
                     {
-                        var paramLocation = p.Locations.FirstOrDefault() ?? Location.None;
+                        var paramLocation = p.Locations.FirstOrDefault();
                         diagnostics.Add(new DiagnosticInfo(
                             DescriptorId: "ZAO041",
                             Location: LocationInfo.From(paramLocation),
@@ -1349,6 +1362,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 sql,
                 conventionContext,
                 diagnostics,
+                // ZAO070 to ZAO072 are about the method's parameters and SQL, so they sit on
+                // the method name; ZAO073 is about the return type.
+                LocationInfo.From(method.Locations.FirstOrDefault()),
                 returnTypeLocation,
                 out var bulkInsertMaterialization);
             // Materialization is threaded back to the caller via the tuple's
@@ -1796,6 +1812,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         ConventionContext conventionContext,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         LocationInfo? methodLocation,
+        LocationInfo? returnTypeLocation,
         out BulkInsertMaterializationModel? materialization)
     {
         materialization = null;
@@ -2061,7 +2078,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         {
             diagnostics.Add(new DiagnosticInfo(
                 DescriptorId: "ZAO073",
-                Location: methodLocation,
+                Location: returnTypeLocation,
                 MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                     method.Name,
                     method.ReturnType.ToDisplayString()))));
@@ -3859,7 +3876,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < parameters.Length && i < method.Parameters.Length; i++)
         {
             var info = parameters[i];
-            var location = LocationInfo.From(method.Parameters[i].Locations.FirstOrDefault() ?? Location.None);
+            var location = LocationInfo.From(method.Parameters[i].Locations.FirstOrDefault());
             outputs.TryGetValue(info.Name, out var output);
             var facets = info.Facets;
 
