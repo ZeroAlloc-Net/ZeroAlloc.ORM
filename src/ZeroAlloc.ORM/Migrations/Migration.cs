@@ -11,9 +11,9 @@ namespace ZeroAlloc.ORM.Migrations;
 /// </summary>
 /// <param name="Version">
 /// Monotonically-comparable version number parsed from the leading NNN of the
-/// resource file name. Versions need not be consecutive; <see cref="MigrationRunner"/>
-/// applies all versions strictly greater than the highest applied version it
-/// finds in the history table, ordered ascending.
+/// resource file name. Versions need not be consecutive, and are unique per
+/// <see cref="IMigrationSource.Name"/>; <see cref="MigrationRunner"/> applies every
+/// version the source has not recorded in the history table, ordered ascending.
 /// </param>
 /// <param name="Name">
 /// Human-readable identifier parsed from the segment between the NNN_ prefix

@@ -11,6 +11,13 @@ namespace ZeroAlloc.ORM.Migrations;
 /// filtering, per-migration transaction); the dialect supplies only the
 /// per-provider strings + lock semantics.
 /// </summary>
+/// <remarks>
+/// A dialect that implements only this interface keeps one version sequence per database.
+/// #306 — one that also implements <see cref="IScopedMigrationDialect"/>, as the built-in
+/// dialects do, scopes versions by <see cref="IMigrationSource.Name"/>, and the runner binds
+/// a <c>source</c> parameter to <see cref="SelectAppliedVersionsSql"/> and
+/// <see cref="InsertAppliedVersionSql"/>.
+/// </remarks>
 public interface IMigrationDialect
 {
     /// <summary>
@@ -24,7 +31,9 @@ public interface IMigrationDialect
     /// runner turns the result into a
     /// <see cref="System.Collections.Generic.Dictionary{TKey, TValue}"/> mapping
     /// each applied version to its recorded name, so it can both filter pending
-    /// migrations and detect a version recorded under a different name.
+    /// migrations and detect a version recorded under a different name. For an
+    /// <see cref="IScopedMigrationDialect"/> it selects only the rows of the source bound as
+    /// the <c>source</c> parameter.
     /// </summary>
     string SelectAppliedVersionsSql { get; }
 
@@ -33,7 +42,8 @@ public interface IMigrationDialect
     /// — the runner binds three parameters per applied migration, named
     /// <c>version</c>, <c>name</c> and <c>applied_at</c> with no prefix. Write the
     /// placeholders with the provider's own sigil, <c>@version</c> or <c>:version</c>;
-    /// the provider matches the unprefixed parameter name to either.
+    /// the provider matches the unprefixed parameter name to either. For an
+    /// <see cref="IScopedMigrationDialect"/> the runner also binds <c>source</c>.
     /// </summary>
     string InsertAppliedVersionSql { get; }
 
