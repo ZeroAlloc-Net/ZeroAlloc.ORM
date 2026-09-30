@@ -1,1 +1,9 @@
 #nullable enable
+ZeroAlloc.ORM.DialectAttribute
+ZeroAlloc.ORM.DialectAttribute.Dialect.get -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.DialectAttribute.DialectAttribute(ZeroAlloc.ORM.SqlDialect dialect) -> void
+ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.MySql = 3 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.PostgreSql = 1 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.Sqlite = 2 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.SqlServer = 0 -> ZeroAlloc.ORM.SqlDialect

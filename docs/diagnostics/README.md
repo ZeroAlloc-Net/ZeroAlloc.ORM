@@ -15,6 +15,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO007 | Error | `IAsyncEnumerable<T>` return without `[EnumeratorCancellation]` | [ZAO007](ZAO007.md) |
 | ZAO008 | Error | Multi-statement SQL with single-result return type | [ZAO008](ZAO008.md) |
 | ZAO009 | Warning | Redundant `async` keyword on generated partial | [ZAO009](ZAO009.md) |
+| ZAO015 | Error | `[Param(DbType)]` is rejected by the declared dialect | [ZAO015](ZAO015.md) |
 | ZAO020 | Info | `[Query](FromResource = true)` not yet implemented | [ZAO020](ZAO020.md) |
 | ZAO022 | Info | Return type shape not yet supported | [ZAO022](ZAO022.md) |
 | ZAO032 | Error | Tuple arity exceeds SQL statement count | [ZAO032](ZAO032.md) |

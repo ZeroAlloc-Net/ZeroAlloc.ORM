@@ -18,6 +18,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- #248 — the dialect reject sets ZAO015 reports from. DialectDbTypeRejectionParityTests
+         checks them against the live providers. The files depend on nothing but the BCL. -->
+    <Compile Include="..\..\src\ZeroAlloc.ORM.Generator\DialectDbTypeRejections.cs" Link="Generator\DialectDbTypeRejections.cs" />
+    <Compile Include="..\..\src\ZeroAlloc.ORM.Generator\SqlDialectModel.cs" Link="Generator\SqlDialectModel.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
                       OutputItemType="Analyzer"

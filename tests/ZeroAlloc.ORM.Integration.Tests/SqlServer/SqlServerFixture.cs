@@ -16,6 +16,9 @@ public sealed class SqlServerFixture : IAsyncDisposable
 
     public IAsyncDbConnection Connection { get; private set; } = null!;
 
+    // For a test that drives SqlClient directly on its own connections.
+    internal string ConnectionString => _container.GetConnectionString();
+
     public SqlServerFixture() => _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
 
     public async ValueTask InitializeAsync()

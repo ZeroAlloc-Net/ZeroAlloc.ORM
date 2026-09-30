@@ -116,6 +116,27 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO009"));
 
+    // #248 — a `[Param(DbType = ...)]` that the declared dialect's provider rejects
+    // for the type the parameter binds as, on an input or input-output parameter of
+    // a [Query], [Command] or [StoredProcedure] method. Reported only when
+    // `[Dialect]` declares the dialect: no DbType is rejected by every provider.
+    //
+    // MessageArgs:
+    //   {0} = the DbType, e.g. "Guid" or "(DbType)999"
+    //   {1} = parameter name
+    //   {2} = method name
+    //   {3} = the type the parameter binds as, e.g. "int"
+    //   {4} = the provider, e.g. "Microsoft.Data.SqlClient"
+    //   {5} = the declared dialect, e.g. "SqlServer"
+    public static readonly DiagnosticDescriptor ZAO015_DbTypeRejectedByDialect = new(
+        id: "ZAO015",
+        title: "[Param(DbType)] is rejected by the declared dialect",
+        messageFormat: "[Param(DbType = {0})] on parameter '{1}' of method '{2}' fails at run time: {4}, the provider of the declared {5} dialect, rejects DbType {0} for a value of type '{3}'",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO015"));
+
     public static readonly DiagnosticDescriptor ZAO020_FromResourceNotImplemented = new(
         id: "ZAO020",
         title: "[ORM attribute](FromResource = true) not yet implemented",

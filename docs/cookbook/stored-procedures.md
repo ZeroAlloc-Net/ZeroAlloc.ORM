@@ -237,6 +237,13 @@ value, Npgsql and Microsoft.Data.Sqlite truncate a longer string or byte array
 to a positive `Size`, and `DbType` replaces what the provider would infer. An
 input parameter without them binds exactly as before.
 
+A `DbType` the provider cannot send the value as fails when the command runs,
+for example `DbType.Guid` on an `int` on SQL Server. Declare the repository's
+dialect with [`[Dialect]`](provider-quirks.md#declaring-the-dialect) and
+[ZAO015](../diagnostics/ZAO015.md) reports it at compile time instead, for
+input and input-output parameters of every `[Query]`, `[Command]` and
+`[StoredProcedure]` method.
+
 `Direction` applies only to a parameter that a tuple field reads back. No
 facet, `DbType` included, applies to a composite parameter such as `Money`,
 which binds as one parameter per field, and no `[Param]` member applies to a

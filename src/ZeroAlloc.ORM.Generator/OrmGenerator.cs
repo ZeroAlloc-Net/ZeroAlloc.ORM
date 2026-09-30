@@ -19,6 +19,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
+    private const string DialectAttributeFullName = "ZeroAlloc.ORM.DialectAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
     private const string IAsyncDbTransactionFullName = "System.Data.Async.IAsyncDbTransaction";
@@ -155,10 +156,49 @@ public sealed class OrmGenerator : IIncrementalGenerator
                        }))
             .WithTrackingName("Repositories");
 
-        context.RegisterSourceOutput(grouped, (sourceCtx, repo) =>
+        // #248 — the declared dialects: `[Dialect]` on a repository type, and on the
+        // assembly as the default. Each is its own attribute pipeline, so an edit that
+        // touches neither leaves them cached, and the per-repository resolution below
+        // re-runs only when a declaration or the repository changes. Only the type's
+        // own attribute counts, matching the attribute's Inherited = false.
+        var typeDialects = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: DialectAttributeFullName,
+                predicate: static (node, _) => node is TypeDeclarationSyntax,
+                transform: static (ctx, _) => ctx.TargetSymbol is INamedTypeSymbol type
+                        && ReadDialect(ctx.Attributes) is { } dialect
+                    ? new TypeDialect(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), dialect)
+                    : null)
+            .Where(static d => d is not null)
+            .WithTrackingName("TypeDialects");
+
+        var assemblyDialects = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: DialectAttributeFullName,
+                predicate: static (node, _) => node is CompilationUnitSyntax,
+                transform: static (ctx, _) => ReadDialect(ctx.Attributes))
+            .Where(static d => d is not null)
+            .WithTrackingName("AssemblyDialects");
+
+        var dialectDeclarations = typeDialects.Collect()
+            .Combine(assemblyDialects.Collect())
+            .Select(static (pair, _) => new DialectDeclarations(
+                Types: new EquatableArray<TypeDialect>(pair.Left.Select(d => d!).ToImmutableArray()),
+                // AllowMultiple = false leaves at most one; CS0579 reports a second.
+                AssemblyDefault: pair.Right.FirstOrDefault()))
+            .WithTrackingName("DialectDeclarations");
+
+        var repositoriesWithDialect = grouped
+            .Combine(dialectDeclarations)
+            .Select(static (pair, _) => new RepositoryWithDialect(
+                pair.Left,
+                ResolveDialect(pair.Left.ContainingTypeFullName, pair.Right)))
+            .WithTrackingName("RepositoriesWithDialect");
+
+        context.RegisterSourceOutput(repositoriesWithDialect, (sourceCtx, input) =>
         {
-            var hadError = ReportDiagnostics(sourceCtx, repo);
-            if (!hadError) EmitRepository(sourceCtx, repo);
+            var hadError = ReportDiagnostics(sourceCtx, input.Repository, input.Dialect);
+            if (!hadError) EmitRepository(sourceCtx, input.Repository);
         });
 
         // ZAO042 — [StoreAsString] is only legal on enum types. This lives in its own
@@ -1125,11 +1165,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // v2.0, #235 — `[Param]` facet and direction checks, and ZAO065 for a
         // decimal output parameter without a scale. Runs here because it needs
         // both the per-parameter facets and the output-parameter model.
+        var dbTypeChecks = ImmutableArray.CreateBuilder<DbTypeCheck>();
         ReportParamFacetDiagnostics(
             method,
             methodParameters,
             shape == EmitShape.SprocWithOutputParams ? sprocOutputParamsMaterialization : null,
-            diagnostics);
+            diagnostics,
+            dbTypeChecks);
         var cancellationTokenParameterName = methodParameters
             .FirstOrDefault(p => p.IsCancellationToken)?.Name;
         var transactionParameterName = methodParameters
@@ -1186,7 +1228,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // v1.3 — populated only for EmitShape.BulkInsertCommand by
             // ClassifyBulkInsertCommand. Null for every other shape; Task 6's
             // emit path reads it to render the chunked VALUES INSERT.
-            BulkInsertMaterialization: bulkInsertMaterialization);
+            BulkInsertMaterialization: bulkInsertMaterialization,
+            // #248 — checked against the repository's dialect in ReportDiagnostics.
+            DbTypeChecks: new EquatableArray<DbTypeCheck>(dbTypeChecks.ToImmutable()));
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -3778,6 +3822,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static ParamFacets? ReadParamFacets(IParameterSymbol p)
     {
         string? dbType = null;
+        int? dbTypeValue = null;
         int? size = null;
         int? precision = null;
         int? scale = null;
@@ -3803,6 +3848,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                             dbType = dbTypeName is not null
                                 ? "global::System.Data.DbType." + dbTypeName
                                 : "(global::System.Data.DbType)" + Convert.ToString(value.Value, System.Globalization.CultureInfo.InvariantCulture);
+                            dbTypeValue = Convert.ToInt32(value.Value, System.Globalization.CultureInfo.InvariantCulture);
                         }
                         break;
                     case "Size":
@@ -3823,7 +3869,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         }
         return dbType is null && size is null && precision is null && scale is null && direction is null
             ? null
-            : new ParamFacets(dbType, size, precision, scale, direction);
+            : new ParamFacets(dbType, size, precision, scale, direction, dbTypeValue);
     }
 
     // v2.0, #235 — diagnostics for `[Param]` type facets and direction.
@@ -3857,11 +3903,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                       value is an int.
     //   ZAO068 (Error)   -- #241. More than one parameter bound as the RETURN
     //                       value. A procedure has one.
+    //
+    // #248 — it also records, in dbTypeChecks, each `[Param(DbType = ...)]` that
+    // ZAO015 checks once the repository's dialect is known: on a parameter that
+    // sends a value, an input or input-output one that binds a DbParameter of
+    // its own, and only when ZAO066 reported nothing on it.
     private static void ReportParamFacetDiagnostics(
         IMethodSymbol method,
         ImmutableArray<ParameterInfo> parameters,
         SprocOutputParamsMaterializationModel? sprocOutputs,
-        ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        ImmutableArray<DbTypeCheck>.Builder dbTypeChecks)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var outputs = new Dictionary<string, SprocOutputParam>(StringComparer.Ordinal);
@@ -3881,9 +3933,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var location = LocationInfo.From(method.Parameters[i].Locations.FirstOrDefault());
             outputs.TryGetValue(info.Name, out var output);
             var facets = info.Facets;
+            var reportedZao066 = false;
 
             void Report(string members, string reason)
-                => diagnostics.Add(new DiagnosticInfo(
+            {
+                reportedZao066 = true;
+                diagnostics.Add(new DiagnosticInfo(
                     DescriptorId: "ZAO066",
                     Location: location,
                     MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
@@ -3891,6 +3946,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         info.Name,
                         method.Name,
                         reason))));
+            }
+
+            // #248 — record the DbType override for ZAO015. Called where the loop
+            // is done with a parameter that sends a value.
+            void RecordDbTypeCheck(IParameterSymbol symbol)
+            {
+                if (reportedZao066 || facets?.DbTypeValue is not { } dbTypeValue) return;
+                var boundReader = info.Convention is not null
+                    ? info.Convention.UnderlyingReader
+                    : PrimitiveCatalog.GetScalarReaderMethod(UnwrapNullableValueType(symbol.Type));
+                if (boundReader is null) return;
+                dbTypeChecks.Add(new DbTypeCheck(
+                    ParameterName: info.Name,
+                    BoundReader: boundReader,
+                    DbTypeValue: dbTypeValue,
+                    DbTypeDisplay: facets.DbTypeExpression!.StartsWith(DbTypePrefix, StringComparison.Ordinal)
+                        ? facets.DbTypeExpression.Substring(DbTypePrefix.Length)
+                        : "(DbType)" + dbTypeValue.ToString(inv),
+                    Location: location));
+            }
 
             // A parameter that binds no DbParameter of its own: every member is dead.
             var unboundReason =
@@ -3945,7 +4020,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 }
             }
 
-            if (output is null) continue;
+            if (output is null)
+            {
+                RecordDbTypeCheck(method.Parameters[i]);
+                continue;
+            }
 
             if (output.IsReturnValue)
             {
@@ -4012,6 +4091,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         info.Name,
                         method.Name))));
             }
+
+            // An output parameter sends no value, so only an input-output one is
+            // checked. Npgsql accepts any DbType on a pure output parameter.
+            if (string.Equals(facets?.Direction, "InputOutput", StringComparison.Ordinal))
+                RecordDbTypeCheck(method.Parameters[i]);
         }
     }
 
@@ -4440,7 +4524,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         _ => null,
     };
 
-    private static bool ReportDiagnostics(SourceProductionContext context, QueryRepositoryModel repo)
+    private static bool ReportDiagnostics(SourceProductionContext context, QueryRepositoryModel repo, int? dialect)
     {
         var hadError = false;
         foreach (var method in repo.Methods)
@@ -4457,6 +4541,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     descriptor,
                     diag.Location?.ToLocation(),
                     args));
+            }
+        }
+
+        // ZAO015 — #248. A `[Param(DbType = ...)]` the declared dialect's provider
+        // rejects for the type the parameter binds as. Without a declared dialect
+        // nothing is checked: no DbType is rejected by every provider, so any report
+        // would break code that runs on some provider. A value outside SqlDialect
+        // declares no dialect the generator knows, and is not checked either.
+        if (dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared))
+        {
+            var model = (SqlDialectModel)declared;
+            foreach (var method in repo.Methods)
+            {
+                foreach (var check in method.DbTypeChecks)
+                {
+                    if (!DialectDbTypeRejections.Rejects(model, check.BoundReader, check.DbTypeValue))
+                        continue;
+                    hadError = true;
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        DiagnosticDescriptors.ZAO015_DbTypeRejectedByDialect,
+                        check.Location?.ToLocation(),
+                        check.DbTypeDisplay,
+                        check.ParameterName,
+                        method.MethodName,
+                        DisplayTypeName(PrimitiveCatalog.GetScalarCastTypeFromReader(check.BoundReader)),
+                        DialectDbTypeRejections.ProviderName(model),
+                        model.ToString()));
+                }
             }
         }
 
@@ -4504,6 +4616,32 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 frame.FullName));
         }
         return hadError;
+    }
+
+    // #248 — the SqlDialect value of a `[Dialect]` attribute, or null when the
+    // argument is missing or not a constant, as in code that does not compile yet.
+    private static int? ReadDialect(ImmutableArray<AttributeData> attributes)
+    {
+        foreach (var attribute in attributes)
+        {
+            if (attribute.ConstructorArguments.Length == 1
+                && attribute.ConstructorArguments[0].Value is int dialect)
+            {
+                return dialect;
+            }
+        }
+        return null;
+    }
+
+    // #248 — the repository's own `[Dialect]` wins over the assembly default.
+    private static int? ResolveDialect(string containingTypeFullName, DialectDeclarations declarations)
+    {
+        foreach (var type in declarations.Types)
+        {
+            if (string.Equals(type.TypeFullName, containingTypeFullName, StringComparison.Ordinal))
+                return type.Dialect;
+        }
+        return declarations.AssemblyDefault;
     }
 
     private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo)
