@@ -1,4 +1,5 @@
 #nullable enable
+const ZeroAlloc.ORM.Migrations.MigrationRunner.MaxSourceNameLength = 256 -> int
 const ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackExceptionDataKey = "ZeroAlloc.ORM.Migrations.MigrationRunner.RollbackException" -> string!
 const ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.DefaultLockKey = 6503566551803710793 -> long
 const ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.DefaultLockName = "ZAORM_MIGRATIONS" -> string!
@@ -10,6 +11,8 @@ static ZeroAlloc.ORM.Migrations.Migration.operator ==(ZeroAlloc.ORM.Migrations.M
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.EmbeddedResourceMigrationSource(System.Reflection.Assembly! assembly, string? resourceNamespacePrefix = null) -> void
 ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.Name.get -> string!
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.Name.init -> void
 ZeroAlloc.ORM.Migrations.IMigrationDialect
 ZeroAlloc.ORM.Migrations.IMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.IMigrationDialect.CreateHistoryTableSql.get -> string!
@@ -18,6 +21,10 @@ ZeroAlloc.ORM.Migrations.IMigrationDialect.ReleaseLockAsync(System.Data.Async.IA
 ZeroAlloc.ORM.Migrations.IMigrationDialect.SelectAppliedVersionsSql.get -> string!
 ZeroAlloc.ORM.Migrations.IMigrationSource
 ZeroAlloc.ORM.Migrations.IMigrationSource.GetMigrations() -> System.Collections.Generic.IReadOnlyList<ZeroAlloc.ORM.Migrations.Migration!>!
+ZeroAlloc.ORM.Migrations.IMigrationSource.Name.get -> string!
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
 ZeroAlloc.ORM.Migrations.Migration
 ZeroAlloc.ORM.Migrations.Migration.<Clone>$() -> ZeroAlloc.ORM.Migrations.Migration!
 ZeroAlloc.ORM.Migrations.Migration.AppliedAt.get -> System.DateTime?
@@ -41,20 +48,26 @@ ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.InsertAppliedVersionSql.get ->
 ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.PostgresMigrationDialect(long lockKey = 6503566551803710793) -> void
 ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.CreateHistoryTableSql.get -> string!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.InsertAppliedVersionSql.get -> string!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectUnscopedHistorySql.get -> string!
 ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SqliteMigrationDialect() -> void
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.AcquireLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.CreateHistoryTableSql.get -> string!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.InsertAppliedVersionSql.get -> string!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.ReleaseLockAsync(System.Data.Async.IAsyncDbConnection! connection, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SelectAppliedVersionsSql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SelectUnscopedHistorySql.get -> string!
 ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SqlServerMigrationDialect(string! lockName = "ZAORM_MIGRATIONS") -> void
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException() -> void
 ZeroAlloc.ORM.ZeroAllocOrmMaterializationException.ZeroAllocOrmMaterializationException(string! message) -> void

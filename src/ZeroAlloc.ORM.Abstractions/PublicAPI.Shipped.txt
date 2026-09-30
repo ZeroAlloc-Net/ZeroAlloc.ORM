@@ -15,6 +15,9 @@ ZeroAlloc.ORM.CommandKind.BulkInsert = 3 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Identity = 2 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.NonQuery = 0 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Scalar = 1 -> ZeroAlloc.ORM.CommandKind
+ZeroAlloc.ORM.DialectAttribute
+ZeroAlloc.ORM.DialectAttribute.Dialect.get -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.DialectAttribute.DialectAttribute(ZeroAlloc.ORM.SqlDialect dialect) -> void
 ZeroAlloc.ORM.MaterializeAttribute
 ZeroAlloc.ORM.MaterializeAttribute.Factory.get -> string?
 ZeroAlloc.ORM.MaterializeAttribute.Factory.init -> void
@@ -47,6 +50,11 @@ ZeroAlloc.ORM.QueryAttribute.FromResource.get -> bool
 ZeroAlloc.ORM.QueryAttribute.FromResource.init -> void
 ZeroAlloc.ORM.QueryAttribute.QueryAttribute(string! sql) -> void
 ZeroAlloc.ORM.QueryAttribute.Sql.get -> string!
+ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.MySql = 3 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.PostgreSql = 1 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.Sqlite = 2 -> ZeroAlloc.ORM.SqlDialect
+ZeroAlloc.ORM.SqlDialect.SqlServer = 0 -> ZeroAlloc.ORM.SqlDialect
 ZeroAlloc.ORM.StoreAsStringAttribute
 ZeroAlloc.ORM.StoreAsStringAttribute.StoreAsStringAttribute() -> void
 ZeroAlloc.ORM.StoredProcedureAttribute
