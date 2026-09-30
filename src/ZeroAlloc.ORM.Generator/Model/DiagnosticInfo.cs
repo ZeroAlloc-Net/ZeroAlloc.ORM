@@ -52,6 +52,16 @@ internal sealed record DbTypeCheck(
     string DbTypeDisplay,
     LocationInfo? Location);
 
+/// <summary>
+/// #307 — a parameter bound as the procedure's RETURN value, by
+/// <c>[Param(Direction = ParameterDirection.ReturnValue)]</c> or by the RETURN_VALUE convention.
+/// ZAO069 reports it when the repository declares a dialect other than SQL Server.
+/// </summary>
+internal sealed record ReturnValueBinding(
+    string ParameterName,
+    string MethodName,
+    LocationInfo? Location);
+
 internal sealed record LocationInfo(SyntaxTree Tree, TextSpan Span)
 {
     public Location ToLocation() => Microsoft.CodeAnalysis.Location.Create(Tree, Span);

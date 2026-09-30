@@ -271,6 +271,15 @@ public class DiagnosticLocationTests
             public partial Task<OrderRow?> [|GetOrderAsync|](int id, CancellationToken ct);
         }
         """)]
+    // ZAO015: the parameter whose DbType the declared dialect's provider rejects.
+    [InlineData("ZAO015", """
+        [Dialect(SqlDialect.SqlServer)]
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [Query("SELECT @id")]
+            public partial Task<int> GetAsync([Param(DbType = DbType.Guid)] int [|id|], CancellationToken ct);
+        }
+        """)]
     // ZAO065: the decimal output parameter without a scale.
     [InlineData("ZAO065", """
         public sealed partial class Repo(IAsyncDbConnection connection)
@@ -307,6 +316,16 @@ public class DiagnosticLocationTests
                 [Param(Direction = ParameterDirection.ReturnValue)] int first,
                 [Param(Direction = ParameterDirection.ReturnValue)] int [|second|],
                 CancellationToken ct);
+        }
+        """)]
+    // ZAO069: the return-value parameter on a dialect without procedure return values.
+    [InlineData("ZAO069", """
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [StoredProcedure("usp_X")]
+            public partial Task<(int Id, int Status)> RunAsync(
+                int id, [Param(Direction = ParameterDirection.ReturnValue)] int [|status|], CancellationToken ct);
         }
         """)]
     // ZAO070: the bulk insert method without a collection parameter.

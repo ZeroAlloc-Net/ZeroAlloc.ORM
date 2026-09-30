@@ -68,7 +68,8 @@ public sealed class ParamAttribute : Attribute
     /// Set it on every <c>decimal</c> output parameter that SQL Server fills. SqlClient
     /// declares an output decimal without a scale as scale 0 and rounds the value the
     /// procedure assigns, so <c>1234.5678</c> comes back as <c>1235</c>. ZAO065 reports a
-    /// <c>decimal</c> output without a scale.
+    /// <c>decimal</c> output without a scale, unless the repository declares a dialect other
+    /// than SQL Server with <see cref="DialectAttribute"/>.
     /// </remarks>
     public byte Scale { get; init; }
 
@@ -84,7 +85,9 @@ public sealed class ParamAttribute : Attribute
     /// <c>RETURN</c> value instead; its tuple field must be <c>int</c> or <c>int?</c>
     /// (ZAO067), and one parameter per method can have it (ZAO068). A parameter bound as
     /// <c>RETURN_VALUE</c> with an <c>int</c> or <c>int?</c> tuple field and no written
-    /// Direction reads the <c>RETURN</c> value by convention.
+    /// Direction reads the <c>RETURN</c> value by convention. Only SQL Server has one: on a
+    /// repository that declares another dialect with <see cref="DialectAttribute"/>, ZAO069
+    /// reports either form.
     /// Only <see cref="ParameterDirection.Output"/>, <see cref="ParameterDirection.InputOutput"/>
     /// and <see cref="ParameterDirection.ReturnValue"/> are accepted, and only on a parameter
     /// that matches a tuple field; ZAO066 reports any other use.

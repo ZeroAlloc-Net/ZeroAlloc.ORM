@@ -399,9 +399,10 @@ internal static class DiagnosticDescriptors
     // parameter as scale 0 and rounds the value the procedure assigns, so
     // 1234.5678 comes back as 1235 with no error. Npgsql returns it exactly.
     //
-    // Warning: the value is lost without an error, and the generator cannot see
-    // which provider runs the procedure. An adopter who targets only Postgres
-    // turns it off with `dotnet_diagnostic.ZAO065.severity = none`.
+    // Warning: the value is lost without an error. Since #307 it is not reported
+    // when the repository declares a dialect other than SqlServer with
+    // `[Dialect]`; without a declared dialect the generator cannot see which
+    // provider runs the procedure, so it warns.
     //
     // MessageArgs:
     //   {0} = parameter name
@@ -475,6 +476,26 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO068"));
+
+    // #307 — a parameter bound as the procedure's RETURN value, through
+    // `[Param(Direction = ParameterDirection.ReturnValue)]` or the RETURN_VALUE
+    // convention, in a repository whose declared dialect is not SqlServer. Only
+    // SQL Server has a procedure RETURN value; on another provider the parameter
+    // is never set and the generated read throws at run time. Not reported
+    // without a declared dialect.
+    //
+    // MessageArgs:
+    //   {0} = parameter name
+    //   {1} = method name
+    //   {2} = the declared dialect, e.g. "PostgreSql"
+    public static readonly DiagnosticDescriptor ZAO069_ReturnValueOnDialectWithoutOne = new(
+        id: "ZAO069",
+        title: "Return value parameter on a dialect without procedure return values",
+        messageFormat: "Parameter '{0}' of method '{1}' is bound as the procedure's RETURN value, but the repository declares the {2} dialect, whose provider never sets one. Only SQL Server has a procedure RETURN value. Read the value as an output parameter instead: declare it OUT in the procedure and write [Param(Direction = ParameterDirection.Output)].",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO069"));
 
     // v1.3 — BulkInsert shape diagnostics (design 2026-06-02).
     // The five descriptors below classify the BulkInsert misuse modes detected

@@ -1166,12 +1166,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // decimal output parameter without a scale. Runs here because it needs
         // both the per-parameter facets and the output-parameter model.
         var dbTypeChecks = ImmutableArray.CreateBuilder<DbTypeCheck>();
+        var sqlServerOnlyDiagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        var returnValueBindings = ImmutableArray.CreateBuilder<ReturnValueBinding>();
         ReportParamFacetDiagnostics(
             method,
             methodParameters,
             shape == EmitShape.SprocWithOutputParams ? sprocOutputParamsMaterialization : null,
             diagnostics,
-            dbTypeChecks);
+            dbTypeChecks,
+            sqlServerOnlyDiagnostics,
+            returnValueBindings);
         var cancellationTokenParameterName = methodParameters
             .FirstOrDefault(p => p.IsCancellationToken)?.Name;
         var transactionParameterName = methodParameters
@@ -1230,7 +1234,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // emit path reads it to render the chunked VALUES INSERT.
             BulkInsertMaterialization: bulkInsertMaterialization,
             // #248 — checked against the repository's dialect in ReportDiagnostics.
-            DbTypeChecks: new EquatableArray<DbTypeCheck>(dbTypeChecks.ToImmutable()));
+            DbTypeChecks: new EquatableArray<DbTypeCheck>(dbTypeChecks.ToImmutable()),
+            // #307 — reported against the repository's dialect in ReportDiagnostics.
+            SqlServerOnlyDiagnostics: new EquatableArray<DiagnosticInfo>(sqlServerOnlyDiagnostics.ToImmutable()),
+            ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()));
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -3895,14 +3902,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //                         declaration, which is not what the author wrote.
     //   ZAO065 (Warning) -- a decimal output or input-output parameter without a
     //                       Scale. SqlClient declares it as scale 0 and silently
-    //                       rounds the value the procedure assigns. The generator
-    //                       cannot see the provider, so a Postgres-only adopter, for
-    //                       whom the value comes back exact, opts out in .editorconfig.
+    //                       rounds the value the procedure assigns. Recorded in
+    //                       sqlServerOnlyDiagnostics, not diagnostics: #307 skips it
+    //                       when the repository declares a dialect other than
+    //                       SqlServer, whose provider returns the value exact.
     //   ZAO067 (Error)   -- #241. `[Param(Direction = ReturnValue)]` into a tuple
     //                       field that is not int or int?. SQL Server's RETURN
     //                       value is an int.
     //   ZAO068 (Error)   -- #241. More than one parameter bound as the RETURN
     //                       value. A procedure has one.
+    //
+    // #307 — every parameter bound as the RETURN value is also recorded in
+    // returnValueBindings. ZAO069 reports it when the repository declares a
+    // dialect other than SqlServer, whose provider never sets a RETURN value.
     //
     // #248 — it also records, in dbTypeChecks, each `[Param(DbType = ...)]` that
     // ZAO015 checks once the repository's dialect is known: on a parameter that
@@ -3913,7 +3925,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
         ImmutableArray<ParameterInfo> parameters,
         SprocOutputParamsMaterializationModel? sprocOutputs,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
-        ImmutableArray<DbTypeCheck>.Builder dbTypeChecks)
+        ImmutableArray<DbTypeCheck>.Builder dbTypeChecks,
+        ImmutableArray<DiagnosticInfo>.Builder sqlServerOnlyDiagnostics,
+        ImmutableArray<ReturnValueBinding>.Builder returnValueBindings)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var outputs = new Dictionary<string, SprocOutputParam>(StringComparer.Ordinal);
@@ -4028,6 +4042,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
             if (output.IsReturnValue)
             {
+                returnValueBindings.Add(new ReturnValueBinding(info.Name, method.Name, location));
+
                 // #241 — only an explicit ReturnValue can reach a non-int field:
                 // the RETURN_VALUE convention applies to int and int? alone.
                 if (!output.IsInt32)
@@ -4084,7 +4100,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             if (facets?.Scale is null
                 && string.Equals(dbType, DbTypePrefix + "Decimal", StringComparison.Ordinal))
             {
-                diagnostics.Add(new DiagnosticInfo(
+                sqlServerOnlyDiagnostics.Add(new DiagnosticInfo(
                     DescriptorId: "ZAO065",
                     Location: location,
                     MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
@@ -4527,31 +4543,65 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static bool ReportDiagnostics(SourceProductionContext context, QueryRepositoryModel repo, int? dialect)
     {
         var hadError = false;
+
+        void Report(DiagnosticInfo diag)
+        {
+            var descriptor = LookupDescriptor(diag.DescriptorId);
+            if (descriptor is null) return;
+            if (descriptor.DefaultSeverity == DiagnosticSeverity.Error) hadError = true;
+            object[] args = diag.MessageArgs.Values.IsDefault
+                ? Array.Empty<object>()
+                : diag.MessageArgs.Values.ToArray();
+            context.ReportDiagnostic(Diagnostic.Create(
+                descriptor,
+                diag.Location?.ToLocation(),
+                args));
+        }
+
+        // #248 — the declared dialect. A value outside SqlDialect declares no
+        // dialect the generator knows, and counts as no declaration.
+        SqlDialectModel? knownDialect = dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared)
+            ? (SqlDialectModel)declared
+            : null;
+        var otherThanSqlServer = knownDialect is { } known && known != SqlDialectModel.SqlServer;
+
         foreach (var method in repo.Methods)
         {
             foreach (var diag in method.Diagnostics)
+                Report(diag);
+
+            // ZAO065 — #307. SQL Server rounds a decimal output without a scale;
+            // another declared dialect's provider returns it exact, so the warning
+            // is skipped there. Without a declared dialect it is reported as before.
+            if (!otherThanSqlServer)
             {
-                var descriptor = LookupDescriptor(diag.DescriptorId);
-                if (descriptor is null) continue;
-                if (descriptor.DefaultSeverity == DiagnosticSeverity.Error) hadError = true;
-                object[] args = diag.MessageArgs.Values.IsDefault
-                    ? Array.Empty<object>()
-                    : diag.MessageArgs.Values.ToArray();
-                context.ReportDiagnostic(Diagnostic.Create(
-                    descriptor,
-                    diag.Location?.ToLocation(),
-                    args));
+                foreach (var diag in method.SqlServerOnlyDiagnostics)
+                    Report(diag);
+            }
+
+            // ZAO069 — #307. Only SQL Server fills a ReturnValue parameter. On
+            // another declared dialect the generated read would throw at run time.
+            if (otherThanSqlServer)
+            {
+                foreach (var binding in method.ReturnValueBindings)
+                {
+                    hadError = true;
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        DiagnosticDescriptors.ZAO069_ReturnValueOnDialectWithoutOne,
+                        binding.Location?.ToLocation(),
+                        binding.ParameterName,
+                        binding.MethodName,
+                        knownDialect!.Value.ToString()));
+                }
             }
         }
 
         // ZAO015 — #248. A `[Param(DbType = ...)]` the declared dialect's provider
         // rejects for the type the parameter binds as. Without a declared dialect
         // nothing is checked: no DbType is rejected by every provider, so any report
-        // would break code that runs on some provider. A value outside SqlDialect
-        // declares no dialect the generator knows, and is not checked either.
-        if (dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared))
+        // would break code that runs on some provider.
+        if (knownDialect is { } model)
         {
-            var model = (SqlDialectModel)declared;
             foreach (var method in repo.Methods)
             {
                 foreach (var check in method.DbTypeChecks)

@@ -225,9 +225,10 @@ an error: `1234.5678` becomes `1235`. Setting `Precision` alone does not help;
 
 The generator reports [ZAO065](../diagnostics/ZAO065.md), a **warning**, on a
 `decimal` output without `Scale`. Set `Precision` and `Scale` to match the
-procedure's declaration. A project whose procedures run only on PostgreSQL can
-turn it off with `dotnet_diagnostic.ZAO065.severity = none` in
-`.editorconfig`.
+procedure's declaration. A repository that runs only on another database
+declares it with [`[Dialect]`](provider-quirks.md#declaring-the-dialect), for
+example `[Dialect(SqlDialect.PostgreSql)]`, and the warning is not reported
+there.
 
 ### Facets on input parameters
 
@@ -308,13 +309,16 @@ field.
   named `RETURN_VALUE` of another type is an ordinary output parameter.
 - **One per method.** A second return-value parameter is
   [ZAO068](../diagnostics/ZAO068.md).
-- **SQL Server only.** A PostgreSQL procedure has no `RETURN` value, and
-  SQLite has no procedures. The generator cannot see which provider runs the
-  procedure, so it cannot report this at build time. On PostgreSQL, Npgsql
-  leaves the parameter out of the `CALL` and never sets it, and the generated
-  method throws `ZeroAllocOrmMaterializationException` after the call rather
-  than read the unset value as `0`. Return the value through an `OUT`
-  parameter there.
+- **SQL Server only.** A PostgreSQL or MySQL procedure has no `RETURN` value,
+  and SQLite has no procedures. When the repository declares another dialect
+  with [`[Dialect]`](provider-quirks.md#declaring-the-dialect),
+  [ZAO069](../diagnostics/ZAO069.md) reports a return-value parameter at build
+  time, whether it is bound by `Direction` or by the `RETURN_VALUE`
+  convention. Without a declared dialect the generator cannot see the
+  provider. On PostgreSQL, Npgsql then leaves the parameter out of the `CALL`
+  and never sets it, and the generated method throws
+  `ZeroAllocOrmMaterializationException` after the call rather than read the
+  unset value as `0`. Return the value through an `OUT` parameter there.
 - **A PostgreSQL `OUT` or `INOUT` parameter named `RETURN_VALUE`.** Npgsql
   names each `CALL` argument in quotes, `"RETURN_VALUE" := NULL`, so before
   this change the field matched only a parameter declared with that quoted,
