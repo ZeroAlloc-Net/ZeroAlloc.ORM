@@ -1,1 +1,14 @@
 #nullable enable
+const ZeroAlloc.ORM.Migrations.MigrationRunner.MaxSourceNameLength = 256 -> int
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.Name.get -> string!
+ZeroAlloc.ORM.Migrations.EmbeddedResourceMigrationSource.Name.init -> void
+ZeroAlloc.ORM.Migrations.IMigrationSource.Name.get -> string!
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.IScopedMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
+ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.PostgresMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.SqliteMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.SelectUnscopedHistorySql.get -> string!
+ZeroAlloc.ORM.Migrations.SqlServerMigrationDialect.UpgradeUnscopedHistorySql.get -> System.Collections.Generic.IReadOnlyList<string!>!

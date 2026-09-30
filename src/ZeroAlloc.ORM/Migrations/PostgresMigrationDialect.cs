@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Data.Async;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,9 +28,27 @@ namespace ZeroAlloc.ORM.Migrations;
 /// (matching the Sqlite TEXT convention), and Postgres performs the implicit
 /// parse on insert.
 /// </para>
+///
+/// <para>
+/// #306 — versions are scoped by source; see <see cref="IScopedMigrationDialect"/>. The
+/// primary key is <c>(source, version)</c>. A history table from before scoping is upgraded
+/// in place: the <c>source</c> column is added and filled, and the primary key is replaced,
+/// in one transaction.
+/// </para>
 /// </summary>
-public sealed class PostgresMigrationDialect : IMigrationDialect
+public sealed class PostgresMigrationDialect : IScopedMigrationDialect
 {
+    private static readonly string[] UpgradeStatements =
+    [
+        "ALTER TABLE __zaorm_migrations ADD COLUMN source TEXT",
+        "UPDATE __zaorm_migrations SET source = @source",
+        "ALTER TABLE __zaorm_migrations ALTER COLUMN source SET NOT NULL",
+        // The name PostgreSQL gave the key of the table this dialect created before
+        // scoping. A table with another key fails here, and the upgrade rolls back.
+        "ALTER TABLE __zaorm_migrations DROP CONSTRAINT __zaorm_migrations_pkey",
+        "ALTER TABLE __zaorm_migrations ADD PRIMARY KEY (source, version)",
+    ];
+
     /// <summary>
     /// Default 64-bit constant passed to <c>pg_advisory_lock</c>. Packs the
     /// ASCII bytes of <c>"ZAORM_MI"</c> (8 bytes) into a <see cref="long"/> —
@@ -54,16 +73,31 @@ public sealed class PostgresMigrationDialect : IMigrationDialect
     /// <inheritdoc />
     public string CreateHistoryTableSql =>
         "CREATE TABLE IF NOT EXISTS __zaorm_migrations (" +
-        "version INTEGER PRIMARY KEY, " +
+        "source TEXT NOT NULL, " +
+        "version INTEGER NOT NULL, " +
         "name TEXT NOT NULL, " +
-        "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())";
+        "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), " +
+        "PRIMARY KEY (source, version))";
 
     /// <inheritdoc />
-    public string SelectAppliedVersionsSql => "SELECT version, name FROM __zaorm_migrations ORDER BY version";
+    public string SelectAppliedVersionsSql =>
+        "SELECT version, name FROM __zaorm_migrations WHERE source = @source ORDER BY version";
 
     /// <inheritdoc />
     public string InsertAppliedVersionSql =>
-        "INSERT INTO __zaorm_migrations (version, name, applied_at) VALUES (@version, @name, @applied_at::timestamptz)";
+        "INSERT INTO __zaorm_migrations (source, version, name, applied_at) " +
+        "VALUES (@source, @version, @name, @applied_at::timestamptz)";
+
+    /// <inheritdoc />
+    /// <remarks>Looks the table up in <c>current_schema()</c>, where an unqualified
+    /// <c>CREATE TABLE</c> puts it.</remarks>
+    public string SelectUnscopedHistorySql =>
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns " +
+        "WHERE table_schema = current_schema() AND table_name = '__zaorm_migrations' " +
+        "AND column_name = 'source') THEN 0 ELSE 1 END";
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> UpgradeUnscopedHistorySql => UpgradeStatements;
 
     /// <inheritdoc />
     public async Task AcquireLockAsync(IAsyncDbConnection connection, CancellationToken ct)

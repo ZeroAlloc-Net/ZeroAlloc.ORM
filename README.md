@@ -258,7 +258,7 @@ Deferred past v1.0 (see **Roadmap beyond v1.0** below): recursive composites (ZA
 
 ### Added in v1.1
 
-- **`MigrationRunner` for embedded SQL migrations** — versioned, idempotent, multi-instance-safe SQL apply. Embed `.sql` files in your assembly (`Migrations/001_initial.sql`, `Migrations/002_add_orders.sql`, ...), instantiate `MigrationRunner(connection, source, dialect)`, call `RunAsync(ct)` at startup. The runner tracks applied versions in `__zaorm_migrations`, skips already-applied migrations on re-run, and applies each pending migration in its own transaction. Mid-apply failure rolls back the failing migration only — earlier migrations stay committed, the runner throws, the adopter writes a forward-fix and re-runs. See [`docs/cookbook/migrations.md`](docs/cookbook/migrations.md).
+- **`MigrationRunner` for embedded SQL migrations** — versioned, idempotent, multi-instance-safe SQL apply. Embed `.sql` files in your assembly (`Migrations/001_initial.sql`, `Migrations/002_add_orders.sql`, ...), instantiate `MigrationRunner(connection, source, dialect)`, call `RunAsync(ct)` at startup. The runner tracks applied versions in `__zaorm_migrations`, per source so several sources can each number from 1 in one database, skips already-applied migrations on re-run, and applies each pending migration in its own transaction. Mid-apply failure rolls back the failing migration only — earlier migrations stay committed, the runner throws, the adopter writes a forward-fix and re-runs. See [`docs/cookbook/migrations.md`](docs/cookbook/migrations.md).
 
   ```csharp
   var conn = new NpgsqlConnection(connString).AsAsync();

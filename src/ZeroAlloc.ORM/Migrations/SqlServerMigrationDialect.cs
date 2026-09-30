@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Data.Async;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,9 +25,30 @@ namespace ZeroAlloc.ORM.Migrations;
 /// created under an <c>OBJECT_ID</c> guard, which is the portable-across-versions
 /// idiom.
 /// </para>
+/// <para>
+/// #306 — versions are scoped by source; see <see cref="IScopedMigrationDialect"/>. The
+/// primary key is <c>(source, version)</c>, and <c>source</c> is <c>NVARCHAR(256)</c>. A
+/// history table from before scoping is upgraded in place: its primary key, whatever SQL
+/// Server named it, is dropped, the <c>source</c> column is added and filled, and the new key
+/// is created, in one transaction. Each step is its own statement, because SQL Server
+/// compiles a batch before it runs it and would reject the new column's first use.
+/// </para>
 /// </remarks>
-public sealed class SqlServerMigrationDialect : IMigrationDialect
+public sealed class SqlServerMigrationDialect : IScopedMigrationDialect
 {
+    private static readonly string[] UpgradeStatements =
+    [
+        "DECLARE @pk sysname = (SELECT name FROM sys.key_constraints " +
+        "WHERE parent_object_id = OBJECT_ID(N'__zaorm_migrations') AND type = 'PK'); " +
+        "IF @pk IS NOT NULL BEGIN " +
+        "DECLARE @drop nvarchar(max) = N'ALTER TABLE __zaorm_migrations DROP CONSTRAINT ' + QUOTENAME(@pk); " +
+        "EXEC sp_executesql @drop; END;",
+        "ALTER TABLE __zaorm_migrations ADD source NVARCHAR(256) NULL;",
+        "UPDATE __zaorm_migrations SET source = @source;",
+        "ALTER TABLE __zaorm_migrations ALTER COLUMN source NVARCHAR(256) NOT NULL;",
+        "ALTER TABLE __zaorm_migrations ADD PRIMARY KEY (source, version);",
+    ];
+
     /// <summary>
     /// Default resource name for <c>sp_getapplock</c>. Distinct from the Postgres
     /// key type because SQL Server identifies application locks by name.
@@ -51,16 +73,27 @@ public sealed class SqlServerMigrationDialect : IMigrationDialect
     public string CreateHistoryTableSql =>
         "IF OBJECT_ID(N'__zaorm_migrations', N'U') IS NULL " +
         "CREATE TABLE __zaorm_migrations (" +
-        "version INT NOT NULL PRIMARY KEY, " +
+        "source NVARCHAR(256) NOT NULL, " +
+        "version INT NOT NULL, " +
         "name NVARCHAR(400) NOT NULL, " +
-        "applied_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET())";
+        "applied_at DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(), " +
+        "PRIMARY KEY (source, version))";
 
     /// <inheritdoc />
-    public string SelectAppliedVersionsSql => "SELECT version, name FROM __zaorm_migrations ORDER BY version";
+    public string SelectAppliedVersionsSql =>
+        "SELECT version, name FROM __zaorm_migrations WHERE source = @source ORDER BY version";
 
     /// <inheritdoc />
     public string InsertAppliedVersionSql =>
-        "INSERT INTO __zaorm_migrations (version, name, applied_at) VALUES (@version, @name, @applied_at)";
+        "INSERT INTO __zaorm_migrations (source, version, name, applied_at) " +
+        "VALUES (@source, @version, @name, @applied_at)";
+
+    /// <inheritdoc />
+    public string SelectUnscopedHistorySql =>
+        "SELECT CASE WHEN COL_LENGTH(N'__zaorm_migrations', N'source') IS NULL THEN 1 ELSE 0 END";
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> UpgradeUnscopedHistorySql => UpgradeStatements;
 
     /// <inheritdoc />
     public async Task AcquireLockAsync(IAsyncDbConnection connection, CancellationToken ct)

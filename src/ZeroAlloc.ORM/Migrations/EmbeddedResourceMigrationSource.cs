@@ -86,7 +86,22 @@ public sealed class EmbeddedResourceMigrationSource : IMigrationSource
     {
         _assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
         _resourceNamespacePrefix = resourceNamespacePrefix;
+        Name = resourceNamespacePrefix is { Length: > 0 }
+            ? resourceNamespacePrefix.TrimEnd('.')
+            : assembly.GetName().Name ?? assembly.FullName ?? nameof(EmbeddedResourceMigrationSource);
     }
+
+    /// <summary>
+    /// The name that scopes this source's versions in the history table. See
+    /// <see cref="IMigrationSource.Name"/>.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <c>resourceNamespacePrefix</c> without its trailing dot, such as
+    /// <c>MyApp.Migrations</c>, or to the assembly's simple name when there is no prefix. Every
+    /// source of this type shares the type, so the default is not the type's name. Set it to
+    /// keep the name fixed if the assembly or the prefix may be renamed later.
+    /// </remarks>
+    public string Name { get; init; }
 
     /// <inheritdoc />
     public IReadOnlyList<Migration> GetMigrations()

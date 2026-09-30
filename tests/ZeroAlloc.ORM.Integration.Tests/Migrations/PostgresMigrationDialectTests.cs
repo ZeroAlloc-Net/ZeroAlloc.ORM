@@ -119,6 +119,9 @@ public class PostgresMigrationDialectTests
             pAt.Value = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
             cmd.Parameters.Add(pAt);
 
+            // #306 — the history is scoped by source.
+            AddSource(cmd);
+
             await cmd.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
         }
     }
@@ -130,6 +133,7 @@ public class PostgresMigrationDialectTests
         await using (cmd.ConfigureAwait(false))
         {
             cmd.CommandText = dialect.SelectAppliedVersionsSql;
+            AddSource(cmd);
             var reader = await cmd.ExecuteReaderAsync(CancellationToken.None).ConfigureAwait(false);
             await using (((IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
             {
@@ -140,5 +144,13 @@ public class PostgresMigrationDialectTests
             }
         }
         return list;
+    }
+
+    private static void AddSource(IAsyncDbCommand cmd)
+    {
+        var pSource = cmd.CreateParameter();
+        pSource.ParameterName = "@source";
+        pSource.Value = "TestSource";
+        cmd.Parameters.Add(pSource);
     }
 }

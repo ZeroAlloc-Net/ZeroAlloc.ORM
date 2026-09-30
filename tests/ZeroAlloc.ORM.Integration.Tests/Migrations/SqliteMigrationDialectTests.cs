@@ -100,6 +100,9 @@ public class SqliteMigrationDialectTests
             pAt.Value = System.DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture);
             cmd.Parameters.Add(pAt);
 
+            // #306 — the history is scoped by source.
+            AddSource(cmd);
+
             await cmd.ExecuteNonQueryAsync(default).ConfigureAwait(false);
         }
     }
@@ -111,6 +114,7 @@ public class SqliteMigrationDialectTests
         await using (cmd.ConfigureAwait(false))
         {
             cmd.CommandText = dialect.SelectAppliedVersionsSql;
+            AddSource(cmd);
             var reader = await cmd.ExecuteReaderAsync(default).ConfigureAwait(false);
             await using (((System.IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
             {
@@ -121,5 +125,13 @@ public class SqliteMigrationDialectTests
             }
         }
         return list;
+    }
+
+    private static void AddSource(IAsyncDbCommand cmd)
+    {
+        var pSource = cmd.CreateParameter();
+        pSource.ParameterName = "@source";
+        pSource.Value = "TestSource";
+        cmd.Parameters.Add(pSource);
     }
 }

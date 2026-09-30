@@ -545,7 +545,8 @@ Two things are still `@`-only. `CommandKind.BulkInsert` recognises only
 `@name_1` into the SQL it builds per chunk. And the shipped migration
 dialects write their own SQL with `@` placeholders; a dialect for another
 provider writes its own sigil, and `MigrationRunner` binds `version`, `name`
-and `applied_at` by bare name.
+and `applied_at` by bare name, plus `source` for a dialect that scopes versions
+by source.
 
 ### NULL semantics
 
