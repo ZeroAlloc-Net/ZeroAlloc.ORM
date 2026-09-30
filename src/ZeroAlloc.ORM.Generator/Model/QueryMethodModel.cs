@@ -257,7 +257,15 @@ internal sealed record QueryMethodModel(
     BulkInsertMaterializationModel? BulkInsertMaterialization = null,
     // #248 — the `[Param(DbType = ...)]` overrides ZAO015 checks against the
     // repository's declared dialect. Empty when no parameter has one to check.
-    EquatableArray<DbTypeCheck> DbTypeChecks = default);
+    EquatableArray<DbTypeCheck> DbTypeChecks = default,
+    // #307 — diagnostics that depend on the repository's declared dialect, which
+    // is resolved after this model is built. SqlServerOnlyDiagnostics are ZAO065
+    // warnings, reported unless a dialect other than SqlServer is declared.
+    // ReturnValueBindings are the parameters bound as the procedure's RETURN
+    // value; ZAO069 reports each one when a dialect other than SqlServer is
+    // declared.
+    EquatableArray<DiagnosticInfo> SqlServerOnlyDiagnostics = default,
+    EquatableArray<ReturnValueBinding> ReturnValueBindings = default);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

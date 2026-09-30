@@ -38,12 +38,22 @@ public sealed partial class LegacyOrderRepository(IAsyncDbConnection connection)
 | `Sqlite` | SQLite, through Microsoft.Data.Sqlite |
 | `MySql` | MySQL, through MySqlConnector or MySql.Data |
 
-The attribute is optional and changes no generated code. It adds compile-time
-checks that only hold for one provider. Today that is
-[ZAO015](../diagnostics/ZAO015.md): a `[Param(DbType = ...)]` that the
-dialect's provider rejects for the parameter's type, such as `DbType.Guid` on
-an `int` on SQL Server, is an error instead of a failure at run time. Without
-a declared dialect the generator reports only what fails on every provider.
+The attribute is optional and changes no generated code. It tunes the
+compile-time checks that depend on the provider:
+
+- [ZAO015](../diagnostics/ZAO015.md): a `[Param(DbType = ...)]` that the
+  dialect's provider rejects for the parameter's type, such as `DbType.Guid`
+  on an `int` on SQL Server, is an error instead of a failure at run time.
+- [ZAO065](../diagnostics/ZAO065.md), the warning for a `decimal` output
+  without a `Scale`, is reported only on SQL Server, whose provider rounds the
+  value. It is skipped on any other declared dialect.
+- [ZAO069](../diagnostics/ZAO069.md): a parameter bound as a procedure's
+  `RETURN` value is an error on any declared dialect other than SQL Server,
+  the only database with one.
+
+Without a declared dialect the generator reports only what fails on every
+provider, plus ZAO065 as a warning, and a return-value parameter binds as
+before.
 
 Only the repository type's own attribute counts, on any of its partial
 declarations. One on a base class, or on a type the repository is nested in,
