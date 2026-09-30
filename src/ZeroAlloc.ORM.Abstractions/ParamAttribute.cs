@@ -37,6 +37,8 @@ public sealed class ParamAttribute : Attribute
     /// An input parameter without an override sets no <c>DbType</c>, and the provider infers
     /// one from the value. An output or input-output parameter always gets a <c>DbType</c>,
     /// inferred from the tuple element's type unless this override is written.
+    /// When the repository declares its dialect with <see cref="DialectAttribute"/>, ZAO015
+    /// reports an override that the dialect's provider rejects for the parameter's type.
     /// </remarks>
     public DbType DbType { get; init; } = DbType.Object;
 

@@ -290,7 +290,7 @@ ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
 
 ## Diagnostics catalog
 
-ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics, from signature-shape errors (`ZAO001`–`ZAO009`) through materialization, stored-procedure/parameter, and `BulkInsert` guardrails (`ZAO020`–`ZAO081`). Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
+ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics, from signature-shape and parameter errors (`ZAO001`–`ZAO015`) through materialization, stored-procedure/parameter, and `BulkInsert` guardrails (`ZAO020`–`ZAO081`). Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
 
 The full, canonical index of every shipped code — severity, trigger, and page link — lives at **[docs/diagnostics/README.md](docs/diagnostics/README.md)**, not here, so there is exactly one table to keep current.
 

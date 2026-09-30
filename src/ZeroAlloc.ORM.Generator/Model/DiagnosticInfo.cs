@@ -31,6 +31,27 @@ internal sealed record DiagnosticInfo(
 /// tree belongs to no one compilation, and only the tree of the latest run is held.
 /// </para>
 /// </remarks>
+/// <summary>
+/// #248 — a <c>[Param(DbType = ...)]</c> override that ZAO015 checks once the repository's
+/// dialect is known. The dialect is resolved after the per-method transform, so the transform
+/// records the pair here and <c>ReportDiagnostics</c> looks it up in the dialect's reject set.
+/// </summary>
+/// <param name="ParameterName">The C# parameter name.</param>
+/// <param name="BoundReader">
+/// The reader method of the primitive the parameter binds as, from
+/// <c>PrimitiveCatalog.GetScalarReaderMethod</c>: a value object or an enum binds as the
+/// primitive it stores.
+/// </param>
+/// <param name="DbTypeValue">The written DbType's numeric value.</param>
+/// <param name="DbTypeDisplay">The DbType as a message shows it: <c>Guid</c>, or <c>(DbType)999</c>.</param>
+/// <param name="Location">The parameter's location.</param>
+internal sealed record DbTypeCheck(
+    string ParameterName,
+    string BoundReader,
+    int DbTypeValue,
+    string DbTypeDisplay,
+    LocationInfo? Location);
+
 internal sealed record LocationInfo(SyntaxTree Tree, TextSpan Span)
 {
     public Location ToLocation() => Microsoft.CodeAnalysis.Location.Create(Tree, Span);

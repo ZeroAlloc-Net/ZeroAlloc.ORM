@@ -19,8 +19,11 @@ public class IncrementalityTests
         using System.Threading.Tasks;
         using ZeroAlloc.ORM;
 
+        [assembly: Dialect(SqlDialect.Sqlite)]
+
         namespace TestApp;
 
+        [Dialect(SqlDialect.SqlServer)]
         public sealed partial class Repo(IAsyncDbConnection connection)
         {
             [Query("SELECT 1")]
@@ -41,7 +44,8 @@ public class IncrementalityTests
     private static readonly string[] TrackedStepNames =
     [
         "QueryMethods", "CommandMethods", "StoredProcedureMethods", "AllMethods", "Repositories",
-        "StoreAsStringDiagnostics",
+        "StoreAsStringDiagnostics", "TypeDialects", "AssemblyDialects", "DialectDeclarations",
+        "RepositoriesWithDialect",
     ];
 
     [Fact]
@@ -101,6 +105,71 @@ public class IncrementalityTests
         Assert.Equal(
             before.Location.GetLineSpan().StartLinePosition.Line + 3,
             after.Location.GetLineSpan().StartLinePosition.Line);
+    }
+
+    // #248 — the dialect is declared in another file than the one the repository's methods
+    // live in. Changing it re-runs the resolution and reports ZAO015 from the new dialect,
+    // while the repository's own steps stay cached.
+    [Fact]
+    public void Edit_to_the_dialect_in_another_file_rechecks_the_repository()
+    {
+        const string Methods = """
+            using System.Data;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT @p")]
+                public partial Task<int> GetAsync([Param(DbType = DbType.Guid)] int p, CancellationToken ct);
+            }
+            """;
+        const string DialectTemplate = """
+            using ZeroAlloc.ORM;
+
+            [assembly: Dialect(SqlDialect.Sqlite)]
+
+            namespace TestApp;
+
+            [Dialect(SqlDialect.DIALECT)]
+            public sealed partial class Repo;
+            """;
+        var repo = CSharpSyntaxTree.ParseText(Methods, path: "/src/Repo.cs");
+        var dialect = CSharpSyntaxTree.ParseText(
+            DialectTemplate.Replace("DIALECT", "Sqlite", StringComparison.Ordinal), path: "/src/Repo.Dialect.cs");
+        var compilation = GeneratorHarness.CreateCompilation(new[] { repo, dialect });
+
+        GeneratorDriver driver = CreateDriver();
+        driver = driver.RunGenerators(compilation);
+        Assert.DoesNotContain(driver.GetRunResult().Diagnostics, d => string.Equals(d.Id, "ZAO015", StringComparison.Ordinal));
+
+        var toSqlServer = dialect.WithChangedText(SourceText.From(
+            DialectTemplate.Replace("DIALECT", "SqlServer", StringComparison.Ordinal)));
+        compilation = compilation.ReplaceSyntaxTree(dialect, toSqlServer);
+        driver = driver.RunGenerators(compilation);
+        var second = driver.GetRunResult().Results[0];
+
+        var zao015 = Assert.Single(second.Diagnostics, d => string.Equals(d.Id, "ZAO015", StringComparison.Ordinal));
+        Assert.Same(repo, zao015.Location.SourceTree);
+        foreach (var name in new[] { "QueryMethods", "AllMethods", "Repositories" })
+            AssertAllCachedOrUnchanged(name, second.TrackedSteps[name]);
+
+        // Removing the repository's attribute falls back to the assembly default, Sqlite.
+        var removed = toSqlServer.WithChangedText(SourceText.From("""
+            using ZeroAlloc.ORM;
+
+            [assembly: Dialect(SqlDialect.Sqlite)]
+
+            namespace TestApp;
+
+            public sealed partial class Repo;
+            """));
+        driver = driver.RunGenerators(compilation.ReplaceSyntaxTree(toSqlServer, removed));
+        Assert.DoesNotContain(driver.GetRunResult().Diagnostics, d => string.Equals(d.Id, "ZAO015", StringComparison.Ordinal));
     }
 
     private static CSharpGeneratorDriver CreateDriver()

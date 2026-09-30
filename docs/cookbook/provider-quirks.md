@@ -2,15 +2,52 @@
 
 ZeroAlloc.ORM is provider-agnostic at the generator level — the emit
 references `IAsyncDbConnection` from [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async),
-not any concrete provider type. The generator does not branch on provider;
-it does not auto-rewrite SQL; it does not normalise identifier casing. The
-adopter owns the SQL string. This page collects the provider-specific
-things adopters writing real code need to know.
+not any concrete provider type. The generated code does not branch on
+provider; it does not auto-rewrite SQL; it does not normalise identifier
+casing. The adopter owns the SQL string. A repository can declare the dialect
+it runs against so the generator checks it against that provider at compile
+time; see [Declaring the dialect](#declaring-the-dialect). This page collects
+the provider-specific things adopters writing real code need to know.
 
-The four providers we exercise in CI and benchmarks today: **Sqlite** (the
-default fixture, in-memory), **PostgreSQL** (Testcontainers in CI), **SQL
-Server** (notes only — integration fixture deferred), **MySQL** (notes only
-— integration fixture deferred).
+The providers we exercise in CI today: **Sqlite** (the default fixture,
+in-memory), **PostgreSQL** and **SQL Server** (Testcontainers in CI).
+**MySQL** has notes only; its integration fixture is deferred.
+
+## Declaring the dialect
+
+`[Dialect(SqlDialect.X)]` tells the generator which database a repository
+runs against. Put it on the repository, or on the assembly as the default for
+every repository in it. The repository's own attribute wins:
+
+```csharp
+// Every repository in this project runs on PostgreSQL...
+[assembly: Dialect(SqlDialect.PostgreSql)]
+
+// ...except this one.
+[Dialect(SqlDialect.SqlServer)]
+public sealed partial class LegacyOrderRepository(IAsyncDbConnection connection)
+{
+    // ...
+}
+```
+
+| `SqlDialect` | Database and provider |
+|--------------|-----------------------|
+| `SqlServer` | SQL Server, through Microsoft.Data.SqlClient |
+| `PostgreSql` | PostgreSQL, through Npgsql |
+| `Sqlite` | SQLite, through Microsoft.Data.Sqlite |
+| `MySql` | MySQL, through MySqlConnector or MySql.Data |
+
+The attribute is optional and changes no generated code. It adds compile-time
+checks that only hold for one provider. Today that is
+[ZAO015](../diagnostics/ZAO015.md): a `[Param(DbType = ...)]` that the
+dialect's provider rejects for the parameter's type, such as `DbType.Guid` on
+an `int` on SQL Server, is an error instead of a failure at run time. Without
+a declared dialect the generator reports only what fails on every provider.
+
+Only the repository type's own attribute counts, on any of its partial
+declarations. One on a base class, or on a type the repository is nested in,
+does not apply to it.
 
 ## Sqlite
 

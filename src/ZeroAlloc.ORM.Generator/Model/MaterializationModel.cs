@@ -209,12 +209,16 @@ internal sealed record ParameterInfo(
 //                 `[Param(Direction = X)]`. Only Output and InputOutput on a
 //                 tuple-matched stored-procedure parameter reach the emit;
 //                 every other use is ZAO066.
+//   DbTypeValue -- #248. The numeric value of DbTypeExpression, null exactly
+//                 when it is. ZAO015 looks it up in the declared dialect's
+//                 reject set.
 internal sealed record ParamFacets(
     string? DbTypeExpression,
     int? Size,
     int? Precision,
     int? Scale,
-    string? Direction);
+    string? Direction,
+    int? DbTypeValue);
 
 // v0.5 Phase B — one inner field of a composite parameter (e.g. `Amount` /
 // `Currency` of a `Money(decimal Amount, string Currency)` parameter).

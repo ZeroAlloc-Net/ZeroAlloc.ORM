@@ -254,7 +254,10 @@ internal sealed record QueryMethodModel(
     // Carries the per-placeholder property bindings, chunk size, return-shape
     // selector (RowsAffected / IdentityList), and the static SQL head/tail
     // around the VALUES tuple. Task 6's emit reads it directly.
-    BulkInsertMaterializationModel? BulkInsertMaterialization = null);
+    BulkInsertMaterializationModel? BulkInsertMaterialization = null,
+    // #248 — the `[Param(DbType = ...)]` overrides ZAO015 checks against the
+    // repository's declared dialect. Empty when no parameter has one to check.
+    EquatableArray<DbTypeCheck> DbTypeChecks = default);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
