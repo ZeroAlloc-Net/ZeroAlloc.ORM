@@ -270,7 +270,9 @@ internal sealed record QueryRepositoryModel(
     // namespace level (the common case, kept byte-identical). EmitRepository
     // re-emits each frame's own partial declaration around the generated
     // repository class so the generated half joins the user's nested type.
-    EquatableArray<ContainingTypeFrame> ContainingTypeChain);
+    EquatableArray<ContainingTypeFrame> ContainingTypeChain,
+    // #303 — the generated file's hint name; see QueryMethodWithTypeContext.HintName.
+    string HintName);
 
 // v2.0 — issue #238. One entry per OUTER containing type of a nested repository
 // class (never the repository type itself — ZAO003/ZAO004 already cover that
@@ -315,4 +317,8 @@ internal sealed record QueryMethodWithTypeContext(
     bool ConnectionResolved,
     bool ContainingTypePartial,
     LocationInfo? ContainingTypeLocation,
-    EquatableArray<ContainingTypeFrame> ContainingTypeChain);
+    EquatableArray<ContainingTypeFrame> ContainingTypeChain,
+    // #303 — the generated file's hint name, from HintNames.ForRepository. Computed from the
+    // symbol while it is at hand, because the display name above cannot be turned back into a
+    // collision-free file name: it spells generic outer types with their type-parameter names.
+    string HintName);
