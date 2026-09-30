@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.1.1...v2.2.0) (2026-09-30)
+
+
+### Features
+
+* declare a repository's SQL dialect so ZAO015 checks [Param(DbType)] per provider ([#308](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/308)) ([f3cade1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f3cade129217b5db9de96330388197fb6e376fef)), closes [#248](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/248)
+* scope migration versions by source so several sources migrate one database ([#310](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/310)) ([c0afab1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c0afab1cfd3b84561b024f61abf36440a114f1b4)), closes [#306](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/306)
+* use the declared dialect for ZAO065 and report return values off SQL Server ([#309](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/309)) ([5742eb2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/5742eb225b661cc8ca230ecf05527b1a32103033)), closes [#307](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/307)
+
+
+### Bug Fixes
+
+* write generic arity and nesting into generated file names ([#304](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/304)) ([33836c7](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/33836c78919ab5623f172c718107f7a10c069137)), closes [#303](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/303)
+
 ## [2.1.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.1.0...v2.1.1) (2026-09-28)
 
 

@@ -114,3 +114,12 @@ Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
 ZAO067  | ZeroAlloc.ORM | Error    | Return value parameter must be int
 ZAO068  | ZeroAlloc.ORM | Error    | More than one return value parameter
+
+## Release 2.2.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO015  | ZeroAlloc.ORM | Error    | [Param(DbType)] is rejected by the declared dialect
+ZAO069  | ZeroAlloc.ORM | Error    | Return value parameter on a dialect without procedure return values
