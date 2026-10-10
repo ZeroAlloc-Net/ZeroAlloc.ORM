@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ZeroAlloc.TestHelpers" Version="1.5.*" />
+    <PackageReference Include="ZeroAlloc.TestHelpers" Version="1.6.*" />
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
