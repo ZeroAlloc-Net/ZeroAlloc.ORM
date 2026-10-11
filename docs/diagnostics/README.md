@@ -41,7 +41,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO070 | Error | BulkInsert method must take exactly one collection parameter | [ZAO070](ZAO070.md) |
 | ZAO071 | Error | BulkInsert SQL must contain exactly one VALUES tuple | [ZAO071](ZAO071.md) |
 | ZAO072 | Error | BulkInsert placeholder doesn't match any TRow property | [ZAO072](ZAO072.md) |
-| ZAO073 | Error | BulkInsert return type must be `Task<int>` or `Task<IReadOnlyList<TIdentity>>` | [ZAO073](ZAO073.md) |
+| ZAO073 | Error | BulkInsert return type must be `Task<int>` or `Task<IReadOnlyList<TIdentity>>`, or the `ValueTask` form | [ZAO073](ZAO073.md) |
 | ZAO074 | Info | `CommandKind.BulkInsert` is ignored on this attribute | [ZAO074](ZAO074.md) |
 | ZAO080 | Warning | At most one `IAsyncDbTransaction` parameter | [ZAO080](ZAO080.md) |
 | ZAO081 | Error | Containing type must be partial (nested repository) | [ZAO081](ZAO081.md) |
