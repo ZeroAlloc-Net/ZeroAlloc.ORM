@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.2.1...v2.3.0) (2026-10-11)
+
+
+### Features
+
+* accept ValueTask&lt;T&gt; on [Query] and BulkInsert methods ([#334](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/334)) ([c391010](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c39101039b513976f2b79342cd77f2863b4b884d)), closes [#331](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/331)
+
+
+### Bug Fixes
+
+* emit every overload of a [Query] or [Command] method ([#333](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/333)) ([0d34219](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/0d342191ce956e4cad6bb45cd59110fe425efe03)), closes [#328](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/328)
+* emit the streaming null-column finder as a class member ([#332](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/332)) ([dedf31b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/dedf31b38d8e955054f6c3f4900ba3e26f402df1)), closes [#327](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/327)
+
 ## [2.2.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.2.0...v2.2.1) (2026-10-11)
 
 
