@@ -97,10 +97,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         //
         // v0.4 Phase D: [Query] + [Command] + [StoredProcedure] pipelines are unioned
         // before grouping so a single QueryRepositoryModel covers all three attribute
-        // kinds on the same type. The (containingTypeFullName, methodName) tuple
-        // uniquely identifies a method; we dedupe on that key inside the union so a
-        // method that picks up multiple pipelines (the ZAO005 multi-attribute case)
-        // doesn't produce two/three emit slots. Ordering matters for the dedup
+        // kinds on the same type. The method's signature uniquely identifies it; we
+        // dedupe on that key inside the union so a method that picks up multiple
+        // pipelines (the ZAO005 multi-attribute case) doesn't produce two/three emit
+        // slots. #328 — the key used to be (containing type, method name), which also
+        // collapsed overloads: the second overload got no implementation and failed
+        // with CS8795. Ordering matters for the dedup
         // tie-break: pair.Left ([Query]) wins over [Command], which wins over
         // [StoredProcedure] — but since ZAO005 fires from EVERY pipeline that
         // transforms the method, the diagnostic surfaces regardless of which entry
@@ -112,25 +114,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 var pair = combined.Left;
                 var sprocs = combined.Right;
-                var seen = new HashSet<(string, string)>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in pair.Right)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in sprocs)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 return union.ToImmutable();
             })
@@ -1250,8 +1249,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation,
             ContainingTypeChain: containingTypeChain,
-            HintName: HintNames.ForRepository(containing));
+            HintName: HintNames.ForRepository(containing),
+            MethodSignature: method.ToDisplayString(MethodSignatureFormat));
     }
+
+    // #328 — identifies a method among its overloads: containing type, name, type
+    // parameters and parameter types with their ref kinds. Nullable reference
+    // annotations are left out; they never distinguish two overloads.
+    private static readonly SymbolDisplayFormat MethodSignatureFormat = new(
+        globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Included,
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+        memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
+        parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeModifiers,
+        miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
     // v2.0 — issue #238. Maps a containing-type symbol to the C# keyword(s) its
     // re-declared partial wrapper must use. `record struct` and `record` (record
