@@ -32,4 +32,43 @@ public class MultiResultSetJoinedTests
             "}\n";
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void DomainEntity_lists_sharing_column_names_resolve_ordinals_before_each_read_loop()
+    {
+        // #326 - each list element resolves its ordinals once, before its read
+        // loop. Both result sets have an Id and a Name column, so the hoisted
+        // locals carry the element's prefix to stay distinct.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class Customer
+            {
+                public Customer(int id, string name, string? nickname) { Id = id; Name = name; Nickname = nickname; }
+                public int Id { get; }
+                public string Name { get; }
+                public string? Nickname { get; }
+            }
+
+            public sealed class Supplier
+            {
+                public Supplier(int id, string name) { Id = id; Name = name; }
+                public int Id { get; }
+                public string Name { get; }
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Name, Nickname FROM Customers; SELECT Id, Name FROM Suppliers;", Batch = BatchMode.Never)]
+                public partial Task<(IReadOnlyList<Customer> Customers, IReadOnlyList<Supplier> Suppliers)?> GetAllAsync(CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

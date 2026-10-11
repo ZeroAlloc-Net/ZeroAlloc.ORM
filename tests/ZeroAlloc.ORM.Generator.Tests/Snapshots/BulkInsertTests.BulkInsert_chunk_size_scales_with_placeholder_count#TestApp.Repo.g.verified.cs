@@ -21,63 +21,54 @@ partial class Repo
             var __offset = 0;
             var __remaining = __rows.Count;
 
-            var __sb = new global::System.Text.StringBuilder("INSERT INTO Wide (C1, C2, C3, C4, C5, C6, C7, C8, C9, C10) VALUES ".Length + 64);
-
             while (__remaining > 0)
             {
                 var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;
                 await using var __cmd = __conn.CreateCommand();
 
-                __sb.Clear();
-                __sb.Append("INSERT INTO Wide (C1, C2, C3, C4, C5, C6, C7, C8, C9, C10) VALUES ");
-                for (var __i = 0; __i < __thisChunk; __i++)
-                {
-                    if (__i > 0) __sb.Append(", ");
-                    __sb.Append("(").Append("@C1_").Append(__i).Append(", ").Append("@C2_").Append(__i).Append(", ").Append("@C3_").Append(__i).Append(", ").Append("@C4_").Append(__i).Append(", ").Append("@C5_").Append(__i).Append(", ").Append("@C6_").Append(__i).Append(", ").Append("@C7_").Append(__i).Append(", ").Append("@C8_").Append(__i).Append(", ").Append("@C9_").Append(__i).Append(", ").Append("@C10_").Append(__i).Append(")");
-                }
-                __cmd.CommandText = __sb.ToString();
+                __cmd.CommandText = __ZaoBulkInsert0_InsertWideAsync.Sql(__thisChunk);
 
                 for (var __i = 0; __i < __thisChunk; __i++)
                 {
                     var __row = __rows[__offset + __i];
                     var __p_C1_0 = __cmd.CreateParameter();
-                    __p_C1_0.ParameterName = "C1_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C1_0.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C1_0[__i];
                     __p_C1_0.Value = (object?)__row.C1 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C1_0);
                     var __p_C2_1 = __cmd.CreateParameter();
-                    __p_C2_1.ParameterName = "C2_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C2_1.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C2_1[__i];
                     __p_C2_1.Value = (object?)__row.C2 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C2_1);
                     var __p_C3_2 = __cmd.CreateParameter();
-                    __p_C3_2.ParameterName = "C3_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C3_2.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C3_2[__i];
                     __p_C3_2.Value = (object?)__row.C3 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C3_2);
                     var __p_C4_3 = __cmd.CreateParameter();
-                    __p_C4_3.ParameterName = "C4_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C4_3.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C4_3[__i];
                     __p_C4_3.Value = (object?)__row.C4 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C4_3);
                     var __p_C5_4 = __cmd.CreateParameter();
-                    __p_C5_4.ParameterName = "C5_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C5_4.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C5_4[__i];
                     __p_C5_4.Value = (object?)__row.C5 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C5_4);
                     var __p_C6_5 = __cmd.CreateParameter();
-                    __p_C6_5.ParameterName = "C6_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C6_5.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C6_5[__i];
                     __p_C6_5.Value = (object?)__row.C6 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C6_5);
                     var __p_C7_6 = __cmd.CreateParameter();
-                    __p_C7_6.ParameterName = "C7_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C7_6.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C7_6[__i];
                     __p_C7_6.Value = (object?)__row.C7 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C7_6);
                     var __p_C8_7 = __cmd.CreateParameter();
-                    __p_C8_7.ParameterName = "C8_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C8_7.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C8_7[__i];
                     __p_C8_7.Value = (object?)__row.C8 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C8_7);
                     var __p_C9_8 = __cmd.CreateParameter();
-                    __p_C9_8.ParameterName = "C9_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C9_8.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C9_8[__i];
                     __p_C9_8.Value = (object?)__row.C9 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C9_8);
                     var __p_C10_9 = __cmd.CreateParameter();
-                    __p_C10_9.ParameterName = "C10_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_C10_9.ParameterName = __ZaoBulkInsert0_InsertWideAsync.Names_C10_9[__i];
                     __p_C10_9.Value = (object?)__row.C10 ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_C10_9);
                 }
@@ -92,6 +83,50 @@ partial class Repo
         finally
         {
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
+        }
+    }
+
+    // The SQL and parameter names every full chunk of InsertWideAsync shares, built once.
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
+    private static class __ZaoBulkInsert0_InsertWideAsync
+    {
+        private const int ChunkSize = 90;
+        private const string Head = "INSERT INTO Wide (C1, C2, C3, C4, C5, C6, C7, C8, C9, C10) VALUES ";
+        internal static readonly string[] Names_C1_0 = BuildNames("C1_");
+        internal static readonly string[] Names_C2_1 = BuildNames("C2_");
+        internal static readonly string[] Names_C3_2 = BuildNames("C3_");
+        internal static readonly string[] Names_C4_3 = BuildNames("C4_");
+        internal static readonly string[] Names_C5_4 = BuildNames("C5_");
+        internal static readonly string[] Names_C6_5 = BuildNames("C6_");
+        internal static readonly string[] Names_C7_6 = BuildNames("C7_");
+        internal static readonly string[] Names_C8_7 = BuildNames("C8_");
+        internal static readonly string[] Names_C9_8 = BuildNames("C9_");
+        internal static readonly string[] Names_C10_9 = BuildNames("C10_");
+        private static readonly int[] TupleEnds = new int[ChunkSize];
+        private static readonly string FullChunkSql = BuildFullChunkSql();
+
+        internal static string Sql(int rows) => rows == ChunkSize
+            ? FullChunkSql
+            : FullChunkSql.Substring(0, TupleEnds[rows - 1]);
+
+        private static string[] BuildNames(string prefix)
+        {
+            var names = new string[ChunkSize];
+            for (var i = 0; i < names.Length; i++)
+                names[i] = prefix + i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+            return names;
+        }
+
+        private static string BuildFullChunkSql()
+        {
+            var sb = new global::System.Text.StringBuilder(Head);
+            for (var i = 0; i < ChunkSize; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append('(').Append('@').Append(Names_C1_0[i]).Append(", ").Append('@').Append(Names_C2_1[i]).Append(", ").Append('@').Append(Names_C3_2[i]).Append(", ").Append('@').Append(Names_C4_3[i]).Append(", ").Append('@').Append(Names_C5_4[i]).Append(", ").Append('@').Append(Names_C6_5[i]).Append(", ").Append('@').Append(Names_C7_6[i]).Append(", ").Append('@').Append(Names_C8_7[i]).Append(", ").Append('@').Append(Names_C9_8[i]).Append(", ").Append('@').Append(Names_C10_9[i]).Append(')');
+                TupleEnds[i] = sb.Length;
+            }
+            return sb.ToString();
         }
     }
 }

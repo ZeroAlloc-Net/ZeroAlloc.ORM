@@ -18,12 +18,12 @@ partial class Repo
             __cmd.CommandText = "SELECT Id, Name FROM Customers ORDER BY Id";
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.Customer>();
+            var __Id_ord = __reader.GetOrdinal("Id");
+            var __Name_ord = __reader.GetOrdinal("Name");
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 try
                 {
-                    var __Id_ord = __reader.GetOrdinal("Id");
-                    var __Name_ord = __reader.GetOrdinal("Name");
                     __list.Add(new global::TestApp.Customer(
                         __reader.GetInt32(__Id_ord),
                         __reader.GetString(__Name_ord)));
