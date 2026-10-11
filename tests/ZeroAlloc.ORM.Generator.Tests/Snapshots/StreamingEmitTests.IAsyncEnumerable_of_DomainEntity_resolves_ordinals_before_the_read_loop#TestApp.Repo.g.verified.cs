@@ -30,21 +30,9 @@ partial class Repo
                         __reader.GetString(__Name_ord),
                         __reader.IsDBNull(__Nickname_ord) ? (string?)null : __reader.GetString(__Nickname_ord));
                 }
-                catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+                catch (global::System.Exception __ex) when (__ZaoNullColumn0_StreamAsync(__reader, __ex) is { } __nullColumn)
                 {
                     throw __nullColumn;
-                }
-
-                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-                static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
-                {
-                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
-                        return null;
-                    if (__r.IsDBNull(__r.GetOrdinal("Id")))
-                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Id' is NULL, but parameter 'id' of 'TestApp.Customer' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
-                    if (__r.IsDBNull(__r.GetOrdinal("Name")))
-                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Name' is NULL, but parameter 'name' of 'TestApp.Customer' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
-                    return null;
                 }
 
                 yield return __row;
@@ -54,5 +42,18 @@ partial class Repo
         {
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
         }
+    }
+
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
+    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static global::System.Exception? __ZaoNullColumn0_StreamAsync(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+    {
+        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+            return null;
+        if (__r.IsDBNull(__r.GetOrdinal("Id")))
+            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Id' is NULL, but parameter 'id' of 'TestApp.Customer' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+        if (__r.IsDBNull(__r.GetOrdinal("Name")))
+            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column 'Name' is NULL, but parameter 'name' of 'TestApp.Customer' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
+        return null;
     }
 }
