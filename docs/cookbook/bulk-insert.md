@@ -74,6 +74,10 @@ Chunk size is baked at codegen as `900 / placeholderCount` rows per chunk.
 For this 2-placeholder shape, that's 450 rows per chunk. See the
 [chunking semantics](#chunking-semantics) section for the why.
 
+Either shape can be declared as `ValueTask<int>` or
+`ValueTask<IReadOnlyList<TIdentity>>` instead. The emitted body is the same; a call
+that completes synchronously then allocates no `Task`.
+
 ## Recipe 2 — Identity capture via `RETURNING`
 
 Return `Task<IReadOnlyList<TIdentity>>` and include a `RETURNING <col>`
@@ -238,7 +242,7 @@ per-provider parameter-cap notes.
 | [ZAO070](../diagnostics/ZAO070.md)         | Error    | Method missing a single collection parameter (`IReadOnlyList<TRow>` / `IEnumerable<TRow>` / array).            |
 | [ZAO071](../diagnostics/ZAO071.md)         | Error    | SQL has zero or multiple `VALUES (...)` tuples — `BulkInsert` requires exactly one tuple to template against. |
 | [ZAO072](../diagnostics/ZAO072.md)         | Error    | A `@placeholder` in the SQL doesn't match any `TRow` property (case-insensitive).                              |
-| [ZAO073](../diagnostics/ZAO073.md)         | Error    | Return type isn't `Task<int>` or `Task<IReadOnlyList<TIdentity>>` (or VO-wrapped identity).                    |
+| [ZAO073](../diagnostics/ZAO073.md)         | Error    | Return type isn't `Task<int>` or `Task<IReadOnlyList<TIdentity>>` (or VO-wrapped identity), or the `ValueTask` form. |
 | [ZAO074](../diagnostics/ZAO074.md)         | Info     | `Kind = CommandKind.BulkInsert` on `[Query]` or `[StoredProcedure]` is ignored — the kind applies to `[Command]` only. |
 
 ## Related cookbook recipes

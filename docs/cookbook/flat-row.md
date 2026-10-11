@@ -11,6 +11,14 @@ where each ctor parameter reads exactly one column, in declaration order.
 | Positional record                | Column → ctor-parameter mapping is purely by **order**.           |
 | Single-ctor class (DomainEntity) | Column → ctor-parameter mapping is by **name** (`GetOrdinal`).    |
 
+Every `Task<T>` shape in this recipe, and in the list, multi-result-set and
+stored-procedure recipes, can be declared as `ValueTask<T>` instead. The emitted
+body is the same `async` body. When the provider completes the call synchronously,
+as in-memory Sqlite does, a `ValueTask<T>` query does not allocate the `Task`:
+measured on Sqlite, `SELECT 42` as `Task<int>` allocates 944 B per call and as
+`ValueTask<int>` 872 B, the difference being the 72 B `Task<int>`. The rest is the
+provider's. A caller may await a `ValueTask<T>` only once.
+
 > Looking for many rows? Use `Task<List<T>>` (eager) or
 > `IAsyncEnumerable<T>` (lazy) — see [`streaming.md`](streaming.md). Looking
 > for `(head, lines)` tuple returns? See

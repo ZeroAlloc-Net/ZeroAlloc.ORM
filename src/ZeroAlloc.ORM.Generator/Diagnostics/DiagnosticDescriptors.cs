@@ -532,8 +532,8 @@ internal static class DiagnosticDescriptors
 
     public static readonly DiagnosticDescriptor ZAO073_BulkInsertReturnTypeShape = new(
         id: "ZAO073",
-        title: "BulkInsert return type must be Task<int> or Task<IReadOnlyList<TIdentity>>",
-        messageFormat: "[Command(Kind = CommandKind.BulkInsert)] method '{0}' return type must be Task<int> (rows-affected sum) or Task<IReadOnlyList<TIdentity>> where TIdentity is int/long/Guid or a [ValueObject] wrapping one of those; saw '{1}'",
+        title: "BulkInsert return type must be Task<int> or Task<IReadOnlyList<TIdentity>>, or the ValueTask form",
+        messageFormat: "[Command(Kind = CommandKind.BulkInsert)] method '{0}' return type must be Task<int> (rows-affected sum) or Task<IReadOnlyList<TIdentity>> where TIdentity is int/long/Guid or a [ValueObject] wrapping one of those, or the same with ValueTask; saw '{1}'",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,

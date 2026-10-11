@@ -1481,8 +1481,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
-        // Restrict to Task<T> for now; ValueTask<T> lands later.
-        if (!(named.Name == "Task" && named.Arity == 1)) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
+        // Task<T> or ValueTask<T>. #331 — every shape below emits an `async` body,
+        // which compiles for either return type, so ValueTask<T> adds no emit
+        // path: a call that completes synchronously then allocates no Task.
+        if (!(named.Name is ("Task" or "ValueTask") && named.Arity == 1)) return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         var inner = named.TypeArguments[0];
 
@@ -2045,10 +2047,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         // 4. Return type validation. Accept Task<int> (rows-affected sum) and
         //    Task<IReadOnlyList<TIdentity>> where TIdentity ∈ {int, long, Guid}
-        //    or a VO/factory wrapping one of those. ValueTask<...> variants are
-        //    intentionally NOT in scope for v1.3 — the chunked emit awaits N
-        //    times and the Task<T> shape composes cleanly; adding ValueTask is
-        //    a future symmetry win, not a v1.3 requirement.
+        //    or a VO/factory wrapping one of those, and the same two shapes as
+        //    ValueTask<...> (#331). The emit is one `async` body either way.
         var returnKind = BulkInsertReturnKind.RowsAffected;
         string? identityTypeFullName = null;
         string? identityReaderMethod = null;
@@ -2057,7 +2057,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
         if (method.ReturnType is INamedTypeSymbol returnNamed
             && returnNamed.Arity == 1
-            && string.Equals(returnNamed.Name, "Task", StringComparison.Ordinal)
+            && returnNamed.Name is ("Task" or "ValueTask")
             && returnNamed.TypeArguments.Length == 1)
         {
             var taskInner = returnNamed.TypeArguments[0];
@@ -4982,7 +4982,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
         sb.AppendLine($"    {GeneratedCodeAttribute}");
-        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async global::System.Threading.Tasks.Task<int> {m.MethodName}({paramList})");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
         sb.AppendLine("    {");
         BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
         sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
