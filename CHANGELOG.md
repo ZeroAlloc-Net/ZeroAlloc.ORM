@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.2.0...v2.2.1) (2026-10-11)
+
+
+### Performance Improvements
+
+* cache bulk insert chunk sql and hoist GetOrdinal out of row loops ([#329](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/329)) ([9c1a35c](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/9c1a35c3cc8a62dc5d19c32594686b001853e5df))
+
 ## [2.2.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.1.1...v2.2.0) (2026-09-30)
 
 

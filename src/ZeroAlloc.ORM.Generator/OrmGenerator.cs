@@ -97,10 +97,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         //
         // v0.4 Phase D: [Query] + [Command] + [StoredProcedure] pipelines are unioned
         // before grouping so a single QueryRepositoryModel covers all three attribute
-        // kinds on the same type. The (containingTypeFullName, methodName) tuple
-        // uniquely identifies a method; we dedupe on that key inside the union so a
-        // method that picks up multiple pipelines (the ZAO005 multi-attribute case)
-        // doesn't produce two/three emit slots. Ordering matters for the dedup
+        // kinds on the same type. The method's signature uniquely identifies it; we
+        // dedupe on that key inside the union so a method that picks up multiple
+        // pipelines (the ZAO005 multi-attribute case) doesn't produce two/three emit
+        // slots. #328 — the key used to be (containing type, method name), which also
+        // collapsed overloads: the second overload got no implementation and failed
+        // with CS8795. Ordering matters for the dedup
         // tie-break: pair.Left ([Query]) wins over [Command], which wins over
         // [StoredProcedure] — but since ZAO005 fires from EVERY pipeline that
         // transforms the method, the diagnostic surfaces regardless of which entry
@@ -112,25 +114,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
             {
                 var pair = combined.Left;
                 var sprocs = combined.Right;
-                var seen = new HashSet<(string, string)>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in pair.Right)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in sprocs)
                 {
                     if (m is null) continue;
-                    var key = (m.Method.ContainingTypeFullName, m.Method.MethodName);
-                    if (seen.Add(key)) union.Add(m);
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 return union.ToImmutable();
             })
@@ -1250,8 +1249,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ContainingTypePartial: containingTypePartial,
             ContainingTypeLocation: containingTypeLocation,
             ContainingTypeChain: containingTypeChain,
-            HintName: HintNames.ForRepository(containing));
+            HintName: HintNames.ForRepository(containing),
+            MethodSignature: method.ToDisplayString(MethodSignatureFormat));
     }
+
+    // #328 — identifies a method among its overloads: containing type, name, type
+    // parameters and parameter types with their ref kinds. Nullable reference
+    // annotations are left out; they never distinguish two overloads.
+    private static readonly SymbolDisplayFormat MethodSignatureFormat = new(
+        globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Included,
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+        memberOptions: SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters,
+        parameterOptions: SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeModifiers,
+        miscellaneousOptions: SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
     // v2.0 — issue #238. Maps a containing-type symbol to the C# keyword(s) its
     // re-declared partial wrapper must use. `record struct` and `record` (record
@@ -4750,7 +4761,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // v0.3 Phase C.2 — yield-based async iterator. Element materialization
                     // reuses the FlatRow / DomainEntity model carried by m.Materialization;
                     // the surrounding emit owns the open/while/yield/close shape.
-                    EmitStreaming(sb, m, repo.ConnectionAccess);
+                    EmitStreaming(sb, m, repo.ConnectionAccess, methodIndex);
                     break;
                 case EmitShape.ListResultSet:
                     // v1.2 — Task<IReadOnlyList<TRow>> buffered list return. Same
@@ -6855,6 +6866,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         string finderName,
         string body)
     {
+        EmitNullGuardedTry(sb, indent, checks, finderName, body);
+        if (checks.Count == 0)
+            return;
+        sb.AppendLine();
+        EmitNullColumnFinder(sb, indent, finderName, checks, "static");
+    }
+
+    // The try/catch half of EmitNullGuarded, for a caller that emits the finder
+    // somewhere other than right after it.
+    private static void EmitNullGuardedTry(
+        StringBuilder sb,
+        string indent,
+        List<NullCheck> checks,
+        string finderName,
+        string body)
+    {
         if (checks.Count == 0)
         {
             sb.Append(body);
@@ -6872,16 +6899,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}{{");
         sb.AppendLine($"{indent}    throw __nullColumn;");
         sb.AppendLine($"{indent}}}");
-        EmitNullColumnFinder(sb, indent, finderName, checks);
     }
 
     // The finder the catch filter calls. A static local function compiles to its
-    // own method, so none of this sits in the hot method's body.
-    private static void EmitNullColumnFinder(StringBuilder sb, string indent, string finderName, List<NullCheck> checks)
+    // own method, so none of this sits in the hot method's body. `modifiers` is
+    // `static` for a local function and `private static` for a class member.
+    private static void EmitNullColumnFinder(StringBuilder sb, string indent, string finderName, List<NullCheck> checks, string modifiers)
     {
-        sb.AppendLine();
         sb.AppendLine($"{indent}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
-        sb.AppendLine($"{indent}static global::System.Exception? {finderName}(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)");
+        sb.AppendLine($"{indent}{modifiers} global::System.Exception? {finderName}(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)");
         sb.AppendLine($"{indent}{{");
         sb.AppendLine($"{indent}    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))");
         sb.AppendLine($"{indent}        return null;");
@@ -7255,7 +7281,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
-    private static void EmitStreaming(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    private static void EmitStreaming(StringBuilder sb, QueryMethodModel m, string connectionAccess, int methodIndex)
     {
         var mat = m.Materialization;
         if (mat is null)
@@ -7330,7 +7356,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var expr = BuildColumnReadExpression(col, ordinalExpr);
             body.AppendLine($"                    {expr}{trailing}");
         }
-        EmitNullGuarded(sb, "                ", checks, "__NullColumn", body.ToString());
+        // #327 - the finder is a member of the class, not a local function of the
+        // iterator: NetFabric.Hyperlinq.Analyzer reads a local function's `return
+        // null;` as a null return of the enclosing IAsyncEnumerable (HLQ002), and
+        // consumers analyze generated code with warnings as errors.
+        var finderName = StreamingNullColumnFinderName(m, methodIndex);
+        EmitNullGuardedTry(sb, "                ", checks, finderName, body.ToString());
         if (checks.Count > 0)
         {
             sb.AppendLine();
@@ -7339,7 +7370,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("            }");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
+        if (checks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"    {GeneratedCodeAttribute}");
+            EmitNullColumnFinder(sb, "    ", finderName, checks, "private static");
+        }
     }
+
+    // Overload-safe for the same reason as BulkInsertSqlCacheName: the method's
+    // position in the repository is part of the name.
+    private static string StreamingNullColumnFinderName(QueryMethodModel m, int methodIndex) =>
+        "__ZaoNullColumn" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
 
     // v0.3 Phase B.2 — IAsyncDbBatch path for MultiResultSet. Emits one BatchCommand
     // per SQL statement (each with its own per-parameter binding block — locals are
