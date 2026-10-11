@@ -332,4 +332,8 @@ internal sealed record QueryMethodWithTypeContext(
     // #303 — the generated file's hint name, from HintNames.ForRepository. Computed from the
     // symbol while it is at hand, because the display name above cannot be turned back into a
     // collision-free file name: it spells generic outer types with their type-parameter names.
-    string HintName);
+    string HintName,
+    // #328 — the method's containing type, name, type-parameter count and parameter types.
+    // The AllMethods union dedupes on it: one method that several attribute pipelines
+    // picked up is one entry, while overloads, which share only the name, stay apart.
+    string MethodSignature);
