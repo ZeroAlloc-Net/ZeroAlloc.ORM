@@ -189,9 +189,12 @@ public partial Task<OrderEntity?> GetByIdAsync(int id, CancellationToken ct);
 ```
 
 For a domain entity, the generator emits
-`var __o_Id = __reader.GetOrdinal("Id");` once per column, then threads
+`var __Id_ord = __reader.GetOrdinal("Id");` once per column, then threads
 the ordinal through both the `IsDBNull` and `GetXxx` calls. The SELECT
-can project columns in any order.
+can project columns in any order. A method that reads many rows, a
+`Task<IReadOnlyList<T>>`, an `IAsyncEnumerable<T>` or a list in a
+multi-result tuple, resolves the ordinals once, before its first row,
+not once per row.
 
 > The "name vs position" split was a deliberate v0.2 design choice: records
 > are about shape, classes are about identity. Records compose with the

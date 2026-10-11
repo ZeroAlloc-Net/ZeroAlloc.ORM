@@ -4726,8 +4726,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"partial class {repo.ContainingTypeName}");
         sb.AppendLine("{");
         var first = true;
+        var methodIndex = -1;
         foreach (var m in repo.Methods)
         {
+            methodIndex++;
             if (!first) sb.AppendLine();
             first = false;
             switch (m.Shape)
@@ -4862,7 +4864,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // pure ADO.NET. Two return shapes are supported:
                     //   * Task<int>: SUM ExecuteNonQueryAsync chunk counts.
                     //   * Task<IReadOnlyList<TIdentity>>: drain RETURNING reader rows.
-                    EmitBulkInsertCommand(sb, m, repo.ConnectionAccess);
+                    EmitBulkInsertCommand(sb, m, repo.ConnectionAccess, methodIndex);
                     break;
                 default:
                     // v0.4 Phase C.1 — all three CommandKind values (NonQuery /
@@ -5098,7 +5100,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //      parameters). The chunk size is baked at codegen as
     //      `900 / placeholderCount` (floor of 1) so a fully-bound chunk stays
     //      below Sqlite's 999-parameter cap and SQL Server's 2100-parameter cap
-    //      with headroom.
+    //      with headroom. #326 — the text and the parameter names come from a
+    //      nested cache class, see EmitBulkInsertSqlCache: every full chunk
+    //      shares one SQL string and every row reads its names from static
+    //      arrays, so only a trailing partial chunk allocates its SQL.
     //   5. Execute:
     //        * RowsAffected — ExecuteNonQueryAsync, accumulate the integer sum.
     //        * IdentityList — ExecuteReaderAsync, drain the RETURNING column
@@ -5121,7 +5126,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //     primitive-mapped property — but the dominant TRow shape (non-null
     //     value types + non-null reference types via record ctors) round-trips
     //     correctly.
-    private static void EmitBulkInsertCommand(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    private static void EmitBulkInsertCommand(StringBuilder sb, QueryMethodModel m, string connectionAccess, int methodIndex)
     {
         var mat = m.BulkInsertMaterialization;
         if (mat is null)
@@ -5142,6 +5147,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var rowsParam = mat.CollectionParameterName;
         var rowsLocal = "__rows";
         var isIdentity = mat.ReturnKind == BulkInsertReturnKind.IdentityList;
+        var cache = BulkInsertSqlCacheName(m, methodIndex);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -5194,14 +5200,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            var __remaining = {rowsLocal}.Count;");
         sb.AppendLine();
 
-        // SQL builder hoisted outside the chunk loop. Reused via Clear() at
-        // the top of each iteration to avoid N-allocations-per-call for large
-        // batches. Initial capacity = static-head length + room for one tuple
-        // (rough hint; SB grows as needed). Each chunk re-primes by appending
-        // the static head before the per-tuple Append chain.
-        var headLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticHead, quote: true);
-        sb.AppendLine($"            var __sb = new global::System.Text.StringBuilder({headLiteral}.Length + 64);");
-        sb.AppendLine();
         sb.AppendLine("            while (__remaining > 0)");
         sb.AppendLine("            {");
         sb.AppendLine("                var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;");
@@ -5209,29 +5207,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitTransactionAssignment(sb, m, "                ");
         sb.AppendLine();
 
-        // SQL builder for this chunk. Static head + N tuples + static tail.
-        // SB is hoisted above; Clear() + re-prime with the static head at the
-        // top of each iteration.
-        sb.AppendLine("                __sb.Clear();");
-        sb.AppendLine($"                __sb.Append({headLiteral});");
-        sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
-        sb.AppendLine("                {");
-        sb.AppendLine("                    if (__i > 0) __sb.Append(\", \");");
-        sb.Append("                    __sb.Append(\"(\")");
-        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
-        {
-            var ph = mat.PlaceholderBindings[i].PlaceholderName;
-            if (i > 0) sb.Append(".Append(\", \")");
-            sb.Append($".Append(\"@{ph}_\").Append(__i)");
-        }
-        sb.AppendLine(".Append(\")\");");
-        sb.AppendLine("                }");
-        if (!string.IsNullOrEmpty(mat.InsertStaticTail))
-        {
-            var tailLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticTail, quote: true);
-            sb.AppendLine($"                __sb.Append({tailLiteral});");
-        }
-        sb.AppendLine("                __cmd.CommandText = __sb.ToString();");
+        // #326 — static head + N tuples + static tail, from the cache class: a
+        // full chunk gets the one string built at type initialization, a
+        // trailing partial chunk a single exact-length copy of its prefix.
+        sb.AppendLine($"                __cmd.CommandText = {cache}.Sql(__thisChunk);");
         sb.AppendLine();
 
         // Bind one DbParameter per (placeholder, row-in-chunk). The per-row
@@ -5240,8 +5219,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ParameterName carries the row index suffix so the SQL `@a_0`, `@a_1`
         // bind to distinct DbParameter instances inside the same DbCommand.
         // The name is bare, `a_0`, like every other emitted ParameterName (#219);
-        // only the SQL text the chunk loop builds carries the `@` sigil, which is
-        // the one BulkInsertValuesParser accepts in the author's VALUES tuple.
+        // only the SQL text carries the `@` sigil, which is the one
+        // BulkInsertValuesParser accepts in the author's VALUES tuple. #326 — the
+        // names are read from the cache class's static arrays, not concatenated
+        // per row.
         sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
         sb.AppendLine("                {");
         sb.AppendLine($"                    var __row = {rowsLocal}[__offset + __i];");
@@ -5251,7 +5232,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var paramLocal = $"__p_{binding.PlaceholderName}_{i.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
-            sb.AppendLine($"                    {paramLocal}.ParameterName = \"{binding.PlaceholderName}_\" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
+            sb.AppendLine($"                    {paramLocal}.ParameterName = {cache}.{BulkInsertNamesField(binding, i)}[__i];");
             sb.AppendLine($"                    {paramLocal}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
@@ -5302,6 +5283,105 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine("            return __totalAffected;");
         }
         BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+
+        EmitBulkInsertSqlCache(sb, m, mat, cache);
+    }
+
+    // #326 — the nested class holding one BulkInsert method's SQL and parameter
+    // names. The method index keeps the name unique even between overloads,
+    // which #328 tracks emitting; the method name keeps the class readable in a
+    // stack trace or a debugger.
+    private static string BulkInsertSqlCacheName(QueryMethodModel m, int methodIndex) =>
+        "__ZaoBulkInsert" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
+
+    // The `Names_` prefix keeps a placeholder named like a cache member, such as
+    // `@Sql`, from colliding with it; the source-order index keeps the field
+    // names unique, matching the per-row `__p_<placeholder>_<i>` locals.
+    private static string BulkInsertNamesField(BulkInsertPlaceholderBinding binding, int index) =>
+        "Names_" + binding.PlaceholderName + "_" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    // #326 — every full chunk of a BulkInsert produces the same SQL and binds the
+    // same parameter names, so they are built once, when the method first runs:
+    // a nested static class initializes on its first use, so a repository that
+    // never bulk-inserts does not pay for them.
+    //
+    //   * Names_<placeholder>_<i>[row] holds `<placeholder>_<row>`, the bare
+    //     ParameterName, for every row of a full chunk.
+    //   * FullChunkSql is the static head, ChunkSize tuples of `(@a_<row>, ...)`
+    //     joined by ", ", then the static tail. It is built from the name arrays,
+    //     so the SQL and the bound names cannot drift apart.
+    //   * TupleEnds[row] is where tuple `row` ends in FullChunkSql. A partial
+    //     chunk of n rows is FullChunkSql up to TupleEnds[n - 1] plus the tail:
+    //     one exact-length string, byte-identical to building it tuple by tuple.
+    //
+    // Field initializers run in declaration order, so the name arrays and
+    // TupleEnds exist before BuildFullChunkSql reads and fills them.
+    private static void EmitBulkInsertSqlCache(
+        StringBuilder sb,
+        QueryMethodModel m,
+        BulkInsertMaterializationModel mat,
+        string cache)
+    {
+        var chunkSize = mat.ChunkSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var headLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticHead, quote: true);
+        var hasTail = !string.IsNullOrEmpty(mat.InsertStaticTail);
+
+        sb.AppendLine();
+        sb.AppendLine($"    // The SQL and parameter names every full chunk of {m.MethodName} shares, built once.");
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    private static class {cache}");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        private const int ChunkSize = {chunkSize};");
+        sb.AppendLine($"        private const string Head = {headLiteral};");
+        if (hasTail)
+        {
+            sb.AppendLine($"        private const string Tail = {SymbolDisplay.FormatLiteral(mat.InsertStaticTail, quote: true)};");
+        }
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            var binding = mat.PlaceholderBindings[i];
+            var prefix = SymbolDisplay.FormatLiteral(binding.PlaceholderName + "_", quote: true);
+            sb.AppendLine($"        internal static readonly string[] {BulkInsertNamesField(binding, i)} = BuildNames({prefix});");
+        }
+        sb.AppendLine("        private static readonly int[] TupleEnds = new int[ChunkSize];");
+        sb.AppendLine("        private static readonly string FullChunkSql = BuildFullChunkSql();");
+        sb.AppendLine();
+        sb.AppendLine("        internal static string Sql(int rows) => rows == ChunkSize");
+        sb.AppendLine("            ? FullChunkSql");
+        sb.AppendLine(hasTail
+            ? "            : string.Concat(global::System.MemoryExtensions.AsSpan(FullChunkSql, 0, TupleEnds[rows - 1]), Tail);"
+            : "            : FullChunkSql.Substring(0, TupleEnds[rows - 1]);");
+        sb.AppendLine();
+        sb.AppendLine("        private static string[] BuildNames(string prefix)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var names = new string[ChunkSize];");
+        sb.AppendLine("            for (var i = 0; i < names.Length; i++)");
+        sb.AppendLine("                names[i] = prefix + i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine("            return names;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        private static string BuildFullChunkSql()");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var sb = new global::System.Text.StringBuilder(Head);");
+        sb.AppendLine("            for (var i = 0; i < ChunkSize; i++)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                if (i > 0) sb.Append(\", \");");
+        sb.Append("                sb.Append('(')");
+        for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
+        {
+            if (i > 0) sb.Append(".Append(\", \")");
+            sb.Append($".Append('@').Append({BulkInsertNamesField(mat.PlaceholderBindings[i], i)}[i])");
+        }
+        sb.AppendLine(".Append(')');");
+        sb.AppendLine("                TupleEnds[i] = sb.Length;");
+        sb.AppendLine("            }");
+        if (hasTail)
+        {
+            sb.AppendLine("            sb.Append(Tail);");
+        }
+        sb.AppendLine("            return sb.ToString();");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
     }
 
@@ -7014,10 +7094,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
     //   result[i] = [innerOrd0, innerOrd1, ...] for a composite column
     // Callers can index by outer column position and reuse the locals in the
     // IsDBNull guard + GetXxx read instead of inlining a second GetOrdinal call.
+    //
+    // #326 — a caller that reads rows in a loop emits these before the loop, so
+    // each column name resolves once per result set rather than once per row.
+    // Ordinals come from the result set's column metadata, which every provider
+    // exposes before the first Read, also when the result has no rows. Such a
+    // caller passes a localPrefix unique within the method when several result
+    // sets share it, so two elements reading the same column name do not
+    // declare the same local.
     private static string[]?[] EmitOrdinalHoistsForColumns(
         StringBuilder sb,
         EquatableArray<ColumnBinding> columns,
-        string indent)
+        string indent,
+        string localPrefix = "__")
     {
         var hoists = new string[]?[columns.Length];
         for (var i = 0; i < columns.Length; i++)
@@ -7031,7 +7120,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     var b = inner[j];
                     var baseName = b.ColumnName ?? b.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + j.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    var local = "__" + baseName + "_ord";
+                    var local = localPrefix + baseName + "_ord";
                     var literal = SymbolDisplay.FormatLiteral(b.ColumnName ?? string.Empty, quote: true);
                     sb.AppendLine($"{indent}var {local} = __reader.GetOrdinal({literal});");
                     innerLocals[j] = local;
@@ -7041,7 +7130,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             else
             {
                 var baseName = col.ColumnName ?? col.CtorArgName ?? "col" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                var local = "__" + baseName + "_ord";
+                var local = localPrefix + baseName + "_ord";
                 var literal = SymbolDisplay.FormatLiteral(col.ColumnName ?? string.Empty, quote: true);
                 sb.AppendLine($"{indent}var {local} = __reader.GetOrdinal({literal});");
                 hoists[i] = new[] { local };
@@ -7105,21 +7194,22 @@ public sealed class OrmGenerator : IIncrementalGenerator
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
-        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
-        sb.AppendLine("            {");
         var cols = mat.Columns;
         var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
         // Same ordinal-hoisting pattern as Streaming/FlatRow paths: column-name
-        // resolution caches the GetOrdinal call into a per-row local so the
-        // IsDBNull guard and the GetXxx read share one lookup. Positional
-        // FlatRow paths use integer literals directly (no hoist needed).
-        // #249 — each row is read inside a try whose catch names a NULL column.
-        var body = new StringBuilder();
+        // resolution caches the GetOrdinal call into a local so the IsDBNull
+        // guard and the GetXxx read share one lookup. #326 — the locals sit
+        // before the read loop, so the lookup runs once per call, not per row.
+        // Positional FlatRow paths use integer literals directly (no hoist needed).
         string[]?[]? hoistedOrdinals = null;
         if (useColumnNames)
         {
-            hoistedOrdinals = EmitOrdinalHoistsForColumns(body, cols, "                ");
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "            ");
         }
+        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("            {");
+        // #249 — each row is read inside a try whose catch names a NULL column.
+        var body = new StringBuilder();
         body.AppendLine($"                __list.Add(new {mat.TargetTypeFullName}(");
         var ordinal = 0;
         for (var i = 0; i < cols.Length; i++)
@@ -7194,14 +7284,20 @@ public sealed class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
-        sb.AppendLine("            {");
         var cols = mat.Columns;
         var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
         // v0.3-CLN1 — for column-name-resolved streaming (DomainEntity element),
-        // hoist GetOrdinal(<name>) into a per-row local so the IsDBNull guard and
-        // GetXxx read share the same lookup. Positional reads skip hoisting; the
-        // integer literal is already free.
+        // hoist GetOrdinal(<name>) into a local so the IsDBNull guard and GetXxx
+        // read share the same lookup. #326 — the locals sit before the read loop,
+        // so the lookup runs once per stream, not per row. Positional reads skip
+        // hoisting; the integer literal is already free.
+        string[]?[]? hoistedOrdinals = null;
+        if (useColumnNames)
+        {
+            hoistedOrdinals = EmitOrdinalHoistsForColumns(sb, cols, "            ");
+        }
+        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("            {");
         // #249 — the row is read inside a try whose catch names a NULL column.
         // An iterator cannot yield from a try that has a catch, so a guarded row
         // is read into __row first and yielded after the try.
@@ -7210,11 +7306,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (checks.Count > 0)
             sb.AppendLine($"                {mat.TargetTypeFullName} __row;");
         var body = new StringBuilder();
-        string[]?[]? hoistedOrdinals = null;
-        if (useColumnNames)
-        {
-            hoistedOrdinals = EmitOrdinalHoistsForColumns(body, cols, "                ");
-        }
         body.AppendLine($"                {rowTarget}new {mat.TargetTypeFullName}(");
         for (var i = 0; i < cols.Length; i++)
         {
@@ -7828,8 +7919,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     }
                     var rowBody = new StringBuilder();
                     // v0.3-CLN1 — hoist GetOrdinal(<name>) per column-name-resolved column.
+                    // #326 — with the element's prefix: a row with no NULL guard has
+                    // no try around it, so its locals share the method's scope with
+                    // every other element's, and two rows reading the same column
+                    // name used to declare the same local.
                     var rowHoists = HasAnyColumnName(el.Columns)
-                        ? EmitOrdinalHoistsForColumns(rowBody, el.Columns, indent)
+                        ? EmitOrdinalHoistsForColumns(rowBody, el.Columns, indent, localPrefix: localName + "_")
                         : null;
                     rowBody.AppendLine($"{indent}{rowPrefix}{localName} = new {el.ElementTypeName}(");
                     EmitColumnReads(rowBody, el.Columns, indent + "    ", trailing: ");", rowHoists);
@@ -7839,13 +7934,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
             case MultiResultElementKind.List:
                 {
                     sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
+                    // v0.3-CLN1 — hoist GetOrdinal(<name>) per column-name-resolved
+                    // column. #326 — before the read loop, so once per result set;
+                    // the element's own prefix keeps two result sets that share a
+                    // column name from declaring the same local.
+                    var listHoists = HasAnyColumnName(el.Columns)
+                        ? EmitOrdinalHoistsForColumns(sb, el.Columns, indent, localPrefix: localName + "_")
+                        : null;
                     sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
                     sb.AppendLine($"{indent}{{");
                     var listBody = new StringBuilder();
-                    // v0.3-CLN1 — hoist GetOrdinal(<name>) per row inside the loop.
-                    var listHoists = HasAnyColumnName(el.Columns)
-                        ? EmitOrdinalHoistsForColumns(listBody, el.Columns, indent + "    ")
-                        : null;
                     listBody.AppendLine($"{indent}    {localName}.Add(new {el.ElementTypeName}(");
                     EmitColumnReads(listBody, el.Columns, indent + "        ", trailing: "));", listHoists);
                     EmitNullGuarded(sb, indent + "    ", CollectNullChecks(el.Columns, el.ElementTypeName), finderName, listBody.ToString());

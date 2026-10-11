@@ -134,8 +134,13 @@ public class ParameterNamePrefixTests
             public partial Task<int> InsertManyAsync(IReadOnlyList<BulkRow> rows, CancellationToken ct);
             """);
 
-        Assert.Contains(".ParameterName = \"CustomerId_\" + __i.ToString(", generated, System.StringComparison.Ordinal);
-        Assert.Contains(".ParameterName = \"Total_\" + __i.ToString(", generated, System.StringComparison.Ordinal);
+        // #326 — each row reads its name from a static array the cache class
+        // fills once with `<placeholder>_<row>`.
+        Assert.Contains("Names_CustomerId_0 = BuildNames(\"CustomerId_\");", generated, System.StringComparison.Ordinal);
+        Assert.Contains("Names_Total_1 = BuildNames(\"Total_\");", generated, System.StringComparison.Ordinal);
+        Assert.Contains(".ParameterName = __ZaoBulkInsert0_InsertManyAsync.Names_CustomerId_0[__i];", generated, System.StringComparison.Ordinal);
+        Assert.Contains(".ParameterName = __ZaoBulkInsert0_InsertManyAsync.Names_Total_1[__i];", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildNames(\"@", generated, System.StringComparison.Ordinal);
         Assert.DoesNotContain(".ParameterName = \"@", generated, System.StringComparison.Ordinal);
     }
 

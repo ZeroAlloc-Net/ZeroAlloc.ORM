@@ -18,13 +18,13 @@ partial class Repo
             __cmd.CommandText = "SELECT Id, Amount, Currency FROM Orders";
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.Order>();
+            var __Id_ord = __reader.GetOrdinal("Id");
+            var __Amount_ord = __reader.GetOrdinal("Amount");
+            var __Currency_ord = __reader.GetOrdinal("Currency");
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 try
                 {
-                    var __Id_ord = __reader.GetOrdinal("Id");
-                    var __Amount_ord = __reader.GetOrdinal("Amount");
-                    var __Currency_ord = __reader.GetOrdinal("Currency");
                     __list.Add(new global::TestApp.Order(
                         __reader.GetInt32(__Id_ord),
                         new global::TestApp.Money(

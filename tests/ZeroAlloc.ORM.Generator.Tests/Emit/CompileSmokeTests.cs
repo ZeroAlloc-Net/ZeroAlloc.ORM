@@ -1720,6 +1720,91 @@ public class CompileSmokeTests
             Assert.Matches($@"partial async [^\r\n]* {method}\(", generated);
     }
 
+    [Fact]
+    public void Multi_result_DomainEntity_elements_sharing_column_names_compile()
+    {
+        // #326 — every element hoists its GetOrdinal locals. A row whose columns
+        // are all nullable has no NULL guard, so no try scopes its locals, and a
+        // list's now sit before its read loop: both share the method's scope
+        // with the other elements, and the same column name read by two of them
+        // must not declare the same local twice (CS0128).
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class A { public A(int? id, string? name) { } }
+            public sealed class B { public B(int? id, string? name) { } }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Name FROM X; SELECT Id, Name FROM Y; SELECT Id, Name FROM Z; SELECT Id, Name FROM W;", Batch = BatchMode.Never)]
+                public partial Task<(A First, B Second, IReadOnlyList<A> Firsts, IReadOnlyList<B> Seconds)?> GetAsync(CancellationToken ct);
+            }
+            """;
+        var (runResult, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
+        Assert.Empty(runResult.Diagnostics);
+        var errors = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")
+            .ToArray();
+        Assert.True(errors.Length == 0, string.Join("; ", errors));
+    }
+
+    [Fact]
+    public void BulkInsert_sql_caches_compile_side_by_side_in_generic_outer_types_with_member_named_placeholders()
+    {
+        // #326 — each BulkInsert method emits a nested cache class next to it.
+        // Two of them sit side by side, a repository nested in a generic type
+        // makes the class generic too, and a placeholder may be named like a
+        // cache member; none of them may collide.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record CacheRow(int Sql, int ChunkSize, int TupleEnds, int Head);
+            public sealed record OtherRow(int Id);
+
+            public static partial class Outer<TMarker>
+            {
+                public sealed partial class Repo(IAsyncDbConnection connection)
+                {
+                    [Command("INSERT INTO T (a, b, c, d) VALUES (@Sql, @ChunkSize, @TupleEnds, @Head) RETURNING Id", Kind = CommandKind.BulkInsert)]
+                    public partial Task<IReadOnlyList<int>> InsertAsync(IReadOnlyList<CacheRow> rows, CancellationToken ct);
+
+                    [Command("INSERT INTO U (Id) VALUES (@Id)", Kind = CommandKind.BulkInsert)]
+                    public partial Task<int> InsertOthersAsync(IReadOnlyList<OtherRow> rows, CancellationToken ct);
+                }
+            }
+            """;
+        var (runResult, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(source);
+        AssertSnippetActuallyBound(compileDiagnostics);
+
+        Assert.Empty(runResult.Diagnostics);
+        var errors = compileDiagnostics
+            .AsEnumerable()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => $"{d.Id}: {d.GetMessage(CultureInfo.InvariantCulture)}")
+            .ToArray();
+        Assert.True(errors.Length == 0, string.Join("; ", errors));
+
+        var generated = string.Concat(runResult.GeneratedTrees.Select(t => t.ToString()));
+        Assert.Contains("private static class __ZaoBulkInsert0_InsertAsync", generated, StringComparison.Ordinal);
+        Assert.Contains("private static class __ZaoBulkInsert1_InsertOthersAsync", generated, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// Fails if the snippet did not bind against the real ADO.NET surface.
     /// </summary>

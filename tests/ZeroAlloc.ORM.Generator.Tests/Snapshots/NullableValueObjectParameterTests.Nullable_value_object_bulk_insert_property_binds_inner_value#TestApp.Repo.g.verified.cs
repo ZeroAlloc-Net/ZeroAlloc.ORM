@@ -21,31 +21,22 @@ partial class Repo
             var __offset = 0;
             var __remaining = __rows.Count;
 
-            var __sb = new global::System.Text.StringBuilder("INSERT INTO T (Qty, Sku) VALUES ".Length + 64);
-
             while (__remaining > 0)
             {
                 var __thisChunk = __remaining < __chunkSize ? __remaining : __chunkSize;
                 await using var __cmd = __conn.CreateCommand();
 
-                __sb.Clear();
-                __sb.Append("INSERT INTO T (Qty, Sku) VALUES ");
-                for (var __i = 0; __i < __thisChunk; __i++)
-                {
-                    if (__i > 0) __sb.Append(", ");
-                    __sb.Append("(").Append("@Qty_").Append(__i).Append(", ").Append("@Sku_").Append(__i).Append(")");
-                }
-                __cmd.CommandText = __sb.ToString();
+                __cmd.CommandText = __ZaoBulkInsert0_InsertAsync.Sql(__thisChunk);
 
                 for (var __i = 0; __i < __thisChunk; __i++)
                 {
                     var __row = __rows[__offset + __i];
                     var __p_Qty_0 = __cmd.CreateParameter();
-                    __p_Qty_0.ParameterName = "Qty_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_Qty_0.ParameterName = __ZaoBulkInsert0_InsertAsync.Names_Qty_0[__i];
                     __p_Qty_0.Value = (object?)__row.Qty ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_Qty_0);
                     var __p_Sku_1 = __cmd.CreateParameter();
-                    __p_Sku_1.ParameterName = "Sku_" + __i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+                    __p_Sku_1.ParameterName = __ZaoBulkInsert0_InsertAsync.Names_Sku_1[__i];
                     __p_Sku_1.Value = (object?)__row.Sku?.Value ?? global::System.DBNull.Value;
                     __cmd.Parameters.Add(__p_Sku_1);
                 }
@@ -60,6 +51,42 @@ partial class Repo
         finally
         {
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
+        }
+    }
+
+    // The SQL and parameter names every full chunk of InsertAsync shares, built once.
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
+    private static class __ZaoBulkInsert0_InsertAsync
+    {
+        private const int ChunkSize = 450;
+        private const string Head = "INSERT INTO T (Qty, Sku) VALUES ";
+        internal static readonly string[] Names_Qty_0 = BuildNames("Qty_");
+        internal static readonly string[] Names_Sku_1 = BuildNames("Sku_");
+        private static readonly int[] TupleEnds = new int[ChunkSize];
+        private static readonly string FullChunkSql = BuildFullChunkSql();
+
+        internal static string Sql(int rows) => rows == ChunkSize
+            ? FullChunkSql
+            : FullChunkSql.Substring(0, TupleEnds[rows - 1]);
+
+        private static string[] BuildNames(string prefix)
+        {
+            var names = new string[ChunkSize];
+            for (var i = 0; i < names.Length; i++)
+                names[i] = prefix + i.ToString(global::System.Globalization.CultureInfo.InvariantCulture);
+            return names;
+        }
+
+        private static string BuildFullChunkSql()
+        {
+            var sb = new global::System.Text.StringBuilder(Head);
+            for (var i = 0; i < ChunkSize; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append('(').Append('@').Append(Names_Qty_0[i]).Append(", ").Append('@').Append(Names_Sku_1[i]).Append(')');
+                TupleEnds[i] = sb.Length;
+            }
+            return sb.ToString();
         }
     }
 }

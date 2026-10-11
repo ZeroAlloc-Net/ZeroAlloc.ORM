@@ -32,4 +32,35 @@ public class StreamingEmitTests
             "}\n";
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
+
+    [Fact]
+    public void IAsyncEnumerable_of_DomainEntity_resolves_ordinals_before_the_read_loop()
+    {
+        // #326 - GetOrdinal runs once per stream, before the first ReadAsync,
+        // not once per row. The nullable column reads through the same local.
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Runtime.CompilerServices;
+            using System.Threading;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class Customer
+            {
+                public Customer(int id, string name, string? nickname) { Id = id; Name = name; Nickname = nickname; }
+                public int Id { get; }
+                public string Name { get; }
+                public string? Nickname { get; }
+            }
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, Name, Nickname FROM Customers ORDER BY Id")]
+                public partial IAsyncEnumerable<Customer> StreamAsync([EnumeratorCancellation] CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
 }

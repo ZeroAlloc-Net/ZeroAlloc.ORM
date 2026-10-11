@@ -207,6 +207,12 @@ That has two consequences worth thinking about up front:
    cap (the lowest of the four providers). Larger-cap providers get
    conservative headroom for free; see the table below.
 
+3. **Full chunks share one SQL string.** Every full chunk sends the same
+   text, so the generator builds it once, the first time the method runs,
+   along with the parameter names `CustomerId_0`, `CustomerId_1`, ... that
+   each row binds. A full chunk allocates no SQL and no names; only a
+   final partial chunk allocates its shorter SQL, as one string.
+
 ## Per-provider notes
 
 | Provider     | Per-statement parameter cap                      | Chunk size (2-col) | Chunk size (10-col) | Integration suite |
