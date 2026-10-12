@@ -51,16 +51,6 @@
       Compilation_Binds_The_AdoNet_Surface.
     -->
     <PackageReference Include="AdoNet.Async" Version="$(AdoNetAsyncVersion)" />
-    <!--
-      #327: consumers run NetFabric.Hyperlinq.Analyzer over generated code, so
-      HyperlinqAnalyzerTests runs it over the emitted code. It is not an analyzer of
-      this project: the package is only downloaded, and its analyzer assembly is
-      copied next to the tests, which load it themselves.
-    -->
-    <PackageDownload Include="NetFabric.Hyperlinq.Analyzer" Version="[2.3.0]" />
-    <None Include="$(NuGetPackageRoot)netfabric.hyperlinq.analyzer\2.3.0\analyzers\dotnet\cs\NetFabric.Hyperlinq.Analyzer.dll"
-          Link="Analyzers\NetFabric.Hyperlinq.Analyzer.dll"
-          CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
   <!-- Snapshots are data, not code. Verify's targets excluded them from compilation; without
