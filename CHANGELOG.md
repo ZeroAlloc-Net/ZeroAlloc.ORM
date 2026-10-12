@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.0...v2.3.1) (2026-10-12)
+
+
+### Tests
+
+* stop running NetFabric.Hyperlinq.Analyzer over emitted code ([#339](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/339)) ([01bc86b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/01bc86b72163b48cda9f2eebcc2cbeec27ccdec8))
+
 ## [2.3.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.2.1...v2.3.0) (2026-10-11)
 
 
