@@ -7357,9 +7357,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             body.AppendLine($"                    {expr}{trailing}");
         }
         // #327 - the finder is a member of the class, not a local function of the
-        // iterator: NetFabric.Hyperlinq.Analyzer reads a local function's `return
-        // null;` as a null return of the enclosing IAsyncEnumerable (HLQ002), and
-        // consumers analyze generated code with warnings as errors.
+        // iterator, so the iterator body holds no `return null;` that an analyzer
+        // run over generated code could read as a null IAsyncEnumerable.
         var finderName = StreamingNullColumnFinderName(m, methodIndex);
         EmitNullGuardedTry(sb, "                ", checks, finderName, body.ToString());
         if (checks.Count > 0)
