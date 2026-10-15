@@ -1,356 +1,214 @@
-<h1 align="center">ZeroAlloc.ORM</h1>
+# ZeroAlloc.ORM
 
-<p align="center">Source-generator-based, NativeAOT-clean raw-SQL data access for .NET. Annotate <code>partial</code> methods with <code>[Query]</code> / <code>[Command]</code> / <code>[StoredProcedure]</code>; the generator emits typed parameter binding + materialization against <a href="https://github.com/MarcelRoozekrans/AdoNet.Async">AdoNet.Async</a>. Zero runtime reflection.</p>
+[![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM)
+[![Build](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/actions/workflows/ci.yml/badge.svg)](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/LICENSE)
+[![AOT](https://img.shields.io/badge/AOT--Compatible-passing-brightgreen)](https://learn.microsoft.com/dotnet/core/deploying/native-aot/)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/MarcelRoozekrans?style=flat&logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/MarcelRoozekrans)
 
-> **Status:** **v1.1.0 — additive release.** Adds `MigrationRunner` for embedded SQL migrations (Sqlite + Postgres dialects); v1.0 public surface still frozen and AOT-clean. The v1.x line is additive-only via `PublicAPI.Shipped.txt`. Authoritative design lives at [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md); v1.1 implementation plan at [`docs/plans/2026-06-01-v1.1-implementation.md`](docs/plans/2026-06-01-v1.1-implementation.md). Working backlog at [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md).
+ZeroAlloc.ORM is source-generated, NativeAOT-clean raw-SQL data access for .NET 10. You write the SQL in a `[Query]`, `[Command]` or `[StoredProcedure]` attribute on a `partial` method; the Roslyn generator emits the typed parameter binding and row materialization against [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)'s `IAsyncDbConnection`. There is no runtime reflection, no expression compilation and no LINQ provider.
 
-## What it is
+It sits between two choices adopters usually face:
 
-A source-generator-driven data-access library that fills in the gap between two extremes adopters currently choose from:
+- **EF Core** — a full LINQ ORM, but its precompiled-queries pipeline collides with co-resident source generators such as ZeroAlloc.Rest, blocking NativeAOT publish in stacks like [ZeroAlloc.Templates](https://github.com/ZeroAlloc-Net/ZeroAlloc.Templates).
+- **Hand-written ADO.NET** — works under AOT, but every repository becomes a tower of `CreateCommand` / `CreateParameter` / `ReadAsync` calls.
 
-- **EF Core** — full LINQ-to-SQL ORM, but its precompile-queries pipeline currently collides with co-resident source generators (e.g. ZA.Rest), blocking NativeAOT publish in template stacks like [ZeroAlloc.Templates](https://github.com/ZeroAlloc-Net/ZeroAlloc.Templates).
-- **Hand-written ADO.NET** — works under AOT, but every repository becomes a hand-shaped tower of `CreateCommand` / `CreateParameter` / `ReadAsync` calls.
+ZeroAlloc.ORM keeps the SQL yours and generates the ADO.NET plumbing.
 
-ZeroAlloc.ORM is the middle path: write the SQL string in an attribute, declare the partial method signature, let the source generator emit the ADO.NET pipeline. Zero runtime reflection, fully AOT-publishable, idiomatic with the rest of the ZeroAlloc ecosystem (consumes `AdoNet.Async`, dogfoods `ZeroAlloc.ValueObjects`, shares the convention catalog with `ZeroAlloc.Mapping`).
+## Install
+
+```bash
+dotnet add package ZeroAlloc.ORM
+dotnet add package ZeroAlloc.ORM.Generator
+```
+
+Reference the generator as a build-time analyzer so it does not flow to downstream projects:
+
+```xml
+<PackageReference Include="ZeroAlloc.ORM.Generator" Version="2.*" PrivateAssets="all" />
+```
+
+Then add your ADO.NET provider, such as `Microsoft.Data.Sqlite`, `Npgsql` or `Microsoft.Data.SqlClient`, and wrap its connection with AdoNet.Async's `AsAsync()`.
 
 ## Packages
 
-| Package | Version | AOT | Description |
-|---------|---------|-----|-------------|
-| `ZeroAlloc.ORM` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM) | ✅ | Runtime extensions and exception types |
-| `ZeroAlloc.ORM.Abstractions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Abstractions.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Abstractions) | ✅ | `[Query]` / `[Command]` / `[StoredProcedure]` / `[Materialize]` attributes |
-| `ZeroAlloc.ORM.Generator` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.ORM.Generator.svg)](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | ✅ (build-time) | Roslyn incremental source generator |
-| `ZeroAlloc.TypeConversions` | [![NuGet](https://img.shields.io/nuget/v/ZeroAlloc.TypeConversions.svg)](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | ✅ (build-time) | Convention discovery catalog shared with ZA.Mapping |
+| Package | Description |
+|---------|-------------|
+| [`ZeroAlloc.ORM`](https://www.nuget.org/packages/ZeroAlloc.ORM) | Runtime: `MigrationRunner` with the SQLite, PostgreSQL and SQL Server migration dialects, and the `ZeroAllocOrm*Exception` types. Depends on `ZeroAlloc.ORM.Abstractions` and AdoNet.Async. |
+| [`ZeroAlloc.ORM.Abstractions`](https://www.nuget.org/packages/ZeroAlloc.ORM.Abstractions) | The attributes and enums you annotate with: `[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[Materialize]`, `[StoreAsString]`, `[Dialect]`, `CommandKind`, `BatchMode`, `SqlDialect`. |
+| [`ZeroAlloc.ORM.Generator`](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | Roslyn incremental source generator and the `ZAO` diagnostics. Build-time only; bundles `ZeroAlloc.TypeConversions`. |
+| [`ZeroAlloc.TypeConversions`](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | Build-time type-conversion and convention-discovery catalog used by the generator. You do not reference it directly. |
 
-## Quick Start
+The runtime packages target `net10.0` and set `IsAotCompatible`. The generator and TypeConversions target `netstandard2.0` and only run inside the compiler.
 
-Every example below assumes a containing `partial class` that exposes an `IAsyncDbConnection` (from [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)) — usually injected via primary constructor. The source generator emits the open / execute / close pipeline against that connection.
+## Quick start
 
-### 1. Single-row read
+Every repository is a `partial` type that exposes an `IAsyncDbConnection`, usually through its primary constructor:
 
 ```csharp
-[Query("SELECT id, name FROM customers WHERE id = @id")]
-public partial Task<Customer?> GetCustomerAsync(int id, CancellationToken ct);
+using System.Collections.Generic;
+using System.Data.Async;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using ZeroAlloc.ORM;
 
 public sealed record Customer(int Id, string Name);
+public sealed record OrderRow(int Id, int CustomerId, decimal Total);
+public sealed record NewOrder(int CustomerId, decimal Total);
+
+public sealed partial class OrderRepository(IAsyncDbConnection connection)
+{
+    // Single row; a nullable return yields null on an empty result set.
+    [Query("SELECT Id, Name FROM Customers WHERE Id = @id")]
+    public partial Task<Customer?> GetCustomerAsync(int id, CancellationToken ct);
+
+    // Many rows, materialized eagerly. List<T>, IList<T> and IReadOnlyList<T> all work.
+    [Query("SELECT Id, CustomerId, Total FROM Orders WHERE CustomerId = @customerId")]
+    public partial Task<IReadOnlyList<OrderRow>> GetOrdersAsync(int customerId, CancellationToken ct);
+
+    // Streaming: the connection opens on the first MoveNextAsync and closes on DisposeAsync.
+    [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
+    public partial IAsyncEnumerable<OrderRow> StreamOrdersAsync([EnumeratorCancellation] CancellationToken ct);
+
+    // Insert returning the identity; the SQL carries the provider's identity clause.
+    [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@customerId, @total) RETURNING Id",
+        Kind = CommandKind.Identity)]
+    public partial Task<int> InsertOrderAsync(int customerId, decimal total, CancellationToken ct);
+
+    // Join a caller's transaction by declaring an IAsyncDbTransaction parameter.
+    [Command("UPDATE Orders SET Total = @total WHERE Id = @id")]
+    public partial Task<int> UpdateTotalAsync(int id, decimal total, IAsyncDbTransaction tx, CancellationToken ct);
+
+    // Chunked multi-row INSERT; @CustomerId and @Total are NewOrder properties.
+    [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@CustomerId, @Total)",
+        Kind = CommandKind.BulkInsert)]
+    public partial Task<int> InsertOrdersAsync(IReadOnlyList<NewOrder> orders, CancellationToken ct);
+
+    // Stored procedure with an output parameter: the NewOrderId tuple field matches the
+    // newOrderId parameter, so that parameter binds as ParameterDirection.Output and its value
+    // comes back in the tuple. Result matches no parameter, so it is the result-set row.
+    [StoredProcedure("usp_InsertOrder")]
+    public partial Task<(OrderRow Result, int NewOrderId)> InsertViaProcedureAsync(
+        int customerId, int newOrderId, CancellationToken ct);
+}
 ```
 
-Positional record + matching SELECT column order = no mapping config. Nullable return type = empty result set yields `null`. See [docs/cookbook/multi-result-set.md](docs/cookbook/multi-result-set.md) for the head + lines tuple pattern.
+Every `Task<T>` return above can be declared as `ValueTask<T>` instead; a call that completes synchronously then allocates no `Task`.
 
-### 2. Streaming with `IAsyncEnumerable`
+The argument passed for an output parameter is not sent. Mark it `[Param(Direction = ParameterDirection.InputOutput)]` when the procedure reads its initial value, or `ParameterDirection.ReturnValue` to read a SQL Server `RETURN` value. See [stored-procedures.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/stored-procedures.md).
+
+## Features
+
+**Return shapes**
+
+- Scalars (`Task<int>`, `Task<T?>`), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form.
+- Multi-result-set tuples, such as `Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?>`, map one tuple element to each `;`-separated statement. `[Query(Batch = BatchMode.Auto)]`, the default, uses `IAsyncDbBatch` when the provider supports it and falls back to one command with `NextResultAsync`. Tuple/statement arity mismatches are build errors (ZAO032, ZAO033).
+
+**Parameters and columns**
+
+- Primitives: `int`, `long`, `short`, `byte`, `bool`, `decimal`, `double`, `float`, `string`, `Guid`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `byte[]`, and their nullable forms.
+- Enums round-trip as their underlying integer, or as the member name with `[StoreAsString]`.
+- Value objects (`[ValueObject]` from [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects), or any type with a single-argument constructor or static `From` factory) bind through their primitive.
+- Multi-column composites such as `Money(decimal Amount, string Currency)` unpack into several columns; a parameter `Money total` binds `@total_Amount` and `@total_Currency`. Composites of composites are not supported yet (ZAO052).
+- `[Param]` overrides the SQL-side `Name` and sets `DbType`, `Size`, `Precision`, `Scale` and `Direction`.
+
+**Materialization**
+
+- Positional records materialize by column position. Classes with one public multi-argument constructor materialize by column name, so SELECT order does not matter.
+- `[Materialize(Factory = nameof(...))]` routes rows through a static factory when the SQL shape differs from the constructor, for example SQLite storing `decimal` as text.
+- A `NULL` in a non-nullable column throws `ZeroAllocOrmMaterializationException`.
+
+**Commands**
+
+- `CommandKind.NonQuery` returns rows affected, `Scalar` returns the first column of the first row, `Identity` returns the inserted identity, and `BulkInsert` emits chunked multi-row `INSERT ... VALUES` returning the summed row count or the inserted identities.
+
+**Stored procedures**
+
+- Result rows, lists and multi-result sets, output and input-output parameters through named tuple fields, and SQL Server `RETURN` values.
+
+**Transactions and dialects**
+
+- An `IAsyncDbTransaction` parameter enlists the command in the caller's transaction (ZAO080 warns on more than one).
+- `[Dialect(SqlDialect.SqlServer | PostgreSql | Sqlite | MySql)]` on a repository or the assembly enables provider-specific compile-time checks: ZAO015 for a `[Param(DbType)]` the provider rejects, ZAO065 for an unscaled `decimal` output on SQL Server, and ZAO069 for a return value off SQL Server. See [provider-quirks.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/provider-quirks.md).
+
+**Migrations**
+
+`MigrationRunner` applies embedded `.sql` migrations in order, each in its own transaction, and records them in `__zaorm_migrations` per source, so an application and a library can each number from 1 in one database. It ships with `SqliteMigrationDialect`, `PostgresMigrationDialect` (`pg_advisory_lock`) and `SqlServerMigrationDialect` (`sp_getapplock`); the last two make concurrent startup across instances safe.
 
 ```csharp
-[Query("SELECT id, name FROM customers ORDER BY id")]
-public partial IAsyncEnumerable<Customer> StreamCustomersAsync(
-    [EnumeratorCancellation] CancellationToken ct);
+using Npgsql;
+using System.Data.Async;
+using System.Data.Async.Adapters;
+using ZeroAlloc.ORM.Migrations;
+
+IAsyncDbConnection conn = new NpgsqlConnection(connString).AsAsync();
+await conn.OpenAsync(ct);
+
+var runner = new MigrationRunner(
+    conn,
+    new EmbeddedResourceMigrationSource(typeof(Program).Assembly),
+    new PostgresMigrationDialect());   // or SqliteMigrationDialect / SqlServerMigrationDialect
+
+IReadOnlyList<Migration> applied = await runner.RunAsync(ct);
 ```
 
-Connection opens lazily on first `MoveNextAsync`, closes deterministically on `DisposeAsync` (including early `break` exits). More in [docs/cookbook/streaming.md](docs/cookbook/streaming.md).
-
-### 3. Insert returning identity
-
-```csharp
-[Command(
-    "INSERT INTO orders (customer_id, total) VALUES (@customerId, @total) RETURNING id",
-    Kind = CommandKind.Identity)]
-public partial Task<int> InsertOrderAsync(int customerId, decimal total, CancellationToken ct);
-```
-
-`CommandKind.Identity` runs the INSERT through `ExecuteScalarAsync` and unwraps the first column of the first row into your declared identity type. The user-authored SQL supplies the provider-specific identity-capture clause: `RETURNING <id-column>` (Sqlite 3.35+, Postgres), `SCOPE_IDENTITY()` (SQL Server), `last_insert_rowid()` (Sqlite ;-joined fallback). The generator keeps the SQL string verbatim — provider-agnostic by design. More in [docs/cookbook/commands.md](docs/cookbook/commands.md).
-
-### 4. Stored procedure with output parameters
-
-```csharp
-[StoredProcedure("usp_insert_order")]
-public partial Task<(int rowsAffected, int newOrderId, decimal computedTotal)> InsertOrderSprocAsync(
-    int customerId, CancellationToken ct);
-```
-
-The first tuple field is the result-set materialization (here: rows-affected). Subsequent named tuple fields map to `ParameterDirection.Output` SQL parameters by name. More in [docs/cookbook/stored-procedures.md](docs/cookbook/stored-procedures.md).
-
-## Capabilities by milestone
-
-### Added in v0.1
-
-- `[Query]` with scalar (`Task<int>`, `Task<T?>`) and FlatRow (`Task<TRow?>`) return shapes.
-- 14 primitive types in parameter binding (int / long / short / byte / bool / decimal / double / float / string / Guid / DateTime / DateTimeOffset / TimeSpan / byte[]) + nullable variants. `DateOnly` and `TimeOnly` joined them later (#256), in parameters, columns, scalars and stored-procedure outputs.
-- `[Param(Name = "...")]` SQL-side parameter name override.
-- Compile-time diagnostics (ZAO001–ZAO009 + informational ZAO020–ZAO022) for signature contract violations.
-- NativeAOT-clean publish (verified by `aot-smoke` CI gate).
-
-### Added in v0.2
-
-- **Value-object columns** — types annotated with `[ValueObject]` from [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects) (with a static `From` factory and a `Value` property) bind through their underlying primitive. Parameters unwrap to `Value`; reads wrap via `T.From(primitive)`.
-
-  ```csharp
-  [ValueObject]
-  public readonly partial struct CustomerId
-  {
-      public int Value { get; }
-      public CustomerId(int value) { Value = value; }
-      public static CustomerId From(int value) => new(value);
-  }
-
-  public sealed record CustomerRow(CustomerId Id, string Name);
-
-  public sealed partial class CustomerRepo(IAsyncDbConnection connection)
-  {
-      [Query("SELECT Id, Name FROM Customers WHERE Id = @id")]
-      public partial Task<CustomerRow?> GetAsync(CustomerId id, CancellationToken ct);
-  }
-  ```
-
-- **Enums (default int round-trip)** — any `enum` parameter or column binds as its underlying integer (`reader.GetInt32` + cast on read; cast to underlying primitive on bind).
-- **Enums (string round-trip)** — annotate the `enum` type with `[StoreAsString]` to round-trip as the member name (`reader.GetString` + `Enum.Parse<T>` on read; member-name bind).
-- **Domain-entity classes** — plain `class` types with a single multi-arg public ctor materialize via column-name-keyed reads (`__reader.GetOrdinal("ColumnName")`). SELECT column order is irrelevant; each ctor parameter resolves to its matching column by name. Records keep the positional `FlatRow` path.
-- **Single-arg record discovery + static `From` factory discovery** — wrappers without `[ValueObject]` still resolve when ConventionDiscovery can find an obvious construction strategy.
-- **New diagnostics ZAO040–ZAO044** — materialization-side failures (no construction strategy, conflicting strategies, unresolved ctor parameters, etc.) surface at build time with focused messages.
-
-### Added in v0.3
-
-- **Multi-result-set tuples (head + lines pattern)** — tuple return types map each tuple element to one `;`-separated SQL statement. Collapses the 1+N round-trip into a single command. Tuple element kinds: scalar (`int`, value-object, enum), row (`record` / single-ctor class), or list (`List<T>` / `IReadOnlyList<T>` / `IEnumerable<T>` / ...). See [`docs/cookbook/multi-result-set.md`](docs/cookbook/multi-result-set.md).
-
-  ```csharp
-  public sealed record OrderRow(int Id, int CustomerId, decimal Total);
-  public sealed record OrderLineRow(int Id, int OrderId, string Sku, int Qty);
-
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [Query("""
-          SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
-          SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
-          """)]
-      public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetWithLinesAsync(
-          int id, CancellationToken ct);
-  }
-  ```
-
-- **Batch dispatch (`BatchMode.Auto` / `Always` / `Never`)** — `[Query(Batch = ...)]` picks how multi-statement SQL reaches the provider. `Auto` (default) branches at runtime on `connection.CanCreateBatch`: providers exposing `IAsyncDbBatch` get the pipelined path; everyone else falls back to a single command with `;`-joined SQL and `NextResultAsync`. Both paths produce the same materialized tuple.
-
-- **`IAsyncEnumerable<T>` streaming** — partial methods returning `IAsyncEnumerable<T>` with a `[EnumeratorCancellation] CancellationToken` parameter emit an async iterator that materializes rows lazily. Connection opens on first `MoveNextAsync`, closes deterministically on `DisposeAsync` (including early `break` exits). See [`docs/cookbook/streaming.md`](docs/cookbook/streaming.md).
-
-  ```csharp
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]
-      public partial IAsyncEnumerable<OrderRow> StreamAllAsync(
-          [EnumeratorCancellation] CancellationToken ct);
-  }
-  ```
-
-- **New diagnostics ZAO032 / ZAO033** — arity mismatch between a tuple return and the number of `;`-separated SQL statements. ZAO032 fires when the tuple has more elements than statements; ZAO033 fires when it has fewer. Both at build time, so the wrong shape never ships.
-
-### Added in v0.4
-
-- **`[Command]` attribute** — non-`SELECT` SQL with three result-shape modes selected via `CommandKind`. `NonQuery` returns rows-affected (`int`), `Scalar` runs through `ExecuteScalarAsync` and materializes the first column of the first row, `Identity` is structurally a `Scalar` whose user-authored SQL captures the inserted identity via the provider's idiom (`RETURNING <col>` on Sqlite 3.35+/Postgres, `SCOPE_IDENTITY()` on SQL Server, `;` then `last_insert_rowid()` on legacy Sqlite). The generator passes the SQL string through verbatim — provider-agnostic by design. See [`docs/cookbook/commands.md`](docs/cookbook/commands.md).
-
-  ```csharp
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [Command("UPDATE Orders SET Total = @total WHERE Id = @id", Kind = CommandKind.NonQuery)]
-      public partial Task<int> UpdateTotalAsync(int id, decimal total, CancellationToken ct);
-
-      [Command("SELECT COUNT(*) FROM Orders WHERE CustomerId = @customerId", Kind = CommandKind.Scalar)]
-      public partial Task<int> CountByCustomerAsync(int customerId, CancellationToken ct);
-
-      [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@customerId, @total) RETURNING Id", Kind = CommandKind.Identity)]
-      public partial Task<int> InsertAsync(int customerId, decimal total, CancellationToken ct);
-  }
-  ```
-
-- **`[StoredProcedure]` attribute** — emit `CommandType = StoredProcedure` with the procedure name as `CommandText`. Result shapes mirror `[Query]`: scalar, single-row, list, multi-result-set tuples. Parameters bind by name. See [`docs/cookbook/stored-procedures.md`](docs/cookbook/stored-procedures.md).
-
-  ```csharp
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [StoredProcedure("usp_GetOrderWithLines")]
-      public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetWithLinesAsync(
-          int orderId, CancellationToken ct);
-  }
-  ```
-
-- **Named-tuple output parameters** — on `[StoredProcedure]` methods, tuple return fields beyond the first map to `ParameterDirection.Output` SQL parameters by name. Output values are copied back into the tuple after execution. The first tuple field is still the result-set materialization (scalar, row, or list); subsequent named fields are output params.
-
-  ```csharp
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [StoredProcedure("usp_CreateOrder")]
-      public partial Task<(int rowsAffected, int newOrderId, decimal computedTotal)> CreateAsync(
-          int customerId, CancellationToken ct);
-  }
-  ```
-
-  The generator emits `Direction = ParameterDirection.Output` on `@newOrderId` and `@computedTotal`, executes the proc, then reads the output values back into the returned tuple.
-
-- **New diagnostics ZAO060 (reserved) / ZAO061 / ZAO062** — sproc-side compile-time guardrails. ZAO060 is reserved for a future `out`/`ref`-on-async check (the C# compiler already rejects `out`/`ref` on async-returning partials, so the dedicated ZAO060 message is unnecessary at the source-generator layer for now). ZAO061 fires on `[StoredProcedure("")]` (empty procedure name). ZAO062 fires when a named-tuple output-parameter field doesn't appear as a method parameter that could carry the output back to SQL — the name must match an `@param` the proc declares.
-
-### Added in v0.5
-
-- **Multi-column composites (Money pattern)** — declare a positional-ctor type like `Money(decimal Amount, string Currency)` and the generator unpacks it into N SQL columns automatically. Each ctor parameter resolves through the existing convention pipeline (primitive / enum / value-object / single-arg-ctor / static-factory). Nested composites flatten transparently — `record OrderRow(int Id, Money Total)` reads as 3 columns. See [`docs/cookbook/composites.md`](docs/cookbook/composites.md).
-
-  ```csharp
-  public readonly record struct Money(decimal Amount, string Currency);
-
-  public sealed partial class OrderRepo(IAsyncDbConnection connection)
-  {
-      [Query("SELECT Id, Amount, Currency FROM Orders WHERE Id = @id")]
-      public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
-
-      [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
-      public partial Task<int> UpdateTotalAsync(int id, Money total, CancellationToken ct);
-  }
-  ```
-
-  Composite method parameters bind via positional unpacking: `Money total` → `@total_Amount` + `@total_Currency`. Naming uses the parameter name + `_` + ctor-parameter name; the SQL author picks how the columns line up.
-
-- **Nullable composites (all-or-nothing)** — `Money? Total` means "all composite columns NULL → `null`; any composite column NULL while others have values → `ZeroAllocOrmMaterializationException` at runtime." Compile-time warning **ZAO050** fires on each nullable-composite materialization site to flag that the partial-null case is undetectable at compile time and is by-design a runtime throw.
-
-- **`[Materialize(Factory = "...")]`** — explicit factory resolution for cases where the SQL shape doesn't match the C# ctor. The named `static` factory's parameter list maps to columns by name (positional fallback when SQL column names aren't available). Canonical use case: Sqlite stores `decimal` as TEXT, so route through a `Money.FromText(string amountText, string currency)` factory.
-
-  ```csharp
-  [Materialize(Factory = nameof(FromText))]
-  public readonly record struct Money(decimal Amount, string Currency)
-  {
-      public static Money FromText(string Amount, string Currency) =>
-          new(decimal.Parse(Amount, CultureInfo.InvariantCulture), Currency);
-  }
-  ```
-
-  Diagnostics: **ZAO043** if the named factory doesn't exist; **ZAO044** if discovery is ambiguous; **ZAO051** if the factory's parameter list cannot be reconciled with the available columns.
-
-- **New diagnostics ZAO050 / ZAO051 / ZAO052 / ZAO063** — composite + factory + sproc-batch guardrails. ZAO050 (nullable-composite partial-null runtime-only check, see above). ZAO051 (factory parameter list unresolved). ZAO052 (recursive composite — a composite ctor parameter that is itself another composite — explicitly deferred to v0.6+ with a clear error). ZAO063 (informational: `[StoredProcedure(Batch = ...)]` with a non-default value is silently ignored — sprocs encapsulate their own batching semantics).
-
-Deferred past v1.0 (see **Roadmap beyond v1.0** below): recursive composites (ZAO052 flags them today, v0.5-CLN3); nullable reference-type composite parameter binding (v0.5-CLN2); TVPs / array parameters / `SqlBulkCopy` (v2 scope); runtime provider routing of identity suffixes beyond Sqlite (v2); SQL Server integration fixture (gated on adopter demand); ZA.Telemetry collision smoke (v0.6-CLN1, blocked on upstream nullable-annotation fix); Postgres benchmark numbers (v1.0-CLN1, gated on Docker availability during the capture window).
-
-### Added in v0.6
-
-- **Postgres integration fixture (Testcontainers)** — `tests/ZeroAlloc.ORM.Integration.Tests/Postgres/` runs the full integration matrix (FlatRow, multi-result-set with real `IAsyncDbBatch`, streaming, stored procedures with `INOUT`/`OUT` params, `[Materialize(Factory)]` against `NUMERIC` columns, composites) against a real Postgres 16 container. Resolves the accumulated v0.3/v0.4/v0.5 deferrals: the runtime `IAsyncDbBatch` branch (v0.3-CLN3), stored-procedure round-trips (v0.4 placeholder), and `Money.FromStorage` against a real decimal provider (v0.5).
-
-- **Diagnostics catalog audit** — every shipping ZAO code now has a dedicated reference page under [`docs/diagnostics/`](docs/diagnostics/) with trigger, fix recipe, code example, and related codes. A new `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown file — broken links can't be shipped. Positive/negative test pairs backfilled for ZAO001 and ZAO043. The catalog table in [docs/diagnostics/README.md](docs/diagnostics/README.md) is the canonical adopter-facing index; see #242.
-
-- **ZA.Telemetry observability cookbook recipe** — [`docs/cookbook/observability.md`](docs/cookbook/observability.md) shows the composition pattern at the consumer seam: a `partial class OrderRepository` annotated with both `[Query]` (ZA.ORM) and `[Instrument]` (ZA.Telemetry), with the two generators emitting independently. ZA.ORM ships **no built-in `ActivitySource`** — observability lives at the adopter boundary so the package graph stays minimal and consumers pick their own tracing stack. Collision smoke deferred to v0.6-CLN1 (blocked on upstream nullable-annotation fix in ZA.Telemetry's `InstrumentGenerator`).
-
-- **v0.3-CLN1 perf cleanup — GetOrdinal hoisted once per column** — every column-name materialization path (DomainEntity, FlatRow column-name fallback, nullable composite) now emits `var __o_<Col> = __reader.GetOrdinal("<Col>");` ONCE before the materialization body and reuses the local in both the `IsDBNull` and `GetXxx` calls. Eliminates the double-lookup in the hot row-materialization loop.
-
-- **v0.5-CLN5 fix — PR-title lint workflow** — `.github/workflows/pr-title-lint.yml` enforces conventional-commit prefixes (`feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:`, ...) on every PR. Prevents the v0.5 release CHANGELOG hole where `feat:`-less merges silently dropped from release-please's commit aggregation.
-
-### Added in v0.7
-
-- **BenchmarkDotNet suite** — `tests/ZeroAlloc.ORM.Benchmarks/` ships a comparative micro-benchmark harness with 4 workloads (single-row read, multi-row read, head + lines multi-result, insert) × 3 baselines (hand-written ADO.NET, Dapper.AOT, ZeroAlloc.ORM) × 2 backends (Sqlite in-memory and Postgres via Testcontainers). First Sqlite capture (Windows 11, .NET 10.0.300) lives in [`docs/benchmarks/v0.7.0-sqlite-results.md`](docs/benchmarks/v0.7.0-sqlite-results.md): ZA.ORM sits within 5% of hand-written ADO.NET on single-row reads and matches its allocation profile to ~0.5% on 1000-row reads; multi-result-set has a 30% gap that's the next v1.0+ target.
-
-- **ZA.Rest collision smoke (v1.0 release gate)** — `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` composes `[Query]` (ZA.ORM) and `[Route]`/`[Query]` (ZA.Rest) in a single AOT-publishable consumer. Wired into `.github/workflows/collision-smoke.yml`, so every PR proves the two source generators co-exist and the resulting binary AOT-publishes cleanly. Discovery during Phase B: both libraries ship a `QueryAttribute`; the collision is resolved cleanly via file-scoped `using` aliases at the call site. **This is the v1.0 release gate** — if collision-smoke ever breaks, v1.0 doesn't ship.
-
-- **README + Quick Start polish (Phase C)** — packages table now carries an AOT compatibility column (every shipping package marked ✅), four canonical Quick Start snippets at the top of the doc (single-row read, streaming, insert-returning-identity, stored procedure with output params), and a dedicated **NativeAOT compatibility** section calling out the AOT smoke + collision smoke gates and pointing at the benchmark suite for performance numbers.
-
-- **v1.0 public-API surface freeze** — `Microsoft.CodeAnalysis.PublicApiAnalyzers` is wired across `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, and `ZeroAlloc.TypeConversions`, with `PublicAPI.Shipped.txt` baselined at **103 entries across 16 public types**. Any accidental addition / change / removal of a public member now breaks `dotnet build`. The surface lock holds until v1.0 ships, and any v1.x evolution must go through the additive `PublicAPI.Unshipped.txt` path with explicit reviewer sign-off.
-
-### Added in v1.0
-
-- **Cookbook completion (8 recipes)** — the design Section 5 cookbook target hits all eight adopter-facing pages: [`flat-row.md`](docs/cookbook/flat-row.md) (positional-record single-row reads — promoted from coverage scattered across `multi-result-set.md` + `commands.md`) and [`provider-quirks.md`](docs/cookbook/provider-quirks.md) (Sqlite / PostgreSQL / SQL Server / MySQL differences consolidated in one place) join the six recipes shipped across v0.3-v0.6 (`multi-result-set.md`, `streaming.md`, `commands.md`, `stored-procedures.md`, `composites.md`, `observability.md`). All eight audited for compile-clean code samples + cross-links to diagnostics.
-
-- **Rendered docs at [orm.zeroalloc.net](https://orm.zeroalloc.net)** — Docusaurus app wired through the shared [ZeroAlloc.Website](https://github.com/ZeroAlloc-Net/ZeroAlloc.Website) monorepo (canonical per-package pattern: `apps/docs-orm/` + `repos/orm/`). Cookbook, diagnostics catalog, benchmarks, and design doc all surface there. Go-live coupled to ZA.Website PR #25 (currently blocked on ZA.Website-side ruleset config; tracked as v1.0-CLN2).
-
-- **Polish CLNs (4 selected, low-risk)** — final pre-freeze sweep:
-  - **ZAO064** (Info) — `[StoredProcedure(Batch = …)]` set to anything other than `BatchMode.Never` is silently ignored by the sproc emit path. The new info diagnostic surfaces this so adopters don't reach for it expecting behaviour change. Resolves v0.4-CLN5.
-  - **ZAO062 per-element span** — when a stored procedure has multiple typo'd named-tuple output fields, ZAO062 now anchors at each offending tuple-element's own syntax span (one squiggle per typo) rather than the whole tuple-return type. Resolves v0.4-CLN6.
-  - **ZAO050 per-position firing** — when a row materializes two `Money?` fields, ZAO050 fires once per nullable-composite position rather than once per method site. Audit revealed v0.5 Phase C already emitted per-position; v1.0 Phase C added regression tests to pin the contract. Resolves v0.5-CLN1.
-  - **Benchmark async-parity** — `MultiRowReadBench.Dapper_AOT` audited and confirmed already on `QueryAsync<T>` (not the sync `Query<T>`). The original v0.7-CLN2 concern was filed against an incorrect source reading; the comparison is genuinely async-async. Numbers re-captured in [`docs/benchmarks/v0.7.0-sqlite-results.md`](docs/benchmarks/v0.7.0-sqlite-results.md) without the Caveat block. Resolves v0.7-CLN2.
-
-### Added in v1.1
-
-- **`MigrationRunner` for embedded SQL migrations** — versioned, idempotent, multi-instance-safe SQL apply. Embed `.sql` files in your assembly (`Migrations/001_initial.sql`, `Migrations/002_add_orders.sql`, ...), instantiate `MigrationRunner(connection, source, dialect)`, call `RunAsync(ct)` at startup. The runner tracks applied versions in `__zaorm_migrations`, per source so several sources can each number from 1 in one database, skips already-applied migrations on re-run, and applies each pending migration in its own transaction. Mid-apply failure rolls back the failing migration only — earlier migrations stay committed, the runner throws, the adopter writes a forward-fix and re-runs. See [`docs/cookbook/migrations.md`](docs/cookbook/migrations.md).
-
-  ```csharp
-  var conn = new NpgsqlConnection(connString).AsAsync();
-  await conn.OpenAsync(ct);
-
-  var source = new EmbeddedResourceMigrationSource(typeof(Program).Assembly);
-  var dialect = new PostgresMigrationDialect();
-  var runner = new MigrationRunner(conn, source, dialect);
-
-  var applied = await runner.RunAsync(ct);
-  logger.LogInformation("Applied {Count} migrations", applied.Count);
-  ```
-
-- **Sqlite + Postgres dialects ship in v1.1** — `SqliteMigrationDialect` (single-writer model, no explicit lock) and `PostgresMigrationDialect` (uses `pg_advisory_lock(<constant>)` to serialize multi-instance API startup). Adopters can subclass `PostgresMigrationDialect` with a custom lock key. SQL Server + MySQL dialects are out-of-scope for v1.1 — tracked as **v1.1-CLN1**.
-
-- **Unblocks ZA.Templates' EF Core → ZA.ORM swap** — `ZeroAlloc.Templates`' one-shot `schema.sql` bootstrap (`ApplyEmbeddedSchemaAsync`) becomes the v1.1 `MigrationRunner` for versioned, idempotent, multi-instance-safe schema apply. Templates work lives in the separate [`ZeroAlloc.Templates`](https://github.com/ZeroAlloc-Net/ZeroAlloc.Templates) repo.
+`PostgresMigrationDialect(lockKey)` and `SqlServerMigrationDialect(lockName)` take a custom lock key or resource name. See [migrations.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/migrations.md).
 
 ## NativeAOT compatibility
 
-ZeroAlloc.ORM is fully `NativeAOT`-compatible by design:
+- **No runtime reflection.** The generator emits compile-time-known binding and materialization code; no `Activator.CreateInstance`, `Type.GetMethod` or `Expression.Compile`.
+- **Globally-qualified type references** in every emitted line, so trimming is correct regardless of the consumer's `using` directives, and no `[DynamicallyAccessedMembers]` requirements on your types.
+- **CI-gated on every PR:**
+  - [`aot-smoke.yml`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/.github/workflows/aot-smoke.yml) publishes `tests/ZeroAlloc.ORM.AotSmoke` with `PublishAot=true` and runs it.
+  - [`collision-smoke.yml`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/.github/workflows/collision-smoke.yml) AOT-publishes two consumers that combine ZA.ORM with another source generator: `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke` with ZeroAlloc.Rest, whose `[Query]` attribute shares the name and is disambiguated with a file-scoped `using` alias, and `tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke` with ZeroAlloc.Telemetry's `[Instrument]` proxy wrapping a ZA.ORM repository.
 
-- **Zero reflection at runtime.** Source-generator-based emit produces compile-time-known materialization code; no `Activator.CreateInstance`, no `Type.GetMethod`, no `Expression.Compile`.
-- **Globally-qualified type references** in every emitted line — AOT publishing trims correctly regardless of consumer `using` directives.
-- **Trimming-safe.** No `[DynamicallyAccessedMembers]` requirements on consumer types.
-- **CI gated.** Every PR runs:
-  - `tests/ZeroAlloc.ORM.AotSmoke/` — single-generator AOT publish.
-  - `tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/` — composition with `ZeroAlloc.Rest.Generator` (the v1.0 release gate).
-- **Performance.** ZA.ORM is within 5% of hand-written ADO.NET on single-row reads and matches its allocation profile on multi-row reads; see [docs/benchmarks/v0.7.0-sqlite-results.md](docs/benchmarks/v0.7.0-sqlite-results.md) for the full comparison against hand-written ADO.NET and Dapper.AOT.
+## Performance
 
-## Diagnostics catalog
+BenchmarkDotNet compares ZA.ORM with hand-written ADO.NET and Dapper.AOT on SQLite. These numbers were captured at v0.7.0 on 2026-06-01 and have not been re-captured on 2.x ([#344](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/344)):
 
-ZeroAlloc.ORM ships a structured catalog of compile-time diagnostics, from signature-shape and parameter errors (`ZAO001`–`ZAO015`) through materialization, stored-procedure/parameter, and `BulkInsert` guardrails (`ZAO020`–`ZAO081`). Every code has a dedicated reference page in [`docs/diagnostics/`](docs/diagnostics/) — the IDE help link on each diagnostic resolves to its page directly.
+| Workload | ZA.ORM vs hand-written: time | Allocation |
+|---|---:|---:|
+| Single-row read | +5% | +12% (1.34 KB vs 1.2 KB) |
+| 1000-row read | +11% | +0.5% (86.52 KB vs 86.13 KB) |
+| Head + lines multi-result | +28% | +13% (2.95 KB vs 2.62 KB) |
+| Single insert | +1% | +4% (1.23 KB vs 1.18 KB) |
 
-The full, canonical index of every shipped code — severity, trigger, and page link — lives at **[docs/diagnostics/README.md](docs/diagnostics/README.md)**, not here, so there is exactly one table to keep current.
+Full tables and methodology: [docs/benchmarks/v0.7.0-sqlite-results.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v0.7.0-sqlite-results.md). PostgreSQL numbers have not been captured yet; see [docs/benchmarks/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/README.md).
 
-A `DiagnosticHelpLinkTests` suite enforces that every `DiagnosticDescriptor.HelpLinkUri` resolves to a real, non-empty markdown page under `docs/diagnostics/`, and that every descriptor has a row in that canonical index — broken links and missing rows can't be shipped.
+## Diagnostics
+
+The generator reports signature, binding, materialization, stored-procedure, `BulkInsert` and transaction problems at build time, from `ZAO001` to `ZAO081`. Every code has a page under [docs/diagnostics/](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/diagnostics), and the IDE help link on each diagnostic opens it. The canonical index of every shipped code, with severity and trigger, is [docs/diagnostics/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md). `DiagnosticHelpLinkTests` fails the build if a descriptor lacks its page or its index row.
 
 ## Documentation
 
-Rendered docs (cookbook, diagnostics catalog, benchmarks, design doc) live at **[orm.zeroalloc.net](https://orm.zeroalloc.net)** — built from this repo's `docs/` directory by the ZA ecosystem website at [ZeroAlloc-Net/ZeroAlloc.Website](https://github.com/ZeroAlloc-Net/ZeroAlloc.Website).
+Rendered docs: [orm.zeroalloc.net](https://orm.zeroalloc.net), built from this repo's `docs/` by [ZeroAlloc-Net/.website](https://github.com/ZeroAlloc-Net/.website). The domain is not live yet ([.website#95](https://github.com/ZeroAlloc-Net/.website/issues/95)); until it is, read the pages below on GitHub.
 
-## Cookbook recipes
-
-Adopter-facing recipes for the eight canonical patterns shipped in v1.0. Each page is paste-into-fresh-project quality with provider notes and diagnostics cross-links.
-
-| Recipe | Description |
+| Cookbook recipe | Covers |
 |--------|-------------|
-| [flat-row.md](docs/cookbook/flat-row.md) | Single-row reads → positional record (`Task<T?>` / `Task<T>`). |
-| [multi-result-set.md](docs/cookbook/multi-result-set.md) | `(head, lines)` tuple returns; `BatchMode.Auto` / `Always` / `Never`. |
-| [streaming.md](docs/cookbook/streaming.md) | `IAsyncEnumerable<T>` for unbounded result sets. |
-| [commands.md](docs/cookbook/commands.md) | `[Command]` — `NonQuery` / `Scalar` / `Identity`. |
-| [stored-procedures.md](docs/cookbook/stored-procedures.md) | `[StoredProcedure]` with output parameters + multi-result-set sprocs. |
-| [composites.md](docs/cookbook/composites.md) | Multi-column composites (`Money`) + `[Materialize(Factory)]`. |
-| [observability.md](docs/cookbook/observability.md) | ZA.Telemetry composition (`[Instrument]` + `[Trace]` + `[Count]` + `[Histogram]`). |
-| [provider-quirks.md](docs/cookbook/provider-quirks.md) | Sqlite / PostgreSQL / SQL Server / MySQL differences. |
-| [migrations.md](docs/cookbook/migrations.md) | SQL migrations via `MigrationRunner` (versioned, idempotent, multi-instance safe). |
+| [flat-row.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/flat-row.md) | Single-row reads into positional records |
+| [multi-result-set.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/multi-result-set.md) | `(head, lines)` tuple returns; `BatchMode.Auto` / `Always` / `Never` |
+| [streaming.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/streaming.md) | `IAsyncEnumerable<T>` for unbounded result sets |
+| [commands.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/commands.md) | `[Command]` — `NonQuery` / `Scalar` / `Identity` |
+| [bulk-insert.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/bulk-insert.md) | `CommandKind.BulkInsert` — chunked multi-row inserts and identity capture |
+| [stored-procedures.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/stored-procedures.md) | Output, input-output and return-value parameters; multi-result-set procedures |
+| [composites.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/composites.md) | Multi-column composites (`Money`) and `[Materialize(Factory)]` |
+| [provider-quirks.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/provider-quirks.md) | `[Dialect]` and SQLite / PostgreSQL / SQL Server / MySQL differences |
+| [migrations.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/migrations.md) | `MigrationRunner`, the three dialects, several sources in one database |
+| [observability.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/observability.md) | Composing with ZeroAlloc.Telemetry's `[Instrument]` |
 
-## Design + roadmap
+- [Migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md) — parameter names without the `@` prefix, `[Param(DbType)]` on inputs, and the `IMigrationDialect` change.
+- [CHANGELOG](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/CHANGELOG.md) — what shipped in each release.
+- [Design](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/design/2026-05-30-v1.0-design.md) — the v1.0 architecture, generator surface and convention discovery.
 
-- **Design:** [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) — 5-section v1.0 design covering architecture, generator surface, convention discovery, diagnostics, test strategy, milestones.
-- **Backlog:** [`docs/plans/za-orm-backlog.md`](docs/plans/za-orm-backlog.md) — priority-banded task list. New findings during implementation get appended.
-- **Ecosystem context:** sits alongside [ZeroAlloc.Mediator](https://github.com/ZeroAlloc-Net/ZeroAlloc.Mediator), [ZeroAlloc.Mapping](https://github.com/ZeroAlloc-Net/ZeroAlloc.Mapping), [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects), [ZeroAlloc.Validation](https://github.com/ZeroAlloc-Net/ZeroAlloc.Validation). Substrate is [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async) (AOT-compatible since v1.x).
+## Versioning
 
-## Roadmap beyond v1.0
+ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards the public surface of `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions` and `ZeroAlloc.TypeConversions`, so 2.x releases are additive and a breaking change needs a new major.
 
-With v1.0 shipped, the project enters **maintenance mode under SemVer**. The v1.0 public surface (103 entries / 16 types) is locked; v1.x releases are additive-only (v1.1 added the `ZeroAlloc.ORM.Migrations` namespace) and any breaking change pushes to v2.0.
+## Roadmap
 
-**Carry-forward backlog (post-1.0 polish, none of which blocks adopter use today):**
-
-- **v0.3-CLN2** — Lift the keeper-connection / shared-cache helper into `SqliteFixture`. Single-test pattern today; promote once a second adopter lands.
-- **v0.4-CLN1** — Investigate single-pipeline architecture across `[Query]` / `[Command]` / `[StoredProcedure]` (current `Collect()` + `SelectMany` union step collapses incremental-cache granularity).
-- **v0.5-CLN2** — Nullable reference-type composite parameter binding (struct case ships in v0.5; reference-type case routes through ZAO041 today).
-- **v0.5-CLN3** — Recursive composite support (ZAO052 explicitly flags them; generalize the classifier + column-index walk).
-- **v0.5-CLN4** — Factory parameter-to-column SQL-parser-based name matching (gated on ORM-V2-3).
-- **v0.6-CLN1** — Re-attempt ZA.Telemetry collision smoke once upstream `InstrumentGenerator` preserves nullable annotations.
-- **v0.7-CLN1 (Postgres portion)** — Capture Postgres BDN numbers once a Docker-reachable machine is available. Sqlite portion shipped.
-- **v1.0-CLN1** — Capture Postgres benchmark numbers (Docker daemon was not available during the v1.0 capture window).
-- **v1.0-CLN2** — ZA.Website ruleset / `orm.zeroalloc.net` go-live (tracked in the ZeroAlloc.Website repo, PR #25).
-- **v1.1-CLN1** — SQL Server + MySQL migration dialects (Sqlite + Postgres shipped in v1.1; remaining providers gated on adopter demand).
-- **v1.1-CLN2** — Migration rollback support (adopter writes forward-fix migrations today).
-- **v1.1-CLN3** — C# migration DSL (raw SQL is the v1.1 contract).
-- **v1.1-CLN4** — Generator-emitted migrations from `[Materialize]` shape changes (speculative).
-
-**v2.0 design space** sketched in [`docs/design/2026-05-30-v1.0-design.md`](docs/design/2026-05-30-v1.0-design.md) Section 5 (lines 656+):
-
-- Composites with arbitrary recursive nesting.
-- Table-valued parameters (SQL Server `READONLY` types, Postgres array params `int[]` / `text[]`).
-- `SqlBulkCopy` semantics + provider equivalents.
-- Runtime provider routing of identity suffixes beyond Sqlite (SQL Server `SCOPE_IDENTITY()` / Postgres `RETURNING`).
-- Schema-drift detection (opt-in analyzer with DB connection at compile time).
-- Broader primitive catalog (`BigInteger`, `Half`, `Int128`/`UInt128`).
+Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued and array parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).
 
 ## License
 
-[MIT](LICENSE)
+MIT. See [LICENSE](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/LICENSE).
