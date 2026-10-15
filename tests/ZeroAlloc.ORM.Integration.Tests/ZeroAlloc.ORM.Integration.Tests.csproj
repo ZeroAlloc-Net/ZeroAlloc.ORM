@@ -34,7 +34,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <!-- AllocationGate, for the BulkInsert allocation gate (#326). -->
-    <PackageReference Include="ZeroAlloc.TestHelpers" Version="1.6.*">
+    <PackageReference Include="ZeroAlloc.TestHelpers" Version="1.7.*">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>contentfiles;build</IncludeAssets>
     </PackageReference>
