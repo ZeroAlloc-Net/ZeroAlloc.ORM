@@ -30,17 +30,21 @@ BenchmarkDotNet only produces meaningful numbers in `Release` configuration.
 ### Sqlite (default, fast, CI-safe, no Docker required)
 
 ```bash
-dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release
+dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release -- \
+  --filter "ZeroAlloc.ORM.Benchmarks.SingleRowReadBench*" \
+           "ZeroAlloc.ORM.Benchmarks.MultiRowReadBench*" \
+           "ZeroAlloc.ORM.Benchmarks.MultiResultSetBench*" \
+           "ZeroAlloc.ORM.Benchmarks.InsertBench*" \
+  --job Default --launchCount 3
 ```
 
-This runs every benchmark **not** marked `[BenchmarkCategory("Postgres")]` —
-i.e. the Sqlite suite. The Postgres classes are tagged with that category and
-opted out by default so a plain `dotnet run` does not require Docker.
+The filter selects the four Sqlite classes. Without a filter or a category,
+`BenchmarkSwitcher` asks interactively which benchmarks to run.
 
 ### Postgres (slower, requires Docker)
 
 ```bash
-dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release -- --anyCategories Postgres
+dotnet run --project tests/ZeroAlloc.ORM.Benchmarks -c Release -- --anyCategories Postgres --job Default --launchCount 3
 ```
 
 Postgres benchmarks boot a Testcontainers `postgres:16-alpine` container per
@@ -63,17 +67,17 @@ Three columns matter most:
 | `Ratio`    | Mean ÷ baseline mean — quick "how much overhead does X add?"     |
 
 Numbers vary by machine. Trust **ratios**, not absolute throughput, when
-quoting these.
+quoting these. Run with `--launchCount 3` so each ratio averages over several processes, and pin
+the process to fixed CPUs where you can, for example `taskset -c 2-5 dotnet run ...`.
 
 ## Captured results
 
 | File                            | Backend  | Captured on | Notes                              |
 |---------------------------------|----------|-------------|------------------------------------|
-| `v0.7.0-sqlite-results.md`      | Sqlite   | 2026-06-01  | Windows 11, SDK 10.0.300, BenchmarkDotNet 0.15.2 |
-| `v0.7.0-postgres-results.md`    | Postgres | (pending)   | Local-only; Docker required; holds the reproduction recipe |
+| `v2.x-sqlite-results.md`        | Sqlite   | 2026-10-15  | 2.3.1; Linux VM, SDK 10.0.402, BenchmarkDotNet 0.15.8, 3 launches, pinned to 4 vCPUs |
+| `v2.x-postgres-results.md`      | Postgres | 2026-10-15  | 2.3.1; same setup, Docker `postgres:16-alpine`; first Postgres capture |
+| `v0.7.0-sqlite-results.md`      | Sqlite   | 2026-06-01  | Historical: v0.7.0, Windows 11, SDK 10.0.300, BenchmarkDotNet 0.15.2 |
 
-Both files date from v0.7.0. Re-capturing on 2.x, and capturing Postgres for
-the first time, is tracked in
-[#344](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/344). ZA.ORM is
-a relative-position tool; absolute numbers shift between CPUs but the ratios
-are stable.
+The 2.x captures publish exact allocations and same-run ratios only, because the benchmark host
+is a shared VM; absolute timings are not published. The v0.7.0 file keeps its absolute timings
+from a different machine; do not compare them with the 2.x ratios.
