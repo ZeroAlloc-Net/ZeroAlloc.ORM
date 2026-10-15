@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.3.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.1...v2.3.2) (2026-10-15)
+
+
+### Documentation
+
+* re-capture the benchmarks on 2.x and capture postgres ([#352](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/352)) ([ea3a6eb](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/ea3a6eb13580ae1bae1db656196e8774a680d156)), closes [#344](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/344)
+* rewrite the README for 2.x ([#345](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/345)) ([4bf12ce](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/4bf12ce16c1720ad0cd1a51d03fc58c0266631e6))
+
+
+### Tests
+
+* pin patched system.security.cryptography.pkcs for cve-2026-84008 ([#347](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/347)) ([cb5d674](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/cb5d674eb53a19c7be7dd6d63d0d5551ccded36c))
+
 ## [2.3.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.0...v2.3.1) (2026-10-12)
 
 
