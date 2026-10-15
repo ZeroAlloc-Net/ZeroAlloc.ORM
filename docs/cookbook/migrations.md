@@ -105,10 +105,10 @@ The prefix also names the source in the history table: `MyApp.Migrations`
 here, or the assembly's simple name when there is no prefix. See
 [Several sources in one database](#several-sources-in-one-database).
 
-## Recipe 2 — Provider selection (Sqlite vs Postgres)
+## Recipe 2 — Provider selection (Sqlite, Postgres, SQL Server)
 
 The runner is identical across providers; the dialect picks the
-provider-specific SQL templates + lock strategy. v1.1 ships two:
+provider-specific SQL templates + lock strategy. Three ship with ZeroAlloc.ORM:
 
 ### Sqlite
 
@@ -154,9 +154,32 @@ The Postgres dialect uses `TIMESTAMPTZ NOT NULL DEFAULT NOW()` for
 `pg_advisory_lock(<bigint>)` for the duration of the run — see
 [Recipe 3](#recipe-3--multi-instance-startup).
 
+### SQL Server
+
+```csharp
+using Microsoft.Data.SqlClient;
+
+var raw = new SqlConnection(connString);
+IAsyncDbConnection conn = raw.AsAsync();
+await conn.OpenAsync(ct).ConfigureAwait(false);
+
+var runner = new MigrationRunner(
+    conn,
+    new EmbeddedResourceMigrationSource(typeof(Program).Assembly),
+    new SqlServerMigrationDialect());
+
+await runner.RunAsync(ct).ConfigureAwait(false);
+```
+
+`SqlServerMigrationDialect` targets SQL Server 2012 and newer. It creates the
+history table under an `OBJECT_ID` guard, stores `applied_at` as
+`DATETIMEOFFSET`, and serializes runners with a session-owned `sp_getapplock`
+on the `ZAORM_MIGRATIONS` resource — see
+[Recipe 3](#recipe-3--multi-instance-startup).
+
 ## Recipe 3 — Multi-instance startup
 
-Both dialects make multi-instance startup safe **without** the adopter
+Every shipped dialect makes multi-instance startup safe **without** the adopter
 having to lease or coordinate from the outside:
 
 - **Postgres** — `pg_advisory_lock(0x5A41_4F52_4D5F_4D49)` blocks until
@@ -549,8 +572,13 @@ already-applied migrations; only the lock serialization.
   in a `finally`. Default key is `0x5A41_4F52_4D5F_4D49` (`"ZAORM_MI"`
   packed). Override via the `PostgresMigrationDialect(lockKey)` constructor.
   `applied_at` is stored as `TIMESTAMPTZ`.
-- **SQL Server / MySQL / others** — not shipped in v1.1; implement
-  `IMigrationDialect` directly. Tracked as v1.1-CLN1.
+- **SQL Server** — session-owned `sp_getapplock` on `ZAORM_MIGRATIONS` at
+  `RunAsync` entry; released in a `finally` or when the connection drops.
+  Override the resource name via the `SqlServerMigrationDialect(lockName)`
+  constructor to isolate two independent migration sets in one database.
+  `applied_at` is stored as `DATETIMEOFFSET`.
+- **MySQL / others** — not shipped; implement `IMigrationDialect` directly.
+  A MySQL dialect is tracked as v1.1-CLN1.
 
 ## When NOT to use this runner
 
