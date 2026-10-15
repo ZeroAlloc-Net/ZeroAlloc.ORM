@@ -24,7 +24,7 @@ shapes — divergence between them is pure framework overhead.
 
 ## How to run
 
-The benchmarks require **.NET SDK 10.0.300** (see [`global.json`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/global.json)).
+The benchmarks use the .NET SDK pinned in [`global.json`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/global.json), currently 10.0.401 with `rollForward: latestFeature`.
 BenchmarkDotNet only produces meaningful numbers in `Release` configuration.
 
 ### Sqlite (default, fast, CI-safe, no Docker required)
@@ -69,11 +69,11 @@ quoting these.
 
 | File                            | Backend  | Captured on | Notes                              |
 |---------------------------------|----------|-------------|------------------------------------|
-| `v0.7.0-sqlite-results.md`      | Sqlite   | (pending)   | First CI/local run with SDK 10.0.300 |
-| `v0.7.0-postgres-results.md`    | Postgres | (pending)   | Local-only; Docker required        |
+| `v0.7.0-sqlite-results.md`      | Sqlite   | 2026-06-01  | Windows 11, SDK 10.0.300, BenchmarkDotNet 0.15.2 |
+| `v0.7.0-postgres-results.md`    | Postgres | (pending)   | Local-only; Docker required; holds the reproduction recipe |
 
-Until an environment with SDK 10.0.300 is available locally, results files
-hold the reproduction recipe rather than captured numbers — adopters and
-contributors should re-run on their own hardware. ZA.ORM is a relative-
-position tool; absolute numbers shift between CPUs but the ratios are
-stable.
+Both files date from v0.7.0. Re-capturing on 2.x, and capturing Postgres for
+the first time, is tracked in
+[#344](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/344). ZA.ORM is
+a relative-position tool; absolute numbers shift between CPUs but the ratios
+are stable.
