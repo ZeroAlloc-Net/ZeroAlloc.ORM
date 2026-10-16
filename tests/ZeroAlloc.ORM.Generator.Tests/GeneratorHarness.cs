@@ -80,9 +80,9 @@ internal static class GeneratorHarness
     // non-framework ref add their type to ForceLoadAssemblies; no other change.
     //
     // The fully-explicit "TRUSTED_PLATFORM_ASSEMBLIES + explicit list" approach was
-    // tried first; it broke Verify.SourceGenerators' ModuleInitializer because
-    // pulling in TPA leaked a stale path resolution for snapshot directories.
-    // Sticking with AppDomain.GetAssemblies() keeps Verify's path-derive happy.
+    // tried first, back when the snapshots went through Verify.SourceGenerators; it broke
+    // Verify's ModuleInitializer. Verify is gone since #204, and GeneratorSnapshot derives
+    // the snapshot path from the test file, but AppDomain.GetAssemblies() stays.
     private static ImmutableArray<MetadataReference> BuildReferences()
     {
         // Each entry forces its containing assembly to load before we walk the

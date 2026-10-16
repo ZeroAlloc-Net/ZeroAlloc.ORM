@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
       # Read by ship-release-tracking. A step output is only visible to another job
       # when the job re-exports it here; without these the job's `if:` is always false.
@@ -88,57 +89,26 @@ jobs:
   # Running in the same job graph avoids the cross-workflow event entirely.
   #
   # pack-push.yml is kept for manual rescue via workflow_dispatch.
+  # Builds the release tag, packs every packable project, checks the versions inside the
+  # packages, pushes them, and waits until nuget.org serves every one of them. Shared from
+  # ZeroAlloc-Net/.github so a fix there reaches every repository; see ZeroAlloc-Net/.github#49.
+  #
+  # The tests run here again. They were skipped over a Verify.NET path problem with an explicit
+  # -p:Version; Verify was replaced by GeneratorSnapshot in #204, which passes with it.
+  #
+  # No `solution` input: global.json selects Microsoft.Testing.Platform, whose dotnet test takes
+  # a solution only through --solution, so the default test step relies on the single
+  # ZeroAlloc.ORM.slnx in the root being found, as ci.yml does.
   publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
-        with:
-          # Installs the SDK global.json pins. Without it the job never installs
-          # that SDK at all and only works when the runner image happens to ship one
-          # satisfying the pin, which is how a publish failed on a lagging image.
-          global-json-file: global.json
-          dotnet-version: 10.0.x
-
-      - name: Restore
-        run: dotnet restore
-
-      - name: Build
-        run: dotnet build --no-restore -c Release -p:Version=${{ needs.release-please.outputs.version }}
-
-      # Test step intentionally omitted: the build-test workflow already validates
-      # every push to main with the full test suite (75+ tests). Re-running them here
-      # would (a) duplicate work and (b) trip a Verify.NET path-resolution edge case
-      # on two snapshot tests when MSBuild's Version is set explicitly. This job's
-      # role is to pack + push, not re-validate.
-
-      - name: Pack
-        run: |
-          # Discovered, not listed. A hardcoded list silently omits any newly added
-          # package: the release still goes green and the package never appears on
-          # NuGet. Defaulting to pack means a new src project ships unless it opts
-          # out, so the failure mode is a surplus package someone notices rather
-          # than a missing one nobody does.
-          for csproj in src/*/*.csproj; do
-            if grep -q "<IsPackable>false</IsPackable>" "$csproj"; then
-              echo "Skipping $csproj (IsPackable=false)"
-              continue
-            fi
-            echo "Packing $csproj"
-            dotnet pack "$csproj" --no-build -c Release -p:PackageVersion=${{ needs.release-please.outputs.version }} -o ./artifacts
-          done
-          if ! ls ./artifacts/*.nupkg >/dev/null 2>&1; then
-            echo "::error::no packages were produced"
-            exit 1
-          fi
-
-      - name: Push to NuGet
-        run: dotnet nuget push ./artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+    uses: ZeroAlloc-Net/.github/.github/workflows/publish.yml@main
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+      version: ${{ needs.release-please.outputs.version }}
+      # This repository has never published to GitHub Packages or attached its packages to
+      # the GitHub release; the migration keeps its destinations as they are.
+      github-packages: false
+      release-assets: false
+    secrets:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
