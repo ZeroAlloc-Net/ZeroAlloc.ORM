@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.3...v2.3.4) (2026-10-16)
+
+
+### Documentation
+
+* link the live orm.zeroalloc.net docs site ([#363](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/363)) ([8bcd7a0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/8bcd7a0ff7e68d4d721778d7a363c71a9940bcec))
+
 ## [2.3.3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.2...v2.3.3) (2026-10-16)
 
 
