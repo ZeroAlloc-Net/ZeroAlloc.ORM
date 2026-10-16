@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.2...v2.3.3) (2026-10-16)
+
+
+### Documentation
+
+* point the docs-site note at the open website issue ([#358](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/358)) ([6774f54](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/6774f540764aacc2f45c69998b6ff512ba489ace))
+* rewrite the readme as a product page ([#356](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/356)) ([6700530](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/670053038bf32caa1bf32e8e64bdf9fc64805575))
+
 ## [2.3.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.1...v2.3.2) (2026-10-15)
 
 
