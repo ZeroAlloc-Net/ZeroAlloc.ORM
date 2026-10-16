@@ -171,7 +171,7 @@ The generator reports signature, binding, materialization, stored-procedure, `Bu
 
 ## Documentation
 
-These pages are the documentation. They will also render at `orm.zeroalloc.net`, built by [ZeroAlloc-Net/.website](https://github.com/ZeroAlloc-Net/.website), once that domain is live ([.website#94](https://github.com/ZeroAlloc-Net/.website/issues/94)).
+These pages are the documentation. They also render at [orm.zeroalloc.net](https://orm.zeroalloc.net), built by [ZeroAlloc-Net/.website](https://github.com/ZeroAlloc-Net/.website).
 
 | Cookbook recipe | Covers |
 |--------|-------------|
