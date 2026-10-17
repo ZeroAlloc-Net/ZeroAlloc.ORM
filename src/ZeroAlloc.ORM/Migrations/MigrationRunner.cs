@@ -70,6 +70,7 @@ public sealed class MigrationRunner
     private readonly IMigrationSource _source;
     private readonly IMigrationDialect _dialect;
     private readonly string _sourceName;
+    private readonly MigrationBaseline? _baseline;
 
     /// <summary>
     /// Creates a one-shot runner bound to the supplied collaborators. None of
@@ -86,6 +87,27 @@ public sealed class MigrationRunner
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _dialect = dialect ?? throw new ArgumentNullException(nameof(dialect));
         _sourceName = ValidateSourceName(source);
+    }
+
+    /// <summary>
+    /// Creates a runner that adopts a database built outside the runner. When the source has
+    /// no recorded history, <paramref name="baseline"/>'s check decides whether migrations 1
+    /// through <see cref="MigrationBaseline.ThroughVersion"/> are recorded as applied without
+    /// running them. Otherwise identical to the three-argument constructor.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="source"/>'s <see cref="IMigrationSource.Name"/> is null, empty,
+    /// whitespace, or longer than <see cref="MaxSourceNameLength"/>.
+    /// </exception>
+    public MigrationRunner(
+        IAsyncDbConnection connection,
+        IMigrationSource source,
+        IMigrationDialect dialect,
+        MigrationBaseline baseline)
+        : this(connection, source, dialect)
+    {
+        _baseline = baseline ?? throw new ArgumentNullException(nameof(baseline));
     }
 
     private static string ValidateSourceName(IMigrationSource source)
@@ -164,6 +186,7 @@ public sealed class MigrationRunner
             // anything is written.
             var discovered = _source.GetMigrations();
             RejectDuplicateVersions(discovered);
+            RejectBaselineVersionMissing(discovered);
 
             // Step 4: #306 — move a history table from before scoping to the scoped
             // layout, assigning its rows to this source.
@@ -175,6 +198,18 @@ public sealed class MigrationRunner
             // Step 5: snapshot this source's applied versions, keyed by recorded name,
             // then filter + sort.
             var applied = await ReadAppliedVersionsAsync(tx: null, ct).ConfigureAwait(false);
+
+            // Baseline: a source with no history may be adopting a database built elsewhere.
+            if (_baseline is not null && applied.Count == 0)
+            {
+                var decision = await _baseline.Check.DecideAsync(_connection, ct).ConfigureAwait(false);
+                if (decision == BaselineDecision.MarkApplied)
+                {
+                    await RecordBaselineAsync(_baseline, discovered, ct).ConfigureAwait(false);
+                    applied = await ReadAppliedVersionsAsync(tx: null, ct).ConfigureAwait(false);
+                }
+            }
+
             var pending = ResolvePending(discovered, applied);
 
             // Step 6: per-migration tx — commit each individually so a downstream
@@ -218,6 +253,84 @@ public sealed class MigrationRunner
                     "discovered migration has a unique version.");
             }
             byVersion[m.Version] = m;
+        }
+    }
+
+    /// <summary>
+    /// A baseline whose <see cref="MigrationBaseline.ThroughVersion"/> is not one of the
+    /// discovered versions is a misconfiguration; reject it before anything is written.
+    /// </summary>
+    /// <exception cref="ZeroAllocOrmMigrationConflictException">
+    /// Thrown when the baseline's through-version is not a discovered migration.
+    /// </exception>
+    private void RejectBaselineVersionMissing(IReadOnlyList<Migration> discovered)
+    {
+        if (_baseline is null)
+        {
+            return;
+        }
+
+        foreach (var m in discovered)
+        {
+            if (m.Version == _baseline.ThroughVersion)
+            {
+                return;
+            }
+        }
+
+        throw new ZeroAllocOrmMigrationConflictException(
+            $"The migration baseline goes through version {_baseline.ThroughVersion}, but the " +
+            $"migration source '{_sourceName}' has no migration with that version. Set the " +
+            "baseline to the last version the existing schema reflects.");
+    }
+
+    /// <summary>
+    /// Records every discovered migration up to the baseline's through-version as applied,
+    /// without running it, in one transaction.
+    /// </summary>
+    private async Task RecordBaselineAsync(
+        MigrationBaseline baseline,
+        IReadOnlyList<Migration> discovered,
+        CancellationToken ct)
+    {
+        var tx = await _connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+        await using (tx.ConfigureAwait(false))
+        {
+            try
+            {
+                var appliedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+                foreach (var migration in discovered)
+                {
+                    if (migration.Version > baseline.ThroughVersion)
+                    {
+                        continue;
+                    }
+
+                    var insertParameters = new List<MigrationParameter>(4)
+                    {
+                        new MigrationParameter("version", migration.Version),
+                        new MigrationParameter("name", migration.Name),
+                        new MigrationParameter("applied_at", appliedAt),
+                    };
+                    insertParameters.AddRange(SourceParameters());
+                    await ExecuteOnTransactionAsync(tx, _dialect.InsertAppliedVersionSql, insertParameters, ct)
+                        .ConfigureAwait(false);
+                }
+
+                await tx.CommitAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackEx)
+                {
+                    AttachRollbackFailure(ex, rollbackEx);
+                }
+                throw;
+            }
         }
     }
 
