@@ -506,6 +506,107 @@ public sealed class S3MigrationSource(IS3Client s3) : IMigrationSource
 The runner handles ordering, history-table filtering, and per-migration
 transactions — the source is just a discovery + content-load function.
 
+## Adopting an EF Core database
+
+Use this when a database was created and is still managed by EF Core
+migrations, and you want `MigrationRunner` to manage it from now on.
+Running your SQL migrations against it would fail, because the tables
+already exist. A `MigrationBaseline` tells the runner that migrations 1
+through N are already reflected in the schema, so it records them as
+applied without running them and runs only the later ones.
+
+```csharp
+var runner = new MigrationRunner(
+    connection,
+    new EmbeddedResourceMigrationSource(typeof(Program).Assembly, "Daedalus.Migrations.")
+    {
+        Name = "daedalus",
+    },
+    new PostgresMigrationDialect(),
+    new MigrationBaseline(
+        throughVersion: 12,
+        EfCoreBaseline.LatestMigrationIs("20261014090300_AddNodeSelectionUniqueIndex", SqlDialect.PostgreSql)));
+await runner.RunAsync(ct);
+```
+
+The check runs only when the source has no recorded history yet, and
+decides from `__EFMigrationsHistory`:
+
+| State of the database | Result |
+| --- | --- |
+| No `__EFMigrationsHistory` table (a new database) | Runs every migration |
+| Latest `MigrationId` equals the id you passed (ordinal comparison) | Records 1 through N as applied, then runs the rest |
+| Table is empty, or its latest id differs | Throws `ZeroAllocOrmMigrationConflictException`; no history rows are recorded and no migrations run |
+| No such table in the default schema or search path, but one in another schema | Throws `ZeroAllocOrmMigrationConflictException` naming the schema |
+
+`EfCoreBaseline` supports `SqlDialect.PostgreSql`, `SqlDialect.Sqlite` and
+`SqlDialect.SqlServer`. On a later run the source has history, so the check
+is skipped.
+
+The check compares the latest id by `MAX("MigrationId")`. EF ids start with a
+timestamp, so the maximum is the most recent migration.
+
+The check looks for the history table where the connection's default schema
+(SQL Server) or `search_path` (PostgreSQL) resolves it. An EF history table in
+another schema, from `HasDefaultSchema` or `MigrationsHistoryTable(name,
+schema)`, is not silently treated as a new database: the check throws and names
+the schema. Point the connection's `search_path` or default schema at it, then
+run again. Any exception thrown by a check propagates out of `RunAsync`; the
+history table may already exist by then, but no history rows are recorded and
+no migrations run.
+
+### Preparing the migrations
+
+- **Write migration N as the schema at the last EF migration.** Generate it
+  with `dotnet ef migrations script` and trim it to what a new database needs.
+  A new database runs it; an existing EF database skips it. Both must end up
+  with the same schema.
+- **Freeze EF after N.** From the baseline on, schema changes are new ZeroAlloc
+  migrations (N+1 and up). A further EF migration would move the head past the
+  id you passed, and the check would refuse the database.
+- **Bring older databases to that id with EF first.** A database whose latest id
+  is older than the expected one is rejected rather than guessed at. Run
+  `dotnet ef database update` to the expected migration once, then switch.
+- **`__EFMigrationsHistory` is left in place.** The runner never reads it again
+  after the first run, and EF tooling keeps working against it if you need to
+  roll back to EF.
+
+### Sharing the database with other sources
+
+If other `MigrationRunner` sources already write to the same database, run
+them **before** the baseline source whenever the history table predates source
+scoping (no `source` column). The first runner upgrades such a table and
+assigns every row in it to itself, and refuses when a row is not one of its own
+migrations. A baseline source run first would meet the other sources' rows and
+throw `ZeroAllocOrmMigrationConflictException`. Once the table is upgraded, the
+order no longer matters, and each source marks only its own rows. See
+[Upgrading a history table](#upgrading-a-history-table-from-before-source-scoping).
+
+### Example: Daedalus
+
+Daedalus ran on EF Core with its last migration
+`20261014090300_AddNodeSelectionUniqueIndex`, and also runs the Workflow and
+Outbox sources against the same PostgreSQL database. Its own source, named
+`daedalus` through the `Name` initializer above, wraps the
+EF schema as migration 12 (the output of `dotnet ef migrations script` at that
+id) and continues from 13:
+
+```csharp
+// Workflow and Outbox first: the first of them upgrades an unscoped history table.
+await new MigrationRunner(connection, workflowSource, dialect).RunAsync(ct);
+await new MigrationRunner(connection, outboxSource, dialect).RunAsync(ct);
+
+await new MigrationRunner(
+    connection, daedalusSource, dialect,
+    new MigrationBaseline(12, EfCoreBaseline.LatestMigrationIs(
+        "20261014090300_AddNodeSelectionUniqueIndex", SqlDialect.PostgreSql)))
+    .RunAsync(ct);
+```
+
+On the production database the `daedalus` rows 1 through 12 are marked and
+13 onward run. On a fresh database migrations 1 through 12 run and create the
+schema.
+
 ## Custom dialects (advanced)
 
 `IMigrationDialect` is also small — three SQL strings (history-table
