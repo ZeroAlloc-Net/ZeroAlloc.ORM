@@ -6,3 +6,4 @@
 Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
 ZAO082  | ZeroAlloc.ORM | Error    | Provider-specific type requires Npgsql
+ZAO083  | ZeroAlloc.ORM | Error    | [Json] requires a string

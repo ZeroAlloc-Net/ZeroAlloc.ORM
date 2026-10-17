@@ -232,19 +232,55 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Where(static d => d is not null)
             .WithTrackingName("StoreAsStringDiagnostics");
 
-        context.RegisterSourceOutput(storeAsStringDiagnostics, (sourceCtx, diag) =>
+        context.RegisterSourceOutput(storeAsStringDiagnostics, ReportStandaloneDiagnostic);
+
+        // ZAO083 — [Json] is only legal on a string. Like ZAO042 it has its own
+        // pipeline: the marker sits on a parameter or property, and a misapplied one
+        // is reported whether or not a [Query] or [Command] method uses it.
+        var jsonDiagnostics = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: JsonAttributeFqn,
+                predicate: static (node, _) => node is ParameterSyntax or PropertyDeclarationSyntax,
+                transform: static (ctx, ct) => JsonOnNonStringDiagnostic(ctx, ct))
+            .Where(static d => d is not null)
+            .WithTrackingName("JsonDiagnostics");
+
+        context.RegisterSourceOutput(jsonDiagnostics, ReportStandaloneDiagnostic);
+    }
+
+    private static void ReportStandaloneDiagnostic(SourceProductionContext sourceCtx, DiagnosticInfo? diag)
+    {
+        if (diag is null) return;
+        var descriptor = LookupDescriptor(diag.DescriptorId);
+        if (descriptor is null) return;
+        object[] args = diag.MessageArgs.Values.IsDefault
+            ? Array.Empty<object>()
+            : diag.MessageArgs.Values.ToArray();
+        sourceCtx.ReportDiagnostic(Diagnostic.Create(
+            descriptor,
+            diag.Location?.ToLocation(),
+            args));
+    }
+
+    private static DiagnosticInfo? JsonOnNonStringDiagnostic(GeneratorAttributeSyntaxContext ctx, System.Threading.CancellationToken ct)
+    {
+        var (name, type) = ctx.TargetSymbol switch
         {
-            if (diag is null) return;
-            var descriptor = LookupDescriptor(diag.DescriptorId);
-            if (descriptor is null) return;
-            object[] args = diag.MessageArgs.Values.IsDefault
-                ? Array.Empty<object>()
-                : diag.MessageArgs.Values.ToArray();
-            sourceCtx.ReportDiagnostic(Diagnostic.Create(
-                descriptor,
-                diag.Location?.ToLocation(),
-                args));
-        });
+            IParameterSymbol parameter => (parameter.Name, parameter.Type),
+            IPropertySymbol property => (property.Name, property.Type),
+            _ => (null, null),
+        };
+        if (name is null || type is null || type.SpecialType == SpecialType.System_String)
+            return null;
+
+        // Anchor at the misapplied [Json] attribute, as ZAO042 does.
+        var attributeLocation = ctx.Attributes.Length > 0
+            ? ctx.Attributes[0].ApplicationSyntaxReference?.GetSyntax(ct).GetLocation()
+            : null;
+        return new DiagnosticInfo(
+            DescriptorId: "ZAO083",
+            Location: LocationInfo.From(attributeLocation ?? ctx.TargetNode.GetLocation()),
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, type.ToDisplayString())));
     }
 
     private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, AttributePipelineKind pipelineKind)
@@ -1108,6 +1144,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                                 {
                                     if (field.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
                                         diagnostics.Add(ArrayRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
+                                    else if (field.IsJson)
+                                        diagnostics.Add(JsonRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
                                 }
                             }
                             if (compositeFields.Length > 0)
@@ -1183,6 +1221,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
                 }
 
+                // A string marked [Json] binds as jsonb, which only Npgsql can send.
+                var isJson = !isCt && IsJsonString(p, p.Type);
+                if (isJson && !hasNpgsql)
+                {
+                    diagnostics.Add(JsonRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
+                }
+
                 return new ParameterInfo(
                     p.Name,
                     p.Type.ToDisplayString(parameterDisplayFormat),
@@ -1193,7 +1238,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     paramConvention,
                     compositeFields,
                     compositeTypeFullName,
-                    paramFacets);
+                    paramFacets,
+                    IsJson: isJson);
             })
             .ToImmutableArray();
 
@@ -2083,6 +2129,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 diagnostics.Add(ArrayRequiresNpgsql(matchedProp.Name, methodLocation));
             }
 
+            // A [Json] string row property binds as jsonb, which only Npgsql can send.
+            var isJson = IsJsonMember(rowTypeNamed, matchedProp.Name, matchedProp, matchedProp.Type);
+            if (isJson && !hasNpgsql)
+            {
+                diagnostics.Add(JsonRequiresNpgsql(matchedProp.Name, methodLocation));
+            }
+
             var underlyingReader = resolution.Kind switch
             {
                 ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
@@ -2099,7 +2152,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 PlaceholderName: placeholder,
                 PropertyName: matchedProp.Name,
                 Convention: convention,
-                IsNullable: isPropNullable));
+                IsNullable: isPropNullable,
+                IsJson: isJson));
         }
         if (anyUnresolved)
         {
@@ -3872,7 +3926,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             innerBuilder.Add(new CompositeBindingField(
                 CtorArgName: innerParam.Name,
                 IsNullable: innerIsNullable,
-                Convention: innerConvention));
+                Convention: innerConvention,
+                IsJson: IsJsonMember(innerParam.ContainingType, innerParam.Name, innerParam, innerParam.Type)));
         }
         return new EquatableArray<CompositeBindingField>(innerBuilder.MoveToImmutable());
     }
@@ -4620,10 +4675,60 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     private static DiagnosticInfo ArrayRequiresNpgsql(string name, LocationInfo? location)
+        => RequiresNpgsql(name, "a PostgreSQL array", location);
+
+    private static DiagnosticInfo JsonRequiresNpgsql(string name, LocationInfo? location)
+        => RequiresNpgsql(name, "[Json]", location);
+
+    private static DiagnosticInfo RequiresNpgsql(string name, string what, LocationInfo? location)
         => new(
             DescriptorId: "ZAO082",
             Location: location,
-            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, "a PostgreSQL array")));
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, what)));
+
+    // [Json] marks a string as a PostgreSQL jsonb document. Detected by fully-qualified
+    // name, the way ConventionDiscovery detects [StoreAsString], so the generator takes
+    // no reference on ZeroAlloc.ORM.Abstractions.
+    private const string JsonAttributeFqn = "ZeroAlloc.ORM.JsonAttribute";
+
+    private static bool HasJsonAttribute(ISymbol symbol)
+    {
+        foreach (var attr in symbol.GetAttributes())
+        {
+            if (string.Equals(attr.AttributeClass?.ToDisplayString(), JsonAttributeFqn, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    // Whether a value binds as jsonb: it carries [Json] and is a string. [Json] on any
+    // other type is ZAO083, reported by its own pipeline, and binds as it would unmarked.
+    private static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
+        => type.SpecialType == SpecialType.System_String && HasJsonAttribute(symbol);
+
+    // A record or class member binds from a constructor parameter or a property of the
+    // same name. A positional record's `[Json]` lands on the constructor parameter; a
+    // `[property: Json]` or a hand-written property carries it on the property. Either
+    // marks the member.
+    private static bool IsJsonMember(INamedTypeSymbol? containingType, string memberName, ISymbol symbol, ITypeSymbol type)
+    {
+        if (type.SpecialType != SpecialType.System_String) return false;
+        if (HasJsonAttribute(symbol)) return true;
+        if (containingType is null) return false;
+        foreach (var member in containingType.GetMembers(memberName))
+        {
+            if (member is IPropertySymbol property && HasJsonAttribute(property)) return true;
+        }
+        foreach (var ctor in containingType.InstanceConstructors)
+        {
+            foreach (var parameter in ctor.Parameters)
+            {
+                if (string.Equals(parameter.Name, memberName, StringComparison.Ordinal) && HasJsonAttribute(parameter))
+                    return true;
+            }
+        }
+        return false;
+    }
 
     // Npgsql is never a reference of ZeroAlloc.ORM; an adopter's compilation has it
     // when it references the Npgsql package. Roslyn caches GetTypeByMetadataName per
@@ -4679,6 +4784,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
         "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
         "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
+        "ZAO083" => DiagnosticDescriptors.ZAO083_JsonRequiresString,
         _ => null,
     };
 
@@ -5378,7 +5484,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
             sb.AppendLine($"                    {paramLocal}.ParameterName = {cache}.{BulkInsertNamesField(binding, i)}[__i];");
-            sb.AppendLine($"                    {paramLocal}.Value = {BuildBoundValue(valueExpr, isNullable: true, binding.Convention)};");
+            EmitValueAssignment(sb, "                    ", paramLocal, BuildBoundValue(valueExpr, isNullable: true, binding.Convention), binding.IsJson);
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
         sb.AppendLine("                }");
@@ -7711,7 +7817,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
-            sb.AppendLine($"{indent}{local}.Value = {BuildParameterValue(p)};");
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -7792,7 +7898,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output: null);
             }
 
-            sb.AppendLine($"{indent}{local}.Value = {BuildParameterValue(p)};");
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
@@ -7966,7 +8072,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            sb.AppendLine($"            {local}.Value = {BuildParameterValue(p)};");
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
             sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8228,9 +8334,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            sb.AppendLine($"            {local}.Value = {BuildParameterValue(p)};");
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
+    }
+
+    // `__p_x.Value = ...;` for one DbParameter, the one place every binding site writes
+    // it: the four method-parameter sites, composite members and bulk-insert rows.
+    //
+    // A string marked [Json] then gets NpgsqlDbType.Jsonb, so the SQL needs no `::jsonb`
+    // cast. Set whatever the value, DBNull included: Npgsql sends a typed NULL. The
+    // check names Npgsql only in the adopter's code; ZAO082 guarantees the adopter
+    // references it. The pattern local, `__np_x` for `__p_x`, is unique in its block
+    // because the parameter local is.
+    private static void EmitValueAssignment(StringBuilder sb, string indent, string local, string value, bool isJson)
+    {
+        sb.AppendLine($"{indent}{local}.Value = {value};");
+        if (!isJson) return;
+        var npgsqlLocal = "__np" + local.Substring("__p".Length);
+        sb.AppendLine($"{indent}if ({local} is global::Npgsql.NpgsqlParameter {npgsqlLocal}) {npgsqlLocal}.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;");
     }
 
     // The right-hand side of `__p_x.Value = ...;` for one method parameter. The four
@@ -8397,7 +8519,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
-                sb.AppendLine($"{indent}    {local}.Value = global::System.DBNull.Value;");
+                EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8419,7 +8541,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // between the parameter name and the field accessor.
                 var valueExpr = HoistArrayCopySubject(
                     sb, indent + "    ", local, BuildCompositeFieldValueExpressionForNullable(p.Name, field), field.Convention);
-                sb.AppendLine($"{indent}    {local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
+                EmitValueAssignment(sb, indent + "    ", local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8436,7 +8558,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
             var valueExpr = HoistArrayCopySubject(
                 sb, indent, local, BuildCompositeFieldValueExpression(p.Name, field), field.Convention);
-            sb.AppendLine($"{indent}{local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
+            EmitValueAssignment(sb, indent, local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }

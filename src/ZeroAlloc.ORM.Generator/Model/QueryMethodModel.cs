@@ -142,11 +142,14 @@ internal enum BulkInsertReturnKind
 //                      [Command] parameter-binding shape.
 //   IsNullable       — the property is `T?`; a value-object property then unwraps
 //                      through `?.` so a null row value binds DBNull.
+//   IsJson           — the property is a string marked `[Json]`, on the property or
+//                      its record ctor parameter; it binds as jsonb.
 internal sealed record BulkInsertPlaceholderBinding(
     string PlaceholderName,
     string PropertyName,
     ConventionInfo? Convention,
-    bool IsNullable);
+    bool IsNullable,
+    bool IsJson = false);
 
 // v1.3 — Materialization plan for an EmitShape.BulkInsertCommand method. Populated
 // by ClassifyBulkInsertCommand when all four shape checks pass (parameter shape,
