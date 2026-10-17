@@ -2506,10 +2506,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // Pick the widest public instance ctor — positional records synthesize one
         // ctor matching the parameter list. Multiple public ctors stay supported by
         // taking the widest, mirroring how Dapper resolves materialization ctors.
-        var ctor = named.InstanceConstructors
-            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
-            .OrderByDescending(c => c.Parameters.Length)
-            .FirstOrDefault();
+        var ctor = FlatRowConstructor(named);
         if (ctor is null) return null;
 
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
@@ -3270,11 +3267,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // public ctors with parameters we bail — the v0.2 surface is intentionally
         // strict (a class with an obvious "the" ctor). Implicit default ctors with
         // zero params don't count because they cannot bind column values.
-        var publicParameterizedCtors = named.InstanceConstructors
-            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
-            .ToImmutableArray();
-        if (publicParameterizedCtors.Length != 1) return null;
-        var ctor = publicParameterizedCtors[0];
+        var ctor = DomainEntityConstructor(named);
+        if (ctor is null) return null;
 
         var columns = ImmutableArray.CreateBuilder<ColumnBinding>(ctor.Parameters.Length);
 
@@ -4787,20 +4781,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
-    // The constructor a row type materializes through: a record's widest public
-    // parameterized ctor, as FlatRow picks it, or a class's single public
-    // parameterized ctor, as DomainEntity requires. Null when there is none.
+    // The constructor a row type materializes through, chosen by the same helpers the
+    // FlatRow and DomainEntity materializers use, so [Json] never reads a different
+    // ctor than the emitter. Null when the type materializes through neither.
     private static IMethodSymbol? MaterializationConstructor(INamedTypeSymbol type)
     {
-        IMethodSymbol? chosen = null;
-        var count = 0;
-        foreach (var ctor in type.InstanceConstructors)
-        {
-            if (ctor.DeclaredAccessibility != Accessibility.Public || ctor.Parameters.Length == 0) continue;
-            count++;
-            if (chosen is null || ctor.Parameters.Length > chosen.Parameters.Length) chosen = ctor;
-        }
-        return type.IsRecord || count == 1 ? chosen : null;
+        if (type.IsRecord) return FlatRowConstructor(type);
+        if (type.TypeKind == TypeKind.Class) return DomainEntityConstructor(type);
+        return null;
+    }
+
+    // FlatRow: the widest public instance ctor with parameters; the first one wins a
+    // tie. Positional records synthesize one ctor matching the parameter list.
+    private static IMethodSymbol? FlatRowConstructor(INamedTypeSymbol record)
+        => record.InstanceConstructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
+            .OrderByDescending(c => c.Parameters.Length)
+            .FirstOrDefault();
+
+    // DomainEntity: exactly one public instance ctor with parameters, else none.
+    private static IMethodSymbol? DomainEntityConstructor(INamedTypeSymbol type)
+    {
+        var publicParameterizedCtors = type.InstanceConstructors
+            .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
+            .ToImmutableArray();
+        return publicParameterizedCtors.Length == 1 ? publicParameterizedCtors[0] : null;
     }
 
     // Npgsql is never a reference of ZeroAlloc.ORM; an adopter's compilation has it
