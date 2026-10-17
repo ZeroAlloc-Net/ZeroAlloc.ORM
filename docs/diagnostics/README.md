@@ -46,6 +46,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO080 | Warning | At most one `IAsyncDbTransaction` parameter | [ZAO080](ZAO080.md) |
 | ZAO081 | Error | Containing type must be partial (nested repository) | [ZAO081](ZAO081.md) |
 | ZAO082 | Error | Provider-specific type requires Npgsql | [ZAO082](ZAO082.md) |
+| ZAO083 | Error | `[Json]` requires a string | [ZAO083](ZAO083.md) |
 
 ## Code-range conventions
 
@@ -55,7 +56,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO060`–`ZAO069` — `[StoredProcedure]` and `[Param]` guardrails. `ZAO060` is reserved: registered for catalog completeness but never emitted (C# already rejects the case it targets via CS1988).
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
-- `ZAO082` — types only one provider can bind, such as PostgreSQL arrays, which need Npgsql.
+- `ZAO082`–`ZAO083` — types only one provider can bind, such as PostgreSQL arrays and `[Json]` strings, which need Npgsql, and `[Json]` on a non-string.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.
 

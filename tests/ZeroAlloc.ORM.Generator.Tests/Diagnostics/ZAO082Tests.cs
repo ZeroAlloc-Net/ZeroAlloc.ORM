@@ -2,8 +2,8 @@ using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Diagnostics;
 
-// ZAO082 fires when a parameter uses a type only Npgsql can bind, here a
-// PostgreSQL array, and the compilation does not reference Npgsql.
+// ZAO082 fires when a parameter uses a type only Npgsql can bind, a PostgreSQL
+// array or a [Json] string, and the compilation does not reference Npgsql.
 public class ZAO082Tests
 {
     private const string ArrayParameterSource = """
@@ -270,5 +270,88 @@ public class ZAO082Tests
 
         Assert.Equal("ZAO022", Assert.Single(without).Id);
         Assert.Equal("ZAO022", Assert.Single(with).Id);
+    }
+
+    // Each source binds one [Json] string: a method parameter, a composite member and
+    // a bulk-insert row property, with the name ZAO082 reports for it.
+    public static TheoryData<string, string> JsonSources => new()
+    {
+        {
+            """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE posts SET doc = @doc WHERE id = @id")]
+                public partial Task<int> UpdateAsync(Guid id, [Json] string doc, CancellationToken ct);
+            }
+            """,
+            "doc"
+        },
+        {
+            """
+            public readonly record struct Payload(string Name, [Json] string? Doc);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO docs (name, doc) VALUES (@payload_Name, @payload_Doc)")]
+                public partial Task<int> InsertAsync(Payload payload, CancellationToken ct);
+            }
+            """,
+            "payload_Doc"
+        },
+        {
+            """
+            public sealed record DocRow(Guid Id, [Json] string Doc);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO docs (id, doc) VALUES (@Id, @Doc)", Kind = CommandKind.BulkInsert)]
+                public partial Task<int> InsertAsync(IReadOnlyList<DocRow> rows, CancellationToken ct);
+            }
+            """,
+            "Doc"
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(JsonSources))]
+    public void Json_without_npgsql_reports_ZAO082(string body, string name)
+    {
+        var result = GeneratorHarness.RunGenerator(ColumnUsings + body);
+
+        var zao082 = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO082", zao082.Id);
+        Assert.Equal(
+            $"Parameter or column '{name}' uses [Json], which needs Npgsql. "
+            + "Reference the Npgsql package, or bind it another way.",
+            zao082.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [MemberData(nameof(JsonSources))]
+    public void Json_with_npgsql_reports_nothing(string body, string name)
+    {
+        _ = name;
+        var (result, compileDiagnostics) = GeneratorHarness.RunGeneratorAndCompile(ColumnUsings + body, NpgsqlStub.Source);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        Assert.Empty(compileDiagnostics);
+    }
+
+    // Reading a jsonb column as a string works on any provider, so a [Json] column
+    // that is only read needs no Npgsql.
+    [Fact]
+    public void Json_column_without_npgsql_reports_nothing()
+    {
+        var source = ColumnUsings + """
+            public sealed record DocRow(Guid Id, [Json] string Doc);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT id, doc FROM docs WHERE id = @id")]
+                public partial Task<DocRow?> GetAsync(Guid id, CancellationToken ct);
+            }
+            """;
+
+        Assert.Empty(GeneratorHarness.RunGenerator(source).Results[0].Diagnostics);
     }
 }
