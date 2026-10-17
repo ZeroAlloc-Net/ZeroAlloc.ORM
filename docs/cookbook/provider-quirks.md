@@ -257,6 +257,44 @@ via `CALL`). The integration suite at
 covers the procedure path; the function path is exercised by the regular
 `[Query]` integration tests.
 
+### PostgreSQL arrays
+
+`T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long` and `Guid` work as parameters and as
+columns. Parameters bind as the CLR value, so Npgsql maps `string[]` to `text[]` and `Guid[]` to `uuid[]`:
+
+```csharp
+[Dialect(SqlDialect.PostgreSql)]
+public sealed partial class TagRepo(IAsyncDbConnection connection)
+{
+    [Command("INSERT INTO tagged (id, tags) VALUES (@id, @tags)")]
+    public partial Task<int> InsertAsync(Guid id, string[]? tags, CancellationToken ct);
+
+    [Query("SELECT id, tags FROM tagged WHERE id = ANY(@ids)")]
+    public partial Task<IReadOnlyList<TaggedRow>> GetByIdsAsync(List<Guid> ids, CancellationToken ct);
+}
+```
+
+- `null` stores `NULL`. An empty array stores `'{}'` and `= ANY(@p)` with it matches no rows. A nullable
+  column reads back `null` through an `IsDBNull` guard.
+- An `IReadOnlyList<T>` that is neither a `T[]` nor a `List<T>` is copied to an array before binding,
+  because Npgsql does not bind an arbitrary `IReadOnlyList<T>` as an array.
+- Columns read with `GetFieldValue<T[]>`; a `List<T>` column wraps that array in a new `List<T>`.
+- `[Query] Task<T[]>` returns a single array column, and `[Command(Kind = CommandKind.Scalar)]` can
+  return `Task<T[]>` too.
+- Output parameters of array type are not supported (ZAO022).
+- The project must reference Npgsql, otherwise the build reports ZAO082. No other provider can bind a CLR array.
+- The generator never references Npgsql; the generated code stays AOT-clean.
+
+A connection built from `NpgsqlSlimDataSourceBuilder` registers no optional type handlers. Call
+`EnableArrays()` on it, or Npgsql throws at the first array parameter or column:
+
+```csharp
+var dataSource = new NpgsqlSlimDataSourceBuilder(connectionString).EnableArrays().Build();
+await using var connection = dataSource.CreateConnection();
+```
+
+A full `NpgsqlConnection` needs nothing extra.
+
 ### NUMERIC handling
 
 Postgres has a native `NUMERIC` type that maps to CLR `decimal` directly —
