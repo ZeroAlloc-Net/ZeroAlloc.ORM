@@ -145,6 +145,16 @@ public class ZAO082Tests
         }
         """;
 
+    private const string StreamingColumnSource = """
+        public sealed record TaggedRow(Guid Id, string[] Tags);
+
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [Query("SELECT id, tags FROM posts")]
+            public partial IAsyncEnumerable<TaggedRow> StreamAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct);
+        }
+        """;
+
     private const string CompositeColumnSource = """
         public readonly record struct Labels(string Name, IReadOnlyList<string> Tags);
         public sealed record PostRow(Guid Id, Labels Labels);
@@ -206,6 +216,7 @@ public class ZAO082Tests
     {
         { RowColumnSource, "Tags" },
         { ListRowColumnSource, "Tags" },
+        { StreamingColumnSource, "Tags" },
         { CompositeColumnSource, "Tags" },
         { TupleScalarSource, "DraftIds" },
         { ScalarQuerySource, "GetTagsAsync" },

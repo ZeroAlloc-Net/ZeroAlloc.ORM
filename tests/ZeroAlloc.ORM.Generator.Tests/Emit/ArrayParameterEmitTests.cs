@@ -212,6 +212,20 @@ public class ArrayParameterEmitTests
     }
 
     [Fact]
+    public void Streamed_rows_with_array_column_read_GetFieldValue()
+    {
+        VerifyCompiled(Usings + """
+            public sealed record TaggedRow(Guid Id, string[] Tags);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT id, tags FROM posts")]
+                public partial IAsyncEnumerable<TaggedRow> StreamAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct);
+            }
+            """);
+    }
+
+    [Fact]
     public void Row_with_list_column_reads_into_new_list()
     {
         VerifyCompiled(Usings + """

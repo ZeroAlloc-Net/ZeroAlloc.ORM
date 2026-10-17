@@ -1140,12 +1140,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     // it the provider can't send the value, so fail at build time.
                     if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
                     {
-                        diagnostics.Add(new DiagnosticInfo(
-                            DescriptorId: "ZAO082",
-                            Location: LocationInfo.From(p.Locations.FirstOrDefault()),
-                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
-                                p.Name,
-                                "a PostgreSQL array"))));
+                        diagnostics.Add(ArrayRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
                     }
 
                     // ZAO041 — no binding strategy resolved for parameter. Fires when the
@@ -2085,12 +2080,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // Npgsql, the same as a single-row parameter of that type.
             if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
             {
-                diagnostics.Add(new DiagnosticInfo(
-                    DescriptorId: "ZAO082",
-                    Location: methodLocation,
-                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
-                        matchedProp.Name,
-                        "a PostgreSQL array"))));
+                diagnostics.Add(ArrayRequiresNpgsql(matchedProp.Name, methodLocation));
             }
 
             var underlyingReader = resolution.Kind switch
