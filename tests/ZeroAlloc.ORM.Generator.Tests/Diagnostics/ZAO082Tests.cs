@@ -273,7 +273,8 @@ public class ZAO082Tests
     }
 
     // Each source binds one [Json] string: a method parameter, a composite member and
-    // a bulk-insert row property, with the name ZAO082 reports for it.
+    // a bulk-insert row property, marked on its ctor parameter or with `property:`,
+    // with the name ZAO082 reports for it.
     public static TheoryData<string, string> JsonSources => new()
     {
         {
@@ -301,6 +302,18 @@ public class ZAO082Tests
         {
             """
             public sealed record DocRow(Guid Id, [Json] string Doc);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("INSERT INTO docs (id, doc) VALUES (@Id, @Doc)", Kind = CommandKind.BulkInsert)]
+                public partial Task<int> InsertAsync(IReadOnlyList<DocRow> rows, CancellationToken ct);
+            }
+            """,
+            "Doc"
+        },
+        {
+            """
+            public sealed record DocRow(Guid Id, [property: Json] string Doc);
 
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
