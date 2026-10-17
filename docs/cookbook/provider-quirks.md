@@ -327,8 +327,9 @@ public sealed record DocumentRow(Guid Id, [Json] string Body, [Json] string? Not
 - The project must reference Npgsql, otherwise ZAO082. Any type other than `string` reports ZAO083.
 - On other providers the Npgsql type test falls through and the string binds as plain text, so the same
   repository shape works against a `TEXT` column on Sqlite.
-- Reads and writes work on a full `NpgsqlConnection` and on a slim data source, with no extra builder
-  call beyond `EnableArrays()` for arrays. The AOT smoke project covers it under `PublishAot`.
+- Reads and writes work on a full `NpgsqlConnection` and on a slim data source. The integration tests
+  build the slim source with `EnableArrays()` only, and jsonb strings needed no further builder call.
+  The AOT smoke project covers it under `PublishAot`.
 
 ### NUMERIC handling
 
