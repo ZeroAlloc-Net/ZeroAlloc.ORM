@@ -46,6 +46,45 @@ public class ZAO082Tests
         Assert.Empty(compileDiagnostics);
     }
 
+    private const string BulkInsertArrayPropertySource = """
+        using System.Collections.Generic;
+        using System.Data.Async;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+
+        namespace TestApp;
+
+        public sealed record PostRow(int Id, string[] Tags);
+
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [Command("INSERT INTO posts (Id, Tags) VALUES (@Id, @Tags)", Kind = CommandKind.BulkInsert)]
+            public partial Task<int> InsertPostsAsync(IReadOnlyList<PostRow> posts, CancellationToken ct);
+        }
+        """;
+
+    [Fact]
+    public void Bulk_insert_row_array_property_without_npgsql_reports_ZAO082()
+    {
+        var result = GeneratorHarness.RunGenerator(BulkInsertArrayPropertySource);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        var zao082 = Assert.Single(diagnostics, d => string.Equals(d.Id, "ZAO082", System.StringComparison.Ordinal));
+        Assert.Equal(
+            "Parameter or column 'Tags' uses a PostgreSQL array, which needs Npgsql. "
+            + "Reference the Npgsql package, or bind it another way.",
+            zao082.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void Bulk_insert_row_array_property_with_npgsql_reports_nothing()
+    {
+        var result = GeneratorHarness.RunGenerator(BulkInsertArrayPropertySource, NpgsqlStub.Source);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+    }
+
     [Fact]
     public void Bulk_insert_collection_keeps_its_meaning()
     {

@@ -642,7 +642,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             isStoredProcedureAttribute,
             diagnostics,
             LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
-            sql);
+            sql,
+            hasNpgsql);
 
         // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
         // Three triggers:
@@ -1376,7 +1377,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         bool isStoredProcedureAttribute,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         LocationInfo? returnTypeLocation,
-        string sql)
+        string sql,
+        bool hasNpgsql)
     {
         // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
         //   * Task<int>, ValueTask<int>  — return rows-affected count.
@@ -1448,6 +1450,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // the method name; ZAO073 is about the return type.
                 LocationInfo.From(method.Locations.FirstOrDefault()),
                 returnTypeLocation,
+                hasNpgsql,
                 out var bulkInsertMaterialization);
             // Materialization is threaded back to the caller via the tuple's
             // MultiResultMaterialization slot would be wrong (that's a separate
@@ -1897,6 +1900,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         LocationInfo? methodLocation,
         LocationInfo? returnTypeLocation,
+        bool hasNpgsql,
         out BulkInsertMaterializationModel? materialization)
     {
         materialization = null;
@@ -2040,6 +2044,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // per-parameter binding helper.
             var underlying = UnwrapNullableValueType(matchedProp.Type);
             var resolution = ConventionDiscovery.Resolve(underlying, conventionContext);
+
+            // ZAO082 — a row property that is a PostgreSQL array binds only through
+            // Npgsql, the same as a single-row parameter of that type.
+            if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
+            {
+                diagnostics.Add(new DiagnosticInfo(
+                    DescriptorId: "ZAO082",
+                    Location: methodLocation,
+                    MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                        matchedProp.Name,
+                        "a PostgreSQL array"))));
+            }
+
             var underlyingReader = resolution.Kind switch
             {
                 ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory

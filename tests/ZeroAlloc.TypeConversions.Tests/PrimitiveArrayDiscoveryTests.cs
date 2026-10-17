@@ -22,6 +22,9 @@ public class PrimitiveArrayDiscoveryTests
     [InlineData("System.Collections.Generic.IReadOnlyList<int>", "int", PrimitiveArrayShape.ReadOnlyList)]
     [InlineData("System.Collections.Generic.IReadOnlyList<long>", "long", PrimitiveArrayShape.ReadOnlyList)]
     [InlineData("System.Collections.Generic.IReadOnlyList<System.Guid>", "System.Guid", PrimitiveArrayShape.ReadOnlyList)]
+    // Reference nullability does not change the shape. ElementType keeps the annotation as written.
+    [InlineData("string[]?", "string", PrimitiveArrayShape.Array)]
+    [InlineData("string?[]", "string?", PrimitiveArrayShape.Array)]
     public void Supported_shape_and_element_is_PrimitiveArray(
         string typeSyntax, string elementDisplay, PrimitiveArrayShape shape)
     {
@@ -53,6 +56,8 @@ public class PrimitiveArrayDiscoveryTests
     [InlineData("System.Collections.Generic.IList<string>")]
     [InlineData("string[,]")]
     [InlineData("int?[]")]
+    [InlineData("System.Collections.Generic.List<int?>")]
+    [InlineData("System.Collections.Immutable.ImmutableArray<string>")]
     public void Unsupported_shape_or_element_stays_Unknown(string typeSyntax)
     {
         var (compilation, type) = TypeOf(typeSyntax);
@@ -65,11 +70,14 @@ public class PrimitiveArrayDiscoveryTests
     private static (Compilation Compilation, ITypeSymbol Type) TypeOf(string typeSyntax)
     {
         var compilation = TypeFixture.CreateCompilation($$"""
+            #nullable enable
             public sealed record CustomerRow(int Id);
-            public class Anchor { public {{typeSyntax}} Value => null!; }
+            public class Anchor { public {{typeSyntax}} Value => default!; }
             """);
         var anchor = compilation.GetTypeByMetadataName("Anchor")!;
         var property = (IPropertySymbol)anchor.GetMembers("Value")[0];
+        // An unresolved type would classify as Unknown for the wrong reason.
+        property.Type.TypeKind.Should().NotBe(TypeKind.Error);
         return (compilation, property.Type);
     }
 }

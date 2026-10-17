@@ -21,6 +21,8 @@ public sealed record ConventionResult(
     /// <summary>
     /// The element type of a <see cref="ConventionKind.PrimitiveArray"/>, for example
     /// <c>string</c> for <c>List&lt;string&gt;</c>; <c>null</c> for every other kind.
+    /// It keeps the nullable annotation as written, so strip it with
+    /// <c>WithNullableAnnotation(NullableAnnotation.NotAnnotated)</c> before rendering a type name.
     /// </summary>
     public ITypeSymbol? ElementType { get; init; }
 
