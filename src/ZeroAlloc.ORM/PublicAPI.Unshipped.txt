@@ -9,3 +9,5 @@ ZeroAlloc.ORM.Migrations.MigrationBaseline.Check.get -> ZeroAlloc.ORM.Migrations
 ZeroAlloc.ORM.Migrations.MigrationBaseline.MigrationBaseline(int throughVersion, ZeroAlloc.ORM.Migrations.IMigrationBaselineCheck! check) -> void
 ZeroAlloc.ORM.Migrations.MigrationBaseline.ThroughVersion.get -> int
 ZeroAlloc.ORM.Migrations.MigrationRunner.MigrationRunner(System.Data.Async.IAsyncDbConnection! connection, ZeroAlloc.ORM.Migrations.IMigrationSource! source, ZeroAlloc.ORM.Migrations.IMigrationDialect! dialect, ZeroAlloc.ORM.Migrations.MigrationBaseline! baseline) -> void
+ZeroAlloc.ORM.Migrations.EfCoreBaseline
+static ZeroAlloc.ORM.Migrations.EfCoreBaseline.LatestMigrationIs(string! migrationId, ZeroAlloc.ORM.SqlDialect dialect) -> ZeroAlloc.ORM.Migrations.IMigrationBaselineCheck!
