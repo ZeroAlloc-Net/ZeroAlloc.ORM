@@ -264,6 +264,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // per-parameter classification so the lookup cost amortizes.
         var conventionContext = new ConventionContext(ctx.SemanticModel.Compilation);
 
+        // Whether the compilation references Npgsql. PostgreSQL arrays, and [Json]
+        // later, bind only through Npgsql. The model carries the plain bool, never
+        // the Compilation, so it stays cache-safe.
+        var hasNpgsql = HasNpgsql(ctx.SemanticModel.Compilation);
+
         // The triggering attribute. For [Query] this is the QueryAttribute; for the
         // [Command] pipeline this is the CommandAttribute; for [StoredProcedure]
         // (Phase D) it's StoredProcedureAttribute. All three share a single
@@ -1107,6 +1112,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         }
                     }
 
+                    // ZAO082 — a PostgreSQL array binds only through Npgsql. Without
+                    // it the provider can't send the value, so fail at build time.
+                    if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO082",
+                            Location: LocationInfo.From(p.Locations.FirstOrDefault()),
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                p.Name,
+                                "a PostgreSQL array"))));
+                    }
+
                     // ZAO041 — no binding strategy resolved for parameter. Fires when the
                     // parameter type doesn't match any convention (no Value, no primitive,
                     // no enum, no static From factory, no single-arg ctor). Keyed at the
@@ -1236,7 +1253,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             DbTypeChecks: new EquatableArray<DbTypeCheck>(dbTypeChecks.ToImmutable()),
             // #307 — reported against the repository's dialect in ReportDiagnostics.
             SqlServerOnlyDiagnostics: new EquatableArray<DiagnosticInfo>(sqlServerOnlyDiagnostics.ToImmutable()),
-            ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()));
+            ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()),
+            HasNpgsql: hasNpgsql);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -4500,6 +4518,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
+    // Npgsql is never a reference of ZeroAlloc.ORM; an adopter's compilation has it
+    // when it references the Npgsql package. Roslyn caches GetTypeByMetadataName per
+    // compilation, so the per-method call costs one lookup per compilation.
+    internal static bool HasNpgsql(Compilation c) => c.GetTypeByMetadataName("Npgsql.NpgsqlParameter") is not null;
+
     private static DiagnosticDescriptor? LookupDescriptor(string id) => id switch
     {
         "ZAO001" => DiagnosticDescriptors.ZAO001_NotPartial,
@@ -4548,6 +4571,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO074" => DiagnosticDescriptors.ZAO074_BulkInsertWrongAttribute,
         "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
         "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
+        "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
         _ => null,
     };
 

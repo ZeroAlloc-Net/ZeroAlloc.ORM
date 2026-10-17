@@ -265,7 +265,11 @@ internal sealed record QueryMethodModel(
     // value; ZAO069 reports each one when a dialect other than SqlServer is
     // declared.
     EquatableArray<DiagnosticInfo> SqlServerOnlyDiagnostics = default,
-    EquatableArray<ReturnValueBinding> ReturnValueBindings = default);
+    EquatableArray<ReturnValueBinding> ReturnValueBindings = default,
+    // Whether the compilation references Npgsql, by `Npgsql.NpgsqlParameter`.
+    // PostgreSQL arrays report ZAO082 without it; the emit for Npgsql-only
+    // shapes reads it. A bool, not the Compilation, keeps the model cache-safe.
+    bool HasNpgsql = false);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

@@ -1,1 +1,11 @@
 #nullable enable
+ZeroAlloc.TypeConversions.ConventionKind.PrimitiveArray = 9 -> ZeroAlloc.TypeConversions.ConventionKind
+ZeroAlloc.TypeConversions.ConventionResult.ArrayShape.get -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.ConventionResult.ArrayShape.init -> void
+ZeroAlloc.TypeConversions.ConventionResult.ElementType.get -> Microsoft.CodeAnalysis.ITypeSymbol?
+ZeroAlloc.TypeConversions.ConventionResult.ElementType.init -> void
+ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.Array = 1 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.List = 2 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.None = 0 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.ReadOnlyList = 3 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape

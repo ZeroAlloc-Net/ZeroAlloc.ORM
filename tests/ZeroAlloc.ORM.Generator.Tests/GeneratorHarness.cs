@@ -10,15 +10,20 @@ namespace ZeroAlloc.ORM.Generator.Tests;
 
 internal static class GeneratorHarness
 {
-    public static GeneratorDriverRunResult RunGenerator(string source)
+    // Each additional source becomes its own tree, e.g. NpgsqlStub.Source, which
+    // declares block namespaces and so cannot share a tree with a test source's
+    // file-scoped `namespace TestApp;`.
+    public static GeneratorDriverRunResult RunGenerator(string source, params string[] additionalSources)
     {
-        var (driver, _) = RunDriver(source);
+        var (driver, _) = RunDriver(CreateCompilation(ParseAll(source, additionalSources)));
         return driver.GetRunResult();
     }
 
-    public static (GeneratorDriverRunResult RunResult, ImmutableArray<Diagnostic> CompileDiagnostics) RunGeneratorAndCompile(string source)
+    public static (GeneratorDriverRunResult RunResult, ImmutableArray<Diagnostic> CompileDiagnostics) RunGeneratorAndCompile(
+        string source,
+        params string[] additionalSources)
     {
-        var (driver, updatedCompilation) = RunDriver(source);
+        var (driver, updatedCompilation) = RunDriver(CreateCompilation(ParseAll(source, additionalSources)));
 
         var compileDiagnostics = updatedCompilation.GetDiagnostics()
             .AsEnumerable()
@@ -33,7 +38,7 @@ internal static class GeneratorHarness
     // `#nullable enable`, so nullable warnings in emitted code surface here.
     public static (GeneratorDriverRunResult RunResult, Compilation Compilation) RunGeneratorAndGetCompilation(string source)
     {
-        var (driver, updatedCompilation) = RunDriver(source);
+        var (driver, updatedCompilation) = RunDriver(CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) }));
         return (driver.GetRunResult(), updatedCompilation);
     }
 
@@ -57,8 +62,8 @@ internal static class GeneratorHarness
             references: BuildReferences(),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
-    private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(string source)
-        => RunDriver(CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) }));
+    private static IEnumerable<SyntaxTree> ParseAll(string source, string[] additionalSources)
+        => new[] { source }.Concat(additionalSources).Select(s => CSharpSyntaxTree.ParseText(s));
 
     private static (GeneratorDriver Driver, Compilation UpdatedCompilation) RunDriver(Compilation compilation)
     {

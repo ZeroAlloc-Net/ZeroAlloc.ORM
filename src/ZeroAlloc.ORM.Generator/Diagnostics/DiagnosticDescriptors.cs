@@ -582,4 +582,21 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO081"));
+
+    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array
+    // today, and [Json] next. The generator detects Npgsql by looking up
+    // `Npgsql.NpgsqlParameter` in the compilation; ZeroAlloc.ORM itself never
+    // references Npgsql.
+    //
+    // MessageArgs:
+    //   {0} = the parameter or column name
+    //   {1} = what needs Npgsql: "a PostgreSQL array" or "[Json]"
+    public static readonly DiagnosticDescriptor ZAO082_ProviderTypeRequiresNpgsql = new(
+        id: "ZAO082",
+        title: "Provider-specific type requires Npgsql",
+        messageFormat: "Parameter or column '{0}' uses {1}, which needs Npgsql. Reference the Npgsql package, or bind it another way.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO082"));
 }

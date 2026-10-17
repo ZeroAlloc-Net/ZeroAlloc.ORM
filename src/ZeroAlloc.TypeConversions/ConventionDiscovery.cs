@@ -11,6 +11,7 @@ namespace ZeroAlloc.TypeConversions;
 /// Rules are checked in priority order (see design doc Section 3); first match wins:
 /// <list type="number">
 ///   <item>Explicit <c>[Materialize]</c> annotation (reserved for v0.3+).</item>
+///   <item>PostgreSQL array: <c>T[]</c>, <c>List&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c> of string, int, long or Guid.</item>
 ///   <item>Primitive (<see cref="PrimitiveCatalog"/>).</item>
 ///   <item>ZA.ValueObjects <c>[ValueObject]</c> attribute.</item>
 ///   <item>Static <c>From</c> / <c>FromValue</c> factory.</item>
@@ -37,6 +38,7 @@ public static class ConventionDiscovery
     public static ConventionResult Resolve(ITypeSymbol type, ConventionContext context)
     {
         if (TryExplicitMaterialize(type) is { } m1) return m1;
+        if (TryPrimitiveArray(type) is { } m1b) return m1b;
         if (TryPrimitive(type) is { } m2) return m2;
 
         if (type is INamedTypeSymbol named)
@@ -62,6 +64,63 @@ public static class ConventionDiscovery
         _ = type;
         return null;
     }
+
+    // PostgreSQL arrays. Checked before Primitive so the rule owns every array and
+    // list shape it names; `byte[]` is still a Primitive because byte is not one of
+    // the supported element types. Only the exact shapes below match. IList<T>,
+    // IEnumerable<T>, multi-dimensional arrays and `int?[]` stay Unknown, so the
+    // generator keeps reporting them as unbindable.
+    private static ConventionResult? TryPrimitiveArray(ITypeSymbol type)
+    {
+        ITypeSymbol? element;
+        PrimitiveArrayShape shape;
+        if (type is IArrayTypeSymbol array)
+        {
+            if (!array.IsSZArray) return null;
+            element = array.ElementType;
+            shape = PrimitiveArrayShape.Array;
+        }
+        else if (type is INamedTypeSymbol { IsGenericType: true, TypeArguments.Length: 1 } named
+            && IsInSystemCollectionsGeneric(named))
+        {
+            element = named.TypeArguments[0];
+            shape = named.MetadataName switch
+            {
+                "List`1" => PrimitiveArrayShape.List,
+                "IReadOnlyList`1" => PrimitiveArrayShape.ReadOnlyList,
+                _ => PrimitiveArrayShape.None,
+            };
+            if (shape == PrimitiveArrayShape.None) return null;
+        }
+        else
+        {
+            return null;
+        }
+
+        if (!IsPrimitiveArrayElement(element)) return null;
+
+        return new ConventionResult(
+            ConventionKind.PrimitiveArray,
+            Factory: null,
+            Value: null,
+            ExpandedColumns: ImmutableArray<IParameterSymbol>.Empty)
+        {
+            ElementType = element,
+            ArrayShape = shape,
+        };
+    }
+
+    private static bool IsInSystemCollectionsGeneric(INamedTypeSymbol type)
+        => type.ContainingNamespace is { Name: "Generic" } generic
+           && generic.ContainingNamespace is { Name: "Collections" } collections
+           && collections.ContainingNamespace is { Name: "System" } system
+           && system.ContainingNamespace?.IsGlobalNamespace == true;
+
+    private static bool IsPrimitiveArrayElement(ITypeSymbol element)
+        => element.SpecialType is SpecialType.System_String or SpecialType.System_Int32 or SpecialType.System_Int64
+           || (element.MetadataName == "Guid"
+               && element.ContainingNamespace is { Name: "System" } ns
+               && ns.ContainingNamespace?.IsGlobalNamespace == true);
 
     private static ConventionResult? TryPrimitive(ITypeSymbol type)
     {
