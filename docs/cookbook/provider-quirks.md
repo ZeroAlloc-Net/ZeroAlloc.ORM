@@ -325,6 +325,8 @@ public sealed record DocumentRow(Guid Id, [Json] string Body, [Json] string? Not
   the text read back can differ from the text stored.
 - A document that is not valid JSON makes Postgres throw a `PostgresException` with SQLSTATE `22P02`.
 - The project must reference Npgsql, otherwise ZAO082. Any type other than `string` reports ZAO083.
+- `[Json]` takes precedence over a `[Param]` DbType on Npgsql: the DbType is set first and the jsonb type
+  after it, so the parameter goes out as jsonb.
 - On other providers the Npgsql type test falls through and the string binds as plain text, so the same
   repository shape works against a `TEXT` column on Sqlite.
 - Reads and writes work on a full `NpgsqlConnection` and on a slim data source. The integration tests

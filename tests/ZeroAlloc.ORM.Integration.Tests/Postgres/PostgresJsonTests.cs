@@ -67,7 +67,7 @@ public sealed class PostgresJsonTests
 
         foreach (var sql in statements)
         {
-            sql.Should().NotContain("::jsonb").And.NotContain("CAST(");
+            sql.Should().NotContainEquivalentOf("::jsonb").And.NotContainEquivalentOf("cast(");
         }
     }
 
