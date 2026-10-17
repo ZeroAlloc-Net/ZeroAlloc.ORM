@@ -246,7 +246,59 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .WithTrackingName("JsonDiagnostics");
 
         context.RegisterSourceOutput(jsonDiagnostics, ReportStandaloneDiagnostic);
+
+        // `[property: Json]` on a positional record parameter belongs to the synthesized
+        // property, which has no syntax of its own, so ForAttributeWithMetadataName
+        // never visits it. Find those attribute lists by syntax and check the property.
+        var recordPropertyJsonDiagnostics = context.SyntaxProvider
+            .CreateSyntaxProvider(
+                predicate: static (node, _) => IsRecordParameterWithPropertyTarget(node),
+                transform: static (ctx, ct) => RecordPropertyJsonOnNonStringDiagnostic(ctx, ct))
+            .Where(static d => d is not null)
+            .WithTrackingName("RecordPropertyJsonDiagnostics");
+
+        context.RegisterSourceOutput(recordPropertyJsonDiagnostics, ReportStandaloneDiagnostic);
     }
+
+    private static bool IsRecordParameterWithPropertyTarget(SyntaxNode node)
+    {
+        if (node is not ParameterSyntax { Parent.Parent: RecordDeclarationSyntax } parameter) return false;
+        foreach (var list in parameter.AttributeLists)
+        {
+            if (list.Target?.Identifier.IsKind(SyntaxKind.PropertyKeyword) == true) return true;
+        }
+        return false;
+    }
+
+    private static DiagnosticInfo? RecordPropertyJsonOnNonStringDiagnostic(GeneratorSyntaxContext ctx, System.Threading.CancellationToken ct)
+    {
+        var parameterSyntax = (ParameterSyntax)ctx.Node;
+        if (ctx.SemanticModel.GetDeclaredSymbol(parameterSyntax, ct) is not { } parameter) return null;
+        foreach (var member in parameter.ContainingType.GetMembers(parameter.Name))
+        {
+            if (member is not IPropertySymbol property || property.Type.SpecialType == SpecialType.System_String)
+                continue;
+            foreach (var attr in property.GetAttributes())
+            {
+                if (!string.Equals(attr.AttributeClass?.ToDisplayString(), JsonAttributeFqn, StringComparison.Ordinal))
+                    continue;
+                // Only the attribute written in this parameter's `property:` list.
+                if (attr.ApplicationSyntaxReference?.GetSyntax(ct) is not { } attributeSyntax
+                    || !parameterSyntax.Span.Contains(attributeSyntax.Span))
+                {
+                    continue;
+                }
+                return JsonRequiresStringDiagnostic(property.Name, property.Type, attributeSyntax.GetLocation());
+            }
+        }
+        return null;
+    }
+
+    private static DiagnosticInfo JsonRequiresStringDiagnostic(string name, ITypeSymbol type, Location location)
+        => new(
+            DescriptorId: "ZAO083",
+            Location: LocationInfo.From(location),
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, type.ToDisplayString())));
 
     private static void ReportStandaloneDiagnostic(SourceProductionContext sourceCtx, DiagnosticInfo? diag)
     {
@@ -277,10 +329,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var attributeLocation = ctx.Attributes.Length > 0
             ? ctx.Attributes[0].ApplicationSyntaxReference?.GetSyntax(ct).GetLocation()
             : null;
-        return new DiagnosticInfo(
-            DescriptorId: "ZAO083",
-            Location: LocationInfo.From(attributeLocation ?? ctx.TargetNode.GetLocation()),
-            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, type.ToDisplayString())));
+        return JsonRequiresStringDiagnostic(name, type, attributeLocation ?? ctx.TargetNode.GetLocation());
     }
 
     private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, AttributePipelineKind pipelineKind)
@@ -2130,7 +2179,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
 
             // A [Json] string row property binds as jsonb, which only Npgsql can send.
-            var isJson = IsJsonMember(rowTypeNamed, matchedProp.Name, matchedProp, matchedProp.Type);
+            var isJson = IsJsonRowProperty(rowTypeNamed, matchedProp);
             if (isJson && !hasNpgsql)
             {
                 diagnostics.Add(JsonRequiresNpgsql(matchedProp.Name, methodLocation));
@@ -3927,7 +3976,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 CtorArgName: innerParam.Name,
                 IsNullable: innerIsNullable,
                 Convention: innerConvention,
-                IsJson: IsJsonMember(innerParam.ContainingType, innerParam.Name, innerParam, innerParam.Type)));
+                IsJson: IsJsonCompositeField(innerParam)));
         }
         return new EquatableArray<CompositeBindingField>(innerBuilder.MoveToImmutable());
     }
@@ -4706,28 +4755,52 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
         => type.SpecialType == SpecialType.System_String && HasJsonAttribute(symbol);
 
-    // A record or class member binds from a constructor parameter or a property of the
-    // same name. A positional record's `[Json]` lands on the constructor parameter; a
-    // `[property: Json]` or a hand-written property carries it on the property. Either
-    // marks the member.
-    private static bool IsJsonMember(INamedTypeSymbol? containingType, string memberName, ISymbol symbol, ITypeSymbol type)
+    // A composite member binds through the property named exactly like the ctor
+    // parameter the composite resolved to, `@p.@Doc` for `Doc`. A positional record's
+    // `[Json]` lands on that ctor parameter, a `[property: Json]` or a hand-written
+    // property carries it on the property. Either marks the member.
+    private static bool IsJsonCompositeField(IParameterSymbol ctorParameter)
     {
-        if (type.SpecialType != SpecialType.System_String) return false;
-        if (HasJsonAttribute(symbol)) return true;
-        if (containingType is null) return false;
-        foreach (var member in containingType.GetMembers(memberName))
+        if (ctorParameter.Type.SpecialType != SpecialType.System_String) return false;
+        if (HasJsonAttribute(ctorParameter)) return true;
+        foreach (var member in ctorParameter.ContainingType.GetMembers(ctorParameter.Name))
         {
             if (member is IPropertySymbol property && HasJsonAttribute(property)) return true;
         }
-        foreach (var ctor in containingType.InstanceConstructors)
+        return false;
+    }
+
+    // A bulk-insert row property is marked by [Json] on the property itself, or on the
+    // parameter that feeds it in the constructor the row materializes through. The
+    // parameter maps to the property case-insensitively, as a DomainEntity's ctor
+    // parameters map to its columns, so a class's `doc` feeds `Doc`.
+    private static bool IsJsonRowProperty(INamedTypeSymbol? rowType, IPropertySymbol property)
+    {
+        if (property.Type.SpecialType != SpecialType.System_String) return false;
+        if (HasJsonAttribute(property)) return true;
+        if (rowType is null || MaterializationConstructor(rowType) is not { } ctor) return false;
+        foreach (var parameter in ctor.Parameters)
         {
-            foreach (var parameter in ctor.Parameters)
-            {
-                if (string.Equals(parameter.Name, memberName, StringComparison.Ordinal) && HasJsonAttribute(parameter))
-                    return true;
-            }
+            if (string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase))
+                return HasJsonAttribute(parameter);
         }
         return false;
+    }
+
+    // The constructor a row type materializes through: a record's widest public
+    // parameterized ctor, as FlatRow picks it, or a class's single public
+    // parameterized ctor, as DomainEntity requires. Null when there is none.
+    private static IMethodSymbol? MaterializationConstructor(INamedTypeSymbol type)
+    {
+        IMethodSymbol? chosen = null;
+        var count = 0;
+        foreach (var ctor in type.InstanceConstructors)
+        {
+            if (ctor.DeclaredAccessibility != Accessibility.Public || ctor.Parameters.Length == 0) continue;
+            count++;
+            if (chosen is null || ctor.Parameters.Length > chosen.Parameters.Length) chosen = ctor;
+        }
+        return type.IsRecord || count == 1 ? chosen : null;
     }
 
     // Npgsql is never a reference of ZeroAlloc.ORM; an adopter's compilation has it
@@ -7889,6 +7962,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output);
                 if (!isInputOutput)
                 {
+                    // Output-only parameters carry no value, so a [Json] one gets no Jsonb.
                     sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
                     continue;
                 }

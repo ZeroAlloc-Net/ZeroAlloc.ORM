@@ -51,6 +51,8 @@ public class ZAO083Tests
         { "public sealed record DocRow(Guid Id, [Json] string[] Docs);", "Docs", "string[]" },
         { "public sealed class DocRow { [Json] public Guid? Doc { get; set; } }", "Doc", "System.Guid?" },
         { "public readonly record struct Payload(string Name, [Json] List<string> Docs);", "Docs", "System.Collections.Generic.List<string>" },
+        // `property:` puts the marker on the synthesized property, not the parameter.
+        { "public sealed record DocRow(Guid Id, [property: Json] string[] Docs);", "Docs", "string[]" },
     };
 
     // Rows, composites and unused types: the marker on any non-string reports.
@@ -66,13 +68,15 @@ public class ZAO083Tests
             $"'{name}' carries [Json] but is of type '{type}'. [Json] marks a JSON document held as a string; "
             + "use string or string?.",
             zao083.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
+        var span = zao083.Location.SourceSpan;
+        Assert.Equal("Json", zao083.Location.SourceTree!.ToString().Substring(span.Start, span.Length));
     }
 
     [Fact]
     public void Json_on_string_reports_nothing()
     {
         var source = Usings + """
-            public sealed record DocRow(Guid Id, [Json] string Doc, [Json] string? Meta);
+            public sealed record DocRow(Guid Id, [Json] string Doc, [Json] string? Meta, [property: Json] string Extra);
             public sealed class Other { [Json] public string? Doc { get; set; } }
             """;
         var result = GeneratorHarness.RunGenerator(source, NpgsqlStub.Source);
