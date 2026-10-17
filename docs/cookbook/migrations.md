@@ -518,7 +518,10 @@ applied without running them and runs only the later ones.
 ```csharp
 var runner = new MigrationRunner(
     connection,
-    new EmbeddedResourceMigrationSource(typeof(Program).Assembly, "daedalus"),
+    new EmbeddedResourceMigrationSource(typeof(Program).Assembly, "Daedalus.Migrations.")
+    {
+        Name = "daedalus",
+    },
     new PostgresMigrationDialect(),
     new MigrationBaseline(
         throughVersion: 12,
@@ -538,6 +541,16 @@ decides from `__EFMigrationsHistory`:
 `EfCoreBaseline` supports `SqlDialect.PostgreSql`, `SqlDialect.Sqlite` and
 `SqlDialect.SqlServer`. On a later run the source has history, so the check
 is skipped.
+
+The check compares the latest id by `MAX("MigrationId")`. EF ids start with a
+timestamp, so the maximum is the most recent migration.
+
+The check only sees the history table that the connection's default schema
+(SQL Server) or `search_path` (PostgreSQL) resolves. An EF history table in
+another schema, from `HasDefaultSchema` or `MigrationsHistoryTable(name,
+schema)`, is not detected and counts as absent, so the check returns `RunAll`.
+Point the connection's `search_path` or default schema at it if that is where
+your history lives.
 
 ### Preparing the migrations
 
@@ -570,7 +583,8 @@ order no longer matters, and each source marks only its own rows. See
 
 Daedalus ran on EF Core with its last migration
 `20261014090300_AddNodeSelectionUniqueIndex`, and also runs the Workflow and
-Outbox sources against the same PostgreSQL database. Its own source wraps the
+Outbox sources against the same PostgreSQL database. Its own source, named
+`daedalus` through the `Name` initializer above, wraps the
 EF schema as migration 12 (the output of `dotnet ef migrations script` at that
 id) and continues from 13:
 

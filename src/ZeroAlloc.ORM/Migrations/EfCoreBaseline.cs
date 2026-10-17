@@ -13,13 +13,13 @@ namespace ZeroAlloc.ORM.Migrations;
 public static class EfCoreBaseline
 {
     internal const string PostgresHistoryExistsSql =
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '__EFMigrationsHistory')";
+        "SELECT to_regclass('\"__EFMigrationsHistory\"') IS NOT NULL";
 
     internal const string SqliteHistoryExistsSql =
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory'";
 
     internal const string SqlServerHistoryExistsSql =
-        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '__EFMigrationsHistory'";
+        "SELECT CASE WHEN OBJECT_ID(N'[__EFMigrationsHistory]', N'U') IS NULL THEN 0 ELSE 1 END";
 
     internal const string LatestIdSql = "SELECT MAX(\"MigrationId\") FROM \"__EFMigrationsHistory\"";
 
@@ -28,7 +28,8 @@ public static class EfCoreBaseline
     /// <summary>
     /// Creates a check that adopts an EF Core database whose latest applied migration is
     /// <paramref name="migrationId"/>. It returns <see cref="BaselineDecision.RunAll"/> when the
-    /// database has no <c>__EFMigrationsHistory</c> table, and
+    /// database has no <c>__EFMigrationsHistory</c> table in the connection's default schema or
+    /// search path, and
     /// <see cref="BaselineDecision.MarkApplied"/> when the latest recorded id equals
     /// <paramref name="migrationId"/> (ordinal comparison). Any other state throws
     /// <see cref="ZeroAllocOrmMigrationConflictException"/>, so no database is touched that EF has

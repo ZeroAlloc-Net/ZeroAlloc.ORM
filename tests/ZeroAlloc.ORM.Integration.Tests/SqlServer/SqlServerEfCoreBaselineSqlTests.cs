@@ -32,7 +32,7 @@ public sealed class SqlServerEfCoreBaselineSqlTests
         }
 
         fake.CommandTexts.Should().Equal(
-            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '__EFMigrationsHistory'",
+            "SELECT CASE WHEN OBJECT_ID(N'[__EFMigrationsHistory]', N'U') IS NULL THEN 0 ELSE 1 END",
             "SELECT MAX([MigrationId]) FROM [__EFMigrationsHistory]");
     }
 
