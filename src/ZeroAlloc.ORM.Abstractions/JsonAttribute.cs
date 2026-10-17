@@ -8,6 +8,8 @@ namespace ZeroAlloc.ORM;
 /// The generated binding sets the Npgsql parameter type to jsonb, so the SQL needs no
 /// <c>::jsonb</c> cast. Reads are unchanged: a jsonb column reads as a string. The
 /// marker needs Npgsql (ZAO082) and applies only to <see cref="string"/> (ZAO083).
+/// <c>[Json]</c> takes precedence over a <c>[Param]</c> DbType on Npgsql: the jsonb type
+/// is set after the DbType.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property)]
 public sealed class JsonAttribute : Attribute;

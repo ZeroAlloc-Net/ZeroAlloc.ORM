@@ -176,6 +176,22 @@ public class JsonParameterEmitTests
             """);
     }
 
+    // `[Json]` takes precedence over a `[Param]` DbType on Npgsql: the facet sets the
+    // DbType first, and the Jsonb line after `.Value` overrides it.
+    [Fact]
+    public void Json_with_Param_DbType_sets_Jsonb_after_DbType()
+    {
+        VerifyCompiled(Usings + """
+            using System.Data;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Command("UPDATE posts SET doc = @doc WHERE id = @id")]
+                public partial Task<int> UpdateAsync(Guid id, [Json, Param(DbType = DbType.String)] string doc, CancellationToken ct);
+            }
+            """);
+    }
+
     private const string JsonColumnSource = """
         public sealed record DocRow(Guid Id, [Json] string Doc);
 
