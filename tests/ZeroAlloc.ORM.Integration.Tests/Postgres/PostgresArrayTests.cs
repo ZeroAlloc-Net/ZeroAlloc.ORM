@@ -129,6 +129,46 @@ public sealed class PostgresArrayTests
         rows.Should().ContainSingle().Which.Id.Should().Be(hit);
     }
 
+    [Theory]
+    [MemberData(nameof(Fixtures))]
+    public async Task Numeric_arrays_and_array_scalar_returns(string kind)
+    {
+        await using var fx = await CreateAsync(kind).ConfigureAwait(false);
+        await fx.ExecuteDdlAsync("CREATE TABLE nums (id int PRIMARY KEY, ints integer[] NOT NULL, longs bigint[] NOT NULL);")
+            .ConfigureAwait(false);
+        var repo = new ArrayRepo(fx.Connection);
+
+        await repo.InsertNumsAsync(1, [1, 2, 3], [10_000_000_000L, -4L], CancellationToken.None).ConfigureAwait(false);
+        var nums = await repo.GetNumsAsync(1, CancellationToken.None).ConfigureAwait(false);
+        nums.Should().NotBeNull();
+        nums!.Ints.Should().Equal(1, 2, 3);
+        nums.Longs.Should().Equal(10_000_000_000L, -4L);
+
+        var id = Guid.NewGuid();
+        await repo.InsertAsync(id, ["p", "q"], CancellationToken.None).ConfigureAwait(false);
+        (await repo.GetTagsAsync(id, CancellationToken.None).ConfigureAwait(false)).Should().Equal("p", "q");
+        // ExecuteScalar returns exactly string[], which is what the generated cast relies on.
+        (await repo.GetTagsScalarAsync(id, CancellationToken.None).ConfigureAwait(false)).Should().Equal("p", "q");
+    }
+
+    [Theory]
+    [MemberData(nameof(Fixtures))]
+    public async Task Composite_parameter_and_bulk_insert_row_carry_arrays(string kind)
+    {
+        await using var fx = await CreateAsync(kind).ConfigureAwait(false);
+        await fx.ExecuteDdlAsync("CREATE TABLE posts (id int PRIMARY KEY, name text NOT NULL, tags text[] NOT NULL);")
+            .ConfigureAwait(false);
+        var repo = new ArrayRepo(fx.Connection);
+
+        var inserted = await repo.InsertPostsAsync(
+            [new PostRow(1, "a", ["x", "y"]), new PostRow(2, "a", ["z"]), new PostRow(3, "b", ["x"])],
+            CancellationToken.None).ConfigureAwait(false);
+        inserted.Should().Be(3);
+
+        (await repo.CountPostsAsync(new TagFilter("a", ["x", "q"]), CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+        (await repo.CountPostsAsync(new TagFilter("a", ["x", "z"]), CancellationToken.None).ConfigureAwait(false)).Should().Be(2);
+    }
+
     private static async Task<string?> ScalarAsync(PostgresFixture fx, string sql)
     {
         var cmd = fx.Connection.CreateCommand();

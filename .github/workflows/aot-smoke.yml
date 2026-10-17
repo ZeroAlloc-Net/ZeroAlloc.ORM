@@ -17,6 +17,20 @@ jobs:
   aot-publish-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A real server, so the smoke project runs its PostgreSQL array path (slim data source with
+    # EnableArrays) under NativeAOT. Locally the path is skipped unless ZAORM_AOT_PG is set.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -60,6 +74,8 @@ jobs:
 
       - name: Run AOT-published smoke test
         if: steps.check.outputs.exists == 'true'
+        env:
+          ZAORM_AOT_PG: Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=postgres
         run: |
           chmod +x ./aot-smoke-out/ZeroAlloc.ORM.AotSmoke
           # A hang fails fast: timeout exits 124, see ZeroAlloc-Net/ZeroAlloc.Cache#182.
