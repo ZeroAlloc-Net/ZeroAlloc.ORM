@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AwesomeAssertions;
+using Microsoft.Data.Sqlite;
 using Xunit;
 using ZeroAlloc.ORM.Migrations;
 
@@ -55,7 +56,24 @@ public class MigrationRunnerBaselineSqliteTests
             new MigrationBaseline(2, new FixedCheck(BaselineDecision.MarkApplied)));
         var act = () => runner.RunAsync(CancellationToken.None);
 
-        await act.Should().ThrowAsync<Exception>().ConfigureAwait(false);
+        await act.Should().ThrowAsync<SqliteException>().ConfigureAwait(false);
+        (await ReadVersionsAsync(fixture, source.Name).ConfigureAwait(false)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Undefined_decision_throws_naming_the_check_and_writes_nothing()
+    {
+        await using var fixture = new SqliteFixture();
+        await fixture.InitializeAsync().ConfigureAwait(false);
+        var source = new ListMigrationSource(ThreeMigrations);
+
+        var runner = new MigrationRunner(
+            fixture.Connection, source, new SqliteMigrationDialect(),
+            new MigrationBaseline(2, new FixedCheck((BaselineDecision)2)));
+        var act = () => runner.RunAsync(CancellationToken.None);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>().ConfigureAwait(false))
+            .Which.Message.Should().Contain(nameof(FixedCheck));
         (await ReadVersionsAsync(fixture, source.Name).ConfigureAwait(false)).Should().BeEmpty();
     }
 

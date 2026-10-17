@@ -536,7 +536,8 @@ decides from `__EFMigrationsHistory`:
 | --- | --- |
 | No `__EFMigrationsHistory` table (a new database) | Runs every migration |
 | Latest `MigrationId` equals the id you passed (ordinal comparison) | Records 1 through N as applied, then runs the rest |
-| Table is empty, or its latest id differs | Throws `ZeroAllocOrmMigrationConflictException` and writes nothing |
+| Table is empty, or its latest id differs | Throws `ZeroAllocOrmMigrationConflictException`; no history rows are recorded and no migrations run |
+| No such table in the default schema or search path, but one in another schema | Throws `ZeroAllocOrmMigrationConflictException` naming the schema |
 
 `EfCoreBaseline` supports `SqlDialect.PostgreSql`, `SqlDialect.Sqlite` and
 `SqlDialect.SqlServer`. On a later run the source has history, so the check
@@ -545,12 +546,14 @@ is skipped.
 The check compares the latest id by `MAX("MigrationId")`. EF ids start with a
 timestamp, so the maximum is the most recent migration.
 
-The check only sees the history table that the connection's default schema
-(SQL Server) or `search_path` (PostgreSQL) resolves. An EF history table in
+The check looks for the history table where the connection's default schema
+(SQL Server) or `search_path` (PostgreSQL) resolves it. An EF history table in
 another schema, from `HasDefaultSchema` or `MigrationsHistoryTable(name,
-schema)`, is not detected and counts as absent, so the check returns `RunAll`.
-Point the connection's `search_path` or default schema at it if that is where
-your history lives.
+schema)`, is not silently treated as a new database: the check throws and names
+the schema. Point the connection's `search_path` or default schema at it, then
+run again. Any exception thrown by a check propagates out of `RunAsync`; the
+history table may already exist by then, but no history rows are recorded and
+no migrations run.
 
 ### Preparing the migrations
 
@@ -601,7 +604,7 @@ await new MigrationRunner(
 ```
 
 On the production database the `daedalus` rows 1 through 12 are marked and
-13 onward run. On a fresh database migration 1 through 12 run and create the
+13 onward run. On a fresh database migrations 1 through 12 run and create the
 schema.
 
 ## Custom dialects (advanced)

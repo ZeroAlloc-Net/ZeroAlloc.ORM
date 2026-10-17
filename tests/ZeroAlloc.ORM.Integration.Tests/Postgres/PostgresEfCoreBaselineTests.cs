@@ -89,7 +89,7 @@ public class PostgresEfCoreBaselineTests
     }
 
     [Fact]
-    public async Task Ef_history_in_another_schema_is_treated_as_absent()
+    public async Task Ef_history_in_another_schema_throws_naming_the_schema()
     {
         await using var fixture = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
         await ExecuteAsync(fixture, "CREATE SCHEMA other").ConfigureAwait(false);
@@ -99,10 +99,11 @@ public class PostgresEfCoreBaselineTests
         await ExecuteAsync(fixture,
             $"INSERT INTO other.\"__EFMigrationsHistory\" VALUES ('{EfHead}', '9.0.0')").ConfigureAwait(false);
 
-        var decision = await EfCoreBaseline.LatestMigrationIs(EfHead, SqlDialect.PostgreSql)
-            .DecideAsync(fixture.Connection, CancellationToken.None).ConfigureAwait(false);
+        var act = () => EfCoreBaseline.LatestMigrationIs(EfHead, SqlDialect.PostgreSql)
+            .DecideAsync(fixture.Connection, CancellationToken.None);
 
-        decision.Should().Be(BaselineDecision.RunAll);
+        (await act.Should().ThrowAsync<ZeroAllocOrmMigrationConflictException>().ConfigureAwait(false))
+            .Which.Message.Should().Contain("other").And.Contain("search_path");
     }
 
     private static Task<IReadOnlyList<Migration>> RunDaedalusAsync(PostgresFixture fixture)

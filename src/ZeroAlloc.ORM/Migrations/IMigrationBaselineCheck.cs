@@ -17,7 +17,7 @@ public interface IMigrationBaselineCheck
     /// </summary>
     /// <exception cref="ZeroAllocOrmMigrationConflictException">
     /// Thrown when the database must not be touched, for example because its schema matches
-    /// neither an empty database nor the baseline. The runner writes nothing and rethrows.
+    /// neither an empty database nor the baseline. The runner records no history rows and runs no migrations, and rethrows. Any exception from the check propagates the same way.
     /// </exception>
     Task<BaselineDecision> DecideAsync(IAsyncDbConnection connection, CancellationToken ct);
 }

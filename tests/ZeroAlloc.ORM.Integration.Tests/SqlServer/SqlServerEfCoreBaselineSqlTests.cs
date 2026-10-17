@@ -36,6 +36,25 @@ public sealed class SqlServerEfCoreBaselineSqlTests
             "SELECT MAX([MigrationId]) FROM [__EFMigrationsHistory]");
     }
 
+    [Fact]
+    public async Task Missing_history_looks_for_the_table_in_other_schemas_through_sys_tables()
+    {
+        var fake = new ScalarRecordingConnection(0, "audit");
+        var asyncConnection = fake.AsAsync();
+        await using (asyncConnection.ConfigureAwait(false))
+        {
+            var act = () => EfCoreBaseline.LatestMigrationIs("20261014090300_AddIndex", SqlDialect.SqlServer)
+                .DecideAsync(asyncConnection, CancellationToken.None);
+
+            (await act.Should().ThrowAsync<ZeroAllocOrmMigrationConflictException>().ConfigureAwait(false))
+                .Which.Message.Should().Contain("audit");
+        }
+
+        fake.CommandTexts.Should().HaveCount(2);
+        fake.CommandTexts[1].Should().Be(
+            "SELECT TOP 1 SCHEMA_NAME(schema_id) FROM sys.tables WHERE name = '__EFMigrationsHistory' ORDER BY schema_id");
+    }
+
     // Returns the queued scalar results in order and records each CommandText.
     private sealed class ScalarRecordingConnection(params object[] results) : DbConnection
     {

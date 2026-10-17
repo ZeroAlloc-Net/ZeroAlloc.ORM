@@ -147,7 +147,8 @@ public sealed class MigrationRunner
     /// applied during this invocation (each with <see cref="Migration.AppliedAt"/>
     /// populated). A migration whose <c>Version</c> AND <c>Name</c> already match
     /// a row in the history table is a genuine replay and is skipped silently
-    /// (NOT included in the return list).
+    /// (NOT included in the return list). Migrations recorded as applied by a
+    /// <see cref="MigrationBaseline"/> were not run by this call and are not in the list either.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -174,7 +175,12 @@ public sealed class MigrationRunner
     /// <c>Name</c> — a version-number collision, not a replay. Also thrown when
     /// two discovered migrations share the same <c>Version</c>, regardless of
     /// whether either has been applied, and when a history table from before scoping
-    /// does not belong to this source.
+    /// does not belong to this source. Also thrown when a <see cref="MigrationBaseline.ThroughVersion"/>
+    /// is not one of the source's versions, on every run. The exceptions of a baseline's check
+    /// propagate unchanged, including this type.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A baseline's check returned a <see cref="BaselineDecision"/> value that is not defined.
     /// </exception>
     /// <exception cref="System.Data.Common.DbException">
     /// Propagated verbatim when a migration's SQL fails. The transaction for the
@@ -212,12 +218,7 @@ public sealed class MigrationRunner
             // Baseline: a source with no history may be adopting a database built elsewhere.
             if (_baseline is not null && applied.Count == 0)
             {
-                var decision = await _baseline.Check.DecideAsync(_connection, ct).ConfigureAwait(false);
-                if (decision == BaselineDecision.MarkApplied)
-                {
-                    await RecordBaselineAsync(_baseline, discovered, ct).ConfigureAwait(false);
-                    applied = await ReadAppliedVersionsAsync(tx: null, ct).ConfigureAwait(false);
-                }
+                applied = await ApplyBaselineAsync(_baseline, discovered, applied, ct).ConfigureAwait(false);
             }
 
             var pending = ResolvePending(discovered, applied);
@@ -241,6 +242,35 @@ public sealed class MigrationRunner
             // cleanup decisions.
             await _dialect.ReleaseLockAsync(_connection, CancellationToken.None).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Asks the baseline's check what to do for a source with no history. On
+    /// <see cref="BaselineDecision.MarkApplied"/> the baseline versions are recorded and the
+    /// applied versions are read again; otherwise <paramref name="applied"/> is returned as is.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The check returned an undefined decision.</exception>
+    private async Task<Dictionary<int, string>> ApplyBaselineAsync(
+        MigrationBaseline baseline,
+        IReadOnlyList<Migration> discovered,
+        Dictionary<int, string> applied,
+        CancellationToken ct)
+    {
+        var decision = await baseline.Check.DecideAsync(_connection, ct).ConfigureAwait(false);
+        if (decision is not (BaselineDecision.RunAll or BaselineDecision.MarkApplied))
+        {
+            throw new InvalidOperationException(
+                $"The baseline check {baseline.Check.GetType()} returned the undefined decision "
+                + $"{(int)decision}. Return BaselineDecision.RunAll or BaselineDecision.MarkApplied.");
+        }
+
+        if (decision == BaselineDecision.RunAll)
+        {
+            return applied;
+        }
+
+        await RecordBaselineAsync(baseline, discovered, ct).ConfigureAwait(false);
+        return await ReadAppliedVersionsAsync(tx: null, ct).ConfigureAwait(false);
     }
 
     /// <summary>
