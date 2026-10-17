@@ -22,9 +22,14 @@ namespace ZeroAlloc.ORM.Migrations;
 ///   <item>Execute <see cref="IMigrationDialect.CreateHistoryTableSql"/> — idempotent.</item>
 ///   <item>Get migrations from <see cref="IMigrationSource.GetMigrations"/>, and reject
 ///         (<see cref="ZeroAllocOrmMigrationConflictException"/>) two of them sharing a
-///         version.</item>
+///         version. A <see cref="MigrationBaseline.ThroughVersion"/> that is not one of
+///         the discovered versions is rejected the same way.</item>
 ///   <item>#306 — for an <see cref="IScopedMigrationDialect"/>, upgrade a history table
 ///         from before scoping, in one transaction; see <see cref="RunAsync"/>.</item>
+///   <item>When a <see cref="MigrationBaseline"/> is set and the source has no recorded
+///         history, ask its check. On <see cref="BaselineDecision.MarkApplied"/>, record
+///         every migration up to <see cref="MigrationBaseline.ThroughVersion"/> as applied
+///         without running it, in one transaction, then re-read the applied versions.</item>
 ///   <item>Read the source's applied versions via
 ///         <see cref="IMigrationDialect.SelectAppliedVersionsSql"/> into a
 ///         <see cref="Dictionary{TKey, TValue}"/> of version → recorded name. Reject any
@@ -95,6 +100,11 @@ public sealed class MigrationRunner
     /// through <see cref="MigrationBaseline.ThroughVersion"/> are recorded as applied without
     /// running them. Otherwise identical to the three-argument constructor.
     /// </summary>
+    /// <remarks>
+    /// A <see cref="MigrationBaseline.ThroughVersion"/> missing from the source throws a
+    /// <see cref="ZeroAllocOrmMigrationConflictException"/> on every run, even when the source
+    /// already has history, so a stale baseline configuration fails loudly.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">Any argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="source"/>'s <see cref="IMigrationSource.Name"/> is null, empty,

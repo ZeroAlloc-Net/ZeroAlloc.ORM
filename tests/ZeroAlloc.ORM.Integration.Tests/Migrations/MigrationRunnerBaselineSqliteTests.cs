@@ -40,6 +40,23 @@ public class MigrationRunnerBaselineSqliteTests
         applied.Select(m => m.Version).Should().Equal(3);
         (await ReadVersionsAsync(fixture, source.Name).ConfigureAwait(false)).Should().Equal(1, 2, 3);
         (await TableExistsAsync(fixture, "t3").ConfigureAwait(false)).Should().BeTrue();
+        (await ReadNamesAsync(fixture, source.Name).ConfigureAwait(false)).Take(2).Should().Equal("one", "two");
+    }
+
+    [Fact]
+    public async Task Baseline_insert_failure_rolls_back_and_writes_nothing()
+    {
+        await using var fixture = new SqliteFixture();
+        await fixture.InitializeAsync().ConfigureAwait(false);
+        var source = new ListMigrationSource(ThreeMigrations);
+
+        var runner = new MigrationRunner(
+            fixture.Connection, source, new FailingSecondInsertDialect(),
+            new MigrationBaseline(2, new FixedCheck(BaselineDecision.MarkApplied)));
+        var act = () => runner.RunAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>().ConfigureAwait(false);
+        (await ReadVersionsAsync(fixture, source.Name).ConfigureAwait(false)).Should().BeEmpty();
     }
 
     [Fact]
@@ -164,6 +181,29 @@ public class MigrationRunnerBaselineSqliteTests
         return list;
     }
 
+    private static async Task<List<string>> ReadNamesAsync(SqliteFixture fixture, string sourceName)
+    {
+        var list = new List<string>();
+        var cmd = fixture.Connection.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "SELECT name FROM __zaorm_migrations WHERE source = @source ORDER BY version";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@source";
+            p.Value = sourceName;
+            cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync(CancellationToken.None).ConfigureAwait(false);
+            await using (((IAsyncDisposable)reader).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(CancellationToken.None).ConfigureAwait(false))
+                {
+                    list.Add(reader.GetString(0));
+                }
+            }
+        }
+        return list;
+    }
+
     private static async Task<bool> TableExistsAsync(SqliteFixture fixture, string tableName)
     {
         var cmd = fixture.Connection.CreateCommand();
@@ -190,6 +230,25 @@ public class MigrationRunnerBaselineSqliteTests
             Calls++;
             return Task.FromResult(_decision);
         }
+    }
+
+    // Delegates to the Sqlite dialect, but hands out invalid insert SQL from the second read on,
+    // so the baseline's second row fails after the first was written.
+    private sealed class FailingSecondInsertDialect : IScopedMigrationDialect
+    {
+        private readonly SqliteMigrationDialect _inner = new();
+        private int _reads;
+
+        public string CreateHistoryTableSql => _inner.CreateHistoryTableSql;
+        public string SelectAppliedVersionsSql => _inner.SelectAppliedVersionsSql;
+        public string InsertAppliedVersionSql
+            => ++_reads == 1 ? _inner.InsertAppliedVersionSql : "INSERT INTO no_such_table VALUES (1)";
+        public string SelectUnscopedHistorySql => _inner.SelectUnscopedHistorySql;
+        public IReadOnlyList<string> UpgradeUnscopedHistorySql => _inner.UpgradeUnscopedHistorySql;
+        public Task AcquireLockAsync(IAsyncDbConnection connection, CancellationToken ct)
+            => _inner.AcquireLockAsync(connection, ct);
+        public Task ReleaseLockAsync(IAsyncDbConnection connection, CancellationToken ct)
+            => _inner.ReleaseLockAsync(connection, ct);
     }
 
     private sealed class ThrowingCheck : IMigrationBaselineCheck
