@@ -7,6 +7,7 @@
 // code fails the workflow.
 
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using System.Data.Async;
 using System.Data.Async.Adapters;
 using System.Globalization;
@@ -122,6 +123,8 @@ await using (raw.ConfigureAwait(false))
     }
 }
 
+await RunPostgresArraysAsync().ConfigureAwait(false);
+
 Console.WriteLine("AOT smoke test passed.");
 return 0;
 
@@ -145,4 +148,52 @@ static void AssertValueRow(ValueRow? actual, ValueRow expected, string label)
             $"{label}: expected {expected} with payload {Convert.ToHexString(expected.Payload)}, " +
             $"got {actual} with payload {Convert.ToHexString(actual.Payload)}.");
     }
+}
+
+// PostgreSQL arrays through a slim data source, which needs EnableArrays. Skipped without a server so
+// CI needs none; the publish still trims and analyses the generated array code either way.
+static async Task RunPostgresArraysAsync()
+{
+    var cs = Environment.GetEnvironmentVariable("ZAORM_AOT_PG");
+    if (string.IsNullOrEmpty(cs))
+    {
+        Console.WriteLine("Postgres array smoke skipped: ZAORM_AOT_PG is not set.");
+        return;
+    }
+
+    var dataSource = new NpgsqlSlimDataSourceBuilder(cs).EnableArrays().Build();
+    await using (dataSource.ConfigureAwait(false))
+    {
+        var pg = dataSource.CreateConnection();
+        await using (pg.ConfigureAwait(false))
+        {
+            await pg.OpenAsync().ConfigureAwait(false);
+            IAsyncDbConnection connection = pg.AsAsync();
+            await using (connection.ConfigureAwait(false))
+            {
+                var ddl = connection.CreateCommand();
+                await using (ddl.ConfigureAwait(false))
+                {
+                    ddl.CommandText = "CREATE TABLE tagged (id uuid PRIMARY KEY, tags text[] NOT NULL);";
+                    await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+
+                var repo = new ArrayRepo(connection);
+                var a = new Guid("0f8fad5b-d9cb-469f-a165-70867728950e");
+                var b = new Guid("7c9e6679-7425-40de-944b-e07fc1f90ae7");
+                await repo.InsertAsync(a, ["x", "y"], CancellationToken.None).ConfigureAwait(false);
+                await repo.InsertAsync(b, ["z"], CancellationToken.None).ConfigureAwait(false);
+
+                var rows = await repo.GetByIdsAsync([b], CancellationToken.None).ConfigureAwait(false);
+                if (rows.Count != 1 || rows[0].Id != b || !rows[0].Tags.AsSpan().SequenceEqual(["z"]))
+                    throw new InvalidOperationException($"Unexpected array rows: {rows.Count}.");
+
+                var list = await repo.GetListAsync(a, CancellationToken.None).ConfigureAwait(false);
+                if (list is null || !list.Tags.SequenceEqual(["x", "y"], StringComparer.Ordinal))
+                    throw new InvalidOperationException("Unexpected List<string> column.");
+            }
+        }
+    }
+
+    Console.WriteLine("Postgres array smoke passed.");
 }

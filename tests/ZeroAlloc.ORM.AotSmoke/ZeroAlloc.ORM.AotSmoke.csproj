@@ -20,6 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- PostgreSQL array smoke, see ArrayRepo.cs. The generator reports ZAO082 without Npgsql. -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- CVE-2025-6965 / GHSA-2m69-gcr7-jv3q: override the vulnerable native SQLite
          binary (SQLitePCLRaw.lib.e_sqlite3 2.1.11, SQLite < 3.50.2) pulled in

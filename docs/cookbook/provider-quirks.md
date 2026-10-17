@@ -283,7 +283,9 @@ public sealed partial class TagRepo(IAsyncDbConnection connection)
   return `Task<T[]>` too.
 - Output parameters of array type are not supported (ZAO022).
 - The project must reference Npgsql, otherwise the build reports ZAO082. No other provider can bind a CLR array.
-- The generator never references Npgsql; the generated code stays AOT-clean.
+- The generator never references Npgsql. The AOT smoke project (`tests/ZeroAlloc.ORM.AotSmoke`) publishes
+  array parameter and column code with `PublishAot` and zero trim or AOT warnings. It also runs it
+  against a server when `ZAORM_AOT_PG` holds a connection string, which CI does not set.
 
 A connection built from `NpgsqlSlimDataSourceBuilder` registers no optional type handlers. Call
 `EnableArrays()` on it, or Npgsql throws at the first array parameter or column:

@@ -71,7 +71,7 @@ public sealed class PostgresFixture : IAsyncDisposable
 
     /// <summary>
     /// Like <see cref="CreateAndInitializeAsync"/>, but opens the connection from
-    /// <c>new NpgsqlSlimDataSourceBuilder(cs).Build()</c>. The slim builder
+    /// <c>new NpgsqlSlimDataSourceBuilder(cs).EnableArrays().Build()</c>. The slim builder
     /// registers no optional type handlers, so array support has to be switched on explicitly.
     /// </summary>
     public static async Task<PostgresFixture> CreateSlimAndInitializeAsync()

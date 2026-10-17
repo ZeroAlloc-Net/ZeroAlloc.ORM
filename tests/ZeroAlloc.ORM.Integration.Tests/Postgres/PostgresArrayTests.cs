@@ -15,11 +15,23 @@ public sealed class PostgresArrayTests
 
     private static async Task<PostgresFixture> CreateAsync(string kind)
     {
-        var fx = string.Equals(kind, "slim", StringComparison.Ordinal)
-            ? await PostgresFixture.CreateSlimAndInitializeAsync().ConfigureAwait(false)
-            : await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
-        await fx.ExecuteDdlAsync(Ddl).ConfigureAwait(false);
-        return fx;
+        PostgresFixture? fx = null;
+        try
+        {
+            fx = string.Equals(kind, "slim", StringComparison.Ordinal)
+                ? await PostgresFixture.CreateSlimAndInitializeAsync().ConfigureAwait(false)
+                : await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(Ddl).ConfigureAwait(false);
+            return fx;
+        }
+        catch
+        {
+            if (fx is not null)
+            {
+                await fx.DisposeAsync().ConfigureAwait(false);
+            }
+            throw;
+        }
     }
 
     [Theory]
@@ -44,7 +56,8 @@ public sealed class PostgresArrayTests
     {
         await using var fx = await CreateAsync(kind).ConfigureAwait(false);
         var repo = new ArrayRepo(fx.Connection);
-        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToList();
+        // Ascending ids: Postgres orders uuid bytewise, so ORDER BY id matches the list order.
+        var ids = Enumerable.Range(1, 4).Select(i => new Guid(i, 0, 0, new byte[8])).ToList();
         for (var i = 0; i < ids.Count; i++)
         {
             await repo.InsertAsync(ids[i], [$"t{i}"], CancellationToken.None).ConfigureAwait(false);
@@ -52,7 +65,7 @@ public sealed class PostgresArrayTests
 
         var rows = await repo.GetByIdsAsync([ids[1], ids[3]], CancellationToken.None).ConfigureAwait(false);
 
-        rows.Select(r => r.Id).Should().BeEquivalentTo(new[] { ids[1], ids[3] });
+        rows.Select(r => r.Id).Should().Equal(ids[1], ids[3]);
     }
 
     [Theory]
