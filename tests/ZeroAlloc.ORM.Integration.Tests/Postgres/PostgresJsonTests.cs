@@ -44,16 +44,31 @@ public sealed class PostgresJsonTests
 
         // The SQL in JsonRepo has no ::jsonb cast. Without the Jsonb parameter type Npgsql sends text
         // and Postgres rejects it for a jsonb column, so a successful insert proves the type is set.
-        (await repo.InsertAsync(id, "{\"a\": \"x\", \"b\": [1, 2]}", "[true]", CancellationToken.None).ConfigureAwait(false))
+        (await repo.InsertAsync(id, "{\"b\":[1,2],\"a\":\"x\"}", "[ true ]", CancellationToken.None).ConfigureAwait(false))
             .Should().Be(1);
 
         (await repo.GetFieldAAsync(id, CancellationToken.None).ConfigureAwait(false)).Should().Be("x");
         var row = await repo.GetAsync(id, CancellationToken.None).ConfigureAwait(false);
         row.Should().NotBeNull();
         row!.Id.Should().Be(id);
-        // jsonb normalises whitespace, so the stored text differs from the input.
+        // The input is not canonical. jsonb reorders keys and normalises whitespace, plain text would not.
         row.Body.Should().Be("{\"a\": \"x\", \"b\": [1, 2]}");
         row.Note.Should().Be("[true]");
+    }
+
+    [Fact]
+    public void Sql_carries_no_jsonb_cast()
+    {
+        string[] statements =
+        [
+            JsonRepo.InsertSql, JsonRepo.GetSql, JsonRepo.FieldASql,
+            JsonRepo.NoteIsNullSql, JsonRepo.InsertPayloadSql, JsonRepo.InsertManySql,
+        ];
+
+        foreach (var sql in statements)
+        {
+            sql.Should().NotContain("::jsonb").And.NotContain("CAST(");
+        }
     }
 
     [Theory]
