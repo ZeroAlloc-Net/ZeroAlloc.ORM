@@ -150,6 +150,39 @@ public class ArrayParameterEmitTests
             """);
     }
 
+    // A nullable struct composite binds through `@filter.Value.@Tags`; the copy
+    // expression reads it from a local, so the struct is copied once.
+    [Fact]
+    public void Nullable_composite_parameter_with_array_member_binds_value()
+    {
+        VerifyCompiled(Usings + """
+            public readonly record struct TagFilter(string Name, IReadOnlyList<string> Tags);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT COUNT(*) FROM posts WHERE name = @filter_Name AND tags && @filter_Tags")]
+                public partial Task<int> CountAsync(TagFilter? filter, CancellationToken ct);
+            }
+            """,
+            "ZAO050");
+    }
+
+    // An output parameter of array type stays unsupported. The tuple must not fall
+    // through to a multi-result read that would treat the output field as a result set.
+    [Fact]
+    public void Stored_procedure_array_output_parameter_reports_ZAO022()
+    {
+        var result = GeneratorHarness.RunGenerator(Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_tags")]
+                public partial Task<(int Count, string[] Tags)> GetAsync(int id, string[] tags, CancellationToken ct);
+            }
+            """, NpgsqlStub.Source);
+
+        Assert.Equal("ZAO022", Assert.Single(result.Results[0].Diagnostics).Id);
+    }
+
     [Fact]
     public void Bulk_insert_row_with_array_property_binds_value()
     {
@@ -325,14 +358,20 @@ public class ArrayParameterEmitTests
 
     // The generator reports nothing, the emitted code compiles without an error or a
     // warning, and the snapshot matches.
+    // `expectedDiagnostic` names the one generator diagnostic a case expects, such
+    // as the ZAO050 warning every nullable composite gets; null expects none.
     private static void VerifyCompiled(
         string source,
+        string? expectedDiagnostic = null,
         [CallerFilePath] string testFilePath = "",
         [CallerMemberName] string testMethod = "")
     {
         var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(source, NpgsqlStub.Source);
 
-        Assert.Empty(result.Results[0].Diagnostics);
+        if (expectedDiagnostic is null)
+            Assert.Empty(result.Results[0].Diagnostics);
+        else
+            Assert.Equal(expectedDiagnostic, Assert.Single(result.Results[0].Diagnostics).Id);
         var generatedPaths = result.GeneratedTrees.Select(t => t.FilePath).ToHashSet(System.StringComparer.Ordinal);
         var emittedProblems = compilation.GetDiagnostics()
             .Where(d => d.Severity >= DiagnosticSeverity.Warning

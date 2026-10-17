@@ -23,7 +23,8 @@ partial class Repo
             __cmd.Parameters.Add(__p_filter_Name);
             var __p_filter_Tags = __cmd.CreateParameter();
             __p_filter_Tags.ParameterName = "filter_Tags";
-            __p_filter_Tags.Value = @filter.@Tags is null ? global::System.DBNull.Value : (object?)(@filter.@Tags as string[]) ?? (object?)(@filter.@Tags as global::System.Collections.Generic.List<string>) ?? (string[])[.. @filter.@Tags];
+            var __p_filter_Tags_value = @filter.@Tags;
+            __p_filter_Tags.Value = __p_filter_Tags_value is null ? global::System.DBNull.Value : (object?)(__p_filter_Tags_value as string[]) ?? (object?)(__p_filter_Tags_value as global::System.Collections.Generic.List<string>) ?? (string[])[.. __p_filter_Tags_value];
             __cmd.Parameters.Add(__p_filter_Tags);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);

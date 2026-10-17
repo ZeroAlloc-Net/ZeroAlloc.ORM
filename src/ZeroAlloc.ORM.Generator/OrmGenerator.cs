@@ -1621,6 +1621,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 {
                     return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 }
+                if (SprocHasArrayOutputParamMatch(tupleNamed, method.Parameters, conventionContext))
+                    return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 var sprocOutputs = TryBuildSprocOutputParamsMaterialization(
                     tupleNamed, tupleReturnsNullable, method.Parameters, conventionContext);
                 if (sprocOutputs is not null)
@@ -3376,6 +3378,33 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static bool SprocHasAnyOutputParamMatch(
         INamedTypeSymbol tupleType,
         ImmutableArray<IParameterSymbol> methodParameters)
+        => OutputMatchedTupleFields(tupleType, methodParameters).Count > 0;
+
+    // An output parameter of PostgreSQL array type is unsupported: it needs a DbType,
+    // and Npgsql an array NpgsqlDbType, that the emit cannot name. Without this check
+    // TryBuildSprocOutputParamsMaterialization would return null for it and the tuple
+    // would fall through to MultiResultSet, which reads arrays, silently turning the
+    // output field into a result-set position. The caller reports ZAO022 instead.
+    private static bool SprocHasArrayOutputParamMatch(
+        INamedTypeSymbol tupleType,
+        ImmutableArray<IParameterSymbol> methodParameters,
+        ConventionContext conventionContext)
+    {
+        foreach (var field in OutputMatchedTupleFields(tupleType, methodParameters))
+        {
+            var unwrapped = UnwrapNullableValueType(field.Type)
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            if (ConventionDiscovery.Resolve(unwrapped, conventionContext).Kind == ConventionKind.PrimitiveArray)
+                return true;
+        }
+        return false;
+    }
+
+    // The tuple fields whose name matches, case-insensitively, a non-CancellationToken
+    // parameter: the output positions of a [StoredProcedure] tuple return.
+    private static List<IFieldSymbol> OutputMatchedTupleFields(
+        INamedTypeSymbol tupleType,
+        ImmutableArray<IParameterSymbol> methodParameters)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in methodParameters)
@@ -3387,11 +3416,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
             names.Add(p.Name);
         }
+        var matched = new List<IFieldSymbol>();
         foreach (var field in tupleType.TupleElements)
         {
-            if (names.Contains(field.Name)) return true;
+            if (names.Contains(field.Name)) matched.Add(field);
         }
-        return false;
+        return matched;
     }
 
     private static SprocOutputParamsMaterializationModel? TryBuildSprocOutputParamsMaterialization(
@@ -3443,15 +3473,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var unwrapped = UnwrapNullableValueType(elementType)
                     .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
                 var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
-                string? reader = resolution.Kind switch
-                {
-                    ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(unwrapped),
-                    ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                        => ResolveUnderlyingReaderForFactory(resolution),
-                    ConventionKind.Enum => ResolveUnderlyingReaderForEnum(unwrapped),
-                    ConventionKind.EnumAsString => "GetString",
-                    _ => null,
-                };
+                // A PostgreSQL array output parameter is unsupported; the caller has
+                // already rejected it with SprocHasArrayOutputParamMatch, and this keeps
+                // the output reader to the single-value conventions.
+                string? reader = resolution.Kind == ConventionKind.PrimitiveArray
+                    ? null
+                    : ResolveColumnReader(unwrapped, resolution);
                 if (reader is null) return null;
                 var convention = BuildConventionInfo(unwrapped, resolution, reader);
                 var isInt32 = unwrapped.SpecialType == SpecialType.System_Int32;
@@ -8400,7 +8427,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // BuildCompositeFieldValueExpression produces `@total.Amount`;
                 // we patch that to `@total.Value.Amount` by injecting `.Value`
                 // between the parameter name and the field accessor.
-                var valueExpr = BuildCompositeFieldValueExpressionForNullable(p.Name, field);
+                var valueExpr = HoistArrayCopySubject(
+                    sb, indent + "    ", local, BuildCompositeFieldValueExpressionForNullable(p.Name, field), field.Convention);
                 sb.AppendLine($"{indent}    {local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
@@ -8416,10 +8444,25 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
 
-            var valueExpr = BuildCompositeFieldValueExpression(p.Name, field);
+            var valueExpr = HoistArrayCopySubject(
+                sb, indent, local, BuildCompositeFieldValueExpression(p.Name, field), field.Convention);
             sb.AppendLine($"{indent}{local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
+    }
+
+    // An IReadOnlyList<T> array member names its value up to four times in the
+    // BuildBoundValue copy expression. A member access, `@filter.Value.@Tags` on a
+    // nullable struct composite, would copy the struct each time, so the member is
+    // read once into a local first. Every other field keeps its inline expression.
+    private static string HoistArrayCopySubject(
+        StringBuilder sb, string indent, string parameterLocal, string valueExpr, ConventionInfo? conv)
+    {
+        if (conv is not { Kind: (int)ConventionKind.PrimitiveArray, ArrayShape: (int)PrimitiveArrayShape.ReadOnlyList })
+            return valueExpr;
+        var valueLocal = parameterLocal + "_value";
+        sb.AppendLine($"{indent}var {valueLocal} = {valueExpr};");
+        return valueLocal;
     }
 
     // v0.5 Phase C.2 — variant of BuildCompositeFieldValueExpression for the

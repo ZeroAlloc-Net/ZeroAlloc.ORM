@@ -97,7 +97,7 @@ public static class ConventionDiscovery
             return null;
         }
 
-        if (!IsPrimitiveArrayElement(element)) return null;
+        if (!PrimitiveCatalog.IsPrimitiveArrayElement(element)) return null;
 
         return new ConventionResult(
             ConventionKind.PrimitiveArray,
@@ -115,12 +115,6 @@ public static class ConventionDiscovery
            && generic.ContainingNamespace is { Name: "Collections" } collections
            && collections.ContainingNamespace is { Name: "System" } system
            && system.ContainingNamespace?.IsGlobalNamespace == true;
-
-    private static bool IsPrimitiveArrayElement(ITypeSymbol element)
-        => element.SpecialType is SpecialType.System_String or SpecialType.System_Int32 or SpecialType.System_Int64
-           || (element.MetadataName == "Guid"
-               && element.ContainingNamespace is { Name: "System" } ns
-               && ns.ContainingNamespace?.IsGlobalNamespace == true);
 
     private static ConventionResult? TryPrimitive(ITypeSymbol type)
     {
