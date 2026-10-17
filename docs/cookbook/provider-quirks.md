@@ -297,6 +297,39 @@ await using var connection = dataSource.CreateConnection();
 
 A full `NpgsqlConnection` needs nothing extra.
 
+### PostgreSQL jsonb
+
+Npgsql sends a plain `string` parameter as `text`, and Postgres refuses `text` for a `jsonb` column
+(42804). `[Json]` marks a string as a JSON document, and the generated binding sets
+`NpgsqlDbType.Jsonb`, so the SQL needs no `::jsonb` cast:
+
+```csharp
+[Dialect(SqlDialect.PostgreSql)]
+public sealed partial class DocumentRepo(IAsyncDbConnection connection)
+{
+    [Command("INSERT INTO documents (id, body, note) VALUES (@id, @body, @note)")]
+    public partial Task<int> InsertAsync(Guid id, [Json] string body, [Json] string? note, CancellationToken ct);
+
+    [Query("SELECT id, body, note FROM documents WHERE id = @id")]
+    public partial Task<DocumentRow?> GetAsync(Guid id, CancellationToken ct);
+}
+
+public sealed record DocumentRow(Guid Id, [Json] string Body, [Json] string? Note);
+```
+
+- `[Json]` is valid on `string` and `string?` method parameters, record and constructor parameters,
+  composite members and bulk-insert row properties. On a positional record, `[Json]` marks the
+  constructor parameter and `[property: Json]` marks the property; either works.
+- `null` stores SQL `NULL`. The JSON literal `null` (the string `"null"`) is a value, not SQL `NULL`.
+- Columns read back with the normal string reader. `jsonb` normalises whitespace and key order, so
+  the text read back can differ from the text stored.
+- A document that is not valid JSON makes Postgres throw a `PostgresException` with SQLSTATE `22P02`.
+- The project must reference Npgsql, otherwise ZAO082. Any type other than `string` reports ZAO083.
+- On other providers the Npgsql type test falls through and the string binds as plain text, so the same
+  repository shape works against a `TEXT` column on Sqlite.
+- Reads and writes work on a full `NpgsqlConnection` and on a slim data source, with no extra builder
+  call beyond `EnableArrays()` for arrays. The AOT smoke project covers it under `PublishAot`.
+
 ### NUMERIC handling
 
 Postgres has a native `NUMERIC` type that maps to CLR `decimal` directly —
