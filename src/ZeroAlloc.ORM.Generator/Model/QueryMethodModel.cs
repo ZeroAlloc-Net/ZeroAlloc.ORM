@@ -96,6 +96,12 @@ internal enum EmitShape
     // with `[EnumeratorCancellation] CancellationToken ct` and drain into a
     // List in the caller.
     ListResultSet,
+    // A [Query] returning one PostgreSQL array, `Task<string[]>` or `Task<string[]?>`:
+    // column 0 of the first row, read through `GetFieldValue<T[]>`. m.Materialization
+    // carries the one ColumnBinding. A non-nullable return throws on no row or NULL;
+    // a nullable one returns null. List<T> and IReadOnlyList<T> returns stay
+    // ListResultSet, a list of rows.
+    ScalarArray,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

@@ -67,11 +67,48 @@ public class PrimitiveArrayDiscoveryTests
         result.Kind.Should().Be(ConventionKind.Unknown);
     }
 
+    // An array is one column, so a multi-column record holding one is a composite.
+    [Fact]
+    public void Record_with_array_member_is_MultiArgCtor()
+    {
+        var (compilation, type) = TypeOf("Labels");
+
+        var result = ConventionDiscovery.Resolve(type, new ConventionContext(compilation));
+
+        result.Kind.Should().Be(ConventionKind.MultiArgCtor);
+        result.ExpandedColumns.Should().HaveCount(2);
+    }
+
+    [Theory]
+    [InlineData("string", "GetFieldValue<string[]>")]
+    [InlineData("string?", "GetFieldValue<string[]>")]
+    [InlineData("int", "GetFieldValue<int[]>")]
+    [InlineData("long", "GetFieldValue<long[]>")]
+    [InlineData("System.Guid", "GetFieldValue<global::System.Guid[]>")]
+    public void Array_reader_reads_the_element_array(string elementSyntax, string reader)
+    {
+        var (_, element) = TypeOf(elementSyntax);
+
+        PrimitiveCatalog.GetArrayReaderMethod(element).Should().Be(reader);
+    }
+
+    [Theory]
+    [InlineData("byte")]
+    [InlineData("decimal")]
+    [InlineData("CustomerRow")]
+    public void Array_reader_is_null_for_other_elements(string elementSyntax)
+    {
+        var (_, element) = TypeOf(elementSyntax);
+
+        PrimitiveCatalog.GetArrayReaderMethod(element).Should().BeNull();
+    }
+
     private static (Compilation Compilation, ITypeSymbol Type) TypeOf(string typeSyntax)
     {
         var compilation = TypeFixture.CreateCompilation($$"""
             #nullable enable
             public sealed record CustomerRow(int Id);
+            public sealed record Labels(string Name, string[] Tags);
             public class Anchor { public {{typeSyntax}} Value => default!; }
             """);
         var anchor = compilation.GetTypeByMetadataName("Anchor")!;

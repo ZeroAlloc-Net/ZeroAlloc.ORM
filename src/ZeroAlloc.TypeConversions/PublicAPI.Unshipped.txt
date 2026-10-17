@@ -9,3 +9,4 @@ ZeroAlloc.TypeConversions.PrimitiveArrayShape.Array = 1 -> ZeroAlloc.TypeConvers
 ZeroAlloc.TypeConversions.PrimitiveArrayShape.List = 2 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
 ZeroAlloc.TypeConversions.PrimitiveArrayShape.None = 0 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
 ZeroAlloc.TypeConversions.PrimitiveArrayShape.ReadOnlyList = 3 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetArrayReaderMethod(Microsoft.CodeAnalysis.ITypeSymbol! elementType) -> string?

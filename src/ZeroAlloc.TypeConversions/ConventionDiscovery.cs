@@ -273,6 +273,8 @@ public static class ConventionDiscovery
                 case ConventionKind.ValueObject:
                 case ConventionKind.StaticFactory:
                 case ConventionKind.SingleArgCtor:
+                // A PostgreSQL array is one column too: one parameter, one reader call.
+                case ConventionKind.PrimitiveArray:
                     continue;
                 default:
                     // Unknown OR MultiArgCtor (recursive) — bail out of composite detection.

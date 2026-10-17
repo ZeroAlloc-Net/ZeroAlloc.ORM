@@ -645,6 +645,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sql,
             hasNpgsql);
 
+        // ZAO082 — a PostgreSQL array column reads only through Npgsql, like an array
+        // parameter. Checked on the classified result, so every row, composite, tuple
+        // element and scalar shape is covered by the one walk.
+        if (!hasNpgsql)
+        {
+            ReportArrayColumnsWithoutNpgsql(
+                diagnostics,
+                LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+                method.Name,
+                materialization,
+                multiResultMaterialization?.Elements ?? sprocOutputParamsMaterialization?.ResultElements);
+        }
+
         // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
         // Three triggers:
         //
@@ -1087,6 +1100,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         if (!nullableRefComposite)
                         {
                             compositeFields = BuildCompositeFields(resolution, conventionContext);
+                            if (!hasNpgsql)
+                            {
+                                // ZAO082 — an array member binds as its own DbParameter,
+                                // named the way the unpacking names it.
+                                foreach (var field in compositeFields)
+                                {
+                                    if (field.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
+                                        diagnostics.Add(ArrayRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
+                                }
+                            }
                             if (compositeFields.Length > 0)
                             {
                                 compositeTypeFullName = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -1615,6 +1638,19 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // emits the binding loop so the SQL placeholders resolve at runtime. FlatRow
         // followed the same path in Task 5.1.
 
+        // A PostgreSQL array at scalar position, `Task<string[]>` or `Task<string[]?>`.
+        // Only `T[]` gets here: the list branch above claims List<T> and
+        // IReadOnlyList<T> as a list of rows.
+        var scalarArray = ClassifyScalarLikeReturn(
+            method,
+            conventionContext,
+            allowNullable: true,
+            resolveReader: static (unwrapped, resolution) => resolution.Kind == ConventionKind.PrimitiveArray
+                ? ResolveColumnReader(unwrapped, resolution)
+                : null,
+            shape: EmitShape.ScalarArray);
+        if (scalarArray.Shape == EmitShape.ScalarArray) return scalarArray;
+
         // Nullable reference: Task<string?> (and any other supported nullable primitive).
         if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
         {
@@ -1764,15 +1800,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // primitive in the catalog, plus value-objects, enums, and
             // string-backed enums. Container / unsupported types fall through
             // to a null reader → Unknown.
-            resolveReader: static (unwrapped, resolution) => resolution.Kind switch
-            {
-                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(unwrapped),
-                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                    => ResolveUnderlyingReaderForFactory(resolution),
-                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(unwrapped),
-                ConventionKind.EnumAsString => "GetString",
-                _ => null,
-            },
+            // A PostgreSQL array is accepted as `T[]` only, as on a [Query]: a List<T>
+            // or IReadOnlyList<T> return reads as rows everywhere, so it stays a
+            // ZAO002 here. EmitScalarMaterialization casts the provider's `T[]`.
+            resolveReader: static (unwrapped, resolution) =>
+                resolution.Kind == ConventionKind.PrimitiveArray && resolution.ArrayShape != PrimitiveArrayShape.Array
+                    ? null
+                    : ResolveColumnReader(unwrapped, resolution),
             shape: EmitShape.CommandScalar);
 
     // v0.4 Phase C — [Command(Kind = Identity)] dispatch. Identity is the
@@ -2482,21 +2516,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // For Primitive conventions this IS the read; for ValueObject /
             // SingleArgCtor / StaticFactory we read the underlying primitive then
             // pass it to the factory.
-            string? reader = resolution.Kind switch
-            {
-                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
-                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                    => ResolveUnderlyingReaderForFactory(resolution),
-                // Enum (default int round-trip) reads via the enum's underlying integral
-                // primitive — typically GetInt32; byte/short/long-backed enums route
-                // through their matching reader (GetByte / GetInt16 / GetInt64). The
-                // emitter then wraps the read in a `(EnumType)` cast.
-                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
-                // [StoreAsString] enums round-trip as strings; reader is GetString
-                // and the emitter wraps the read in `global::System.Enum.Parse<T>(...)`.
-                ConventionKind.EnumAsString => "GetString",
-                _ => null,
-            };
+            string? reader = ResolveColumnReader(underlying, resolution);
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -2628,15 +2648,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var underlying = UnwrapNullableValueType(p.Type);
             var innerResolution = ConventionDiscovery.Resolve(underlying, conventionContext);
 
-            string? reader = innerResolution.Kind switch
-            {
-                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
-                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                    => ResolveUnderlyingReaderForFactory(innerResolution),
-                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
-                ConventionKind.EnumAsString => "GetString",
-                _ => null,
-            };
+            string? reader = ResolveColumnReader(underlying, innerResolution);
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -2773,15 +2785,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var underlying = UnwrapNullableValueType(p.Type);
             var innerResolution = ConventionDiscovery.Resolve(underlying, conventionContext);
 
-            string? reader = innerResolution.Kind switch
-            {
-                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
-                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                    => ResolveUnderlyingReaderForFactory(innerResolution),
-                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
-                ConventionKind.EnumAsString => "GetString",
-                _ => null,
-            };
+            string? reader = ResolveColumnReader(underlying, innerResolution);
             if (reader is null)
             {
                 if (diagnostics is not null && methodName is not null && factoryName is not null)
@@ -3262,15 +3266,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 return null;
             }
 
-            string? reader = resolution.Kind switch
-            {
-                ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
-                ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                    => ResolveUnderlyingReaderForFactory(resolution),
-                ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
-                ConventionKind.EnumAsString => "GetString",
-                _ => null,
-            };
+            string? reader = ResolveColumnReader(underlying, resolution);
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -3624,15 +3620,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // reader-method derivation that single-row shapes use so the emit stays
         // consistent across shape boundaries.
         var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
-        string? reader = resolution.Kind switch
-        {
-            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(unwrapped),
-            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
-                => ResolveUnderlyingReaderForFactory(resolution),
-            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(unwrapped),
-            ConventionKind.EnumAsString => "GetString",
-            _ => null,
-        };
+        string? reader = ResolveColumnReader(unwrapped, resolution);
         if (reader is null) return null;
 
         var convention = BuildConventionInfo(unwrapped, resolution, reader);
@@ -3779,10 +3767,49 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         ValuePropertyName: null,
                         UnderlyingReader: underlyingReader);
                 }
+            case ConventionKind.PrimitiveArray when resolution.ElementType is { } element:
+                // A PostgreSQL array has no factory and no wrapped primitive. The
+                // binding emit needs the element type and the shape to copy a
+                // non-array IReadOnlyList<T>; the read emit needs them to build a List<T>.
+                return new ConventionInfo(
+                    Kind: (int)resolution.Kind,
+                    FactoryFullName: null,
+                    FactoryIsCtor: false,
+                    ValuePropertyName: null,
+                    UnderlyingReader: null,
+                    // The annotation stays: a `List<string?>` member needs `List<string?>`,
+                    // not `List<string>`, or the emit draws a nullable warning.
+                    ArrayElementTypeName: element.ToDisplayString(TypeDisplayFormat),
+                    ArrayShape: (int)resolution.ArrayShape);
             default:
                 return null;
         }
     }
+
+    // The reader for one column, or null when its type has no single-column reader.
+    // Shared by every row, composite, factory and tuple-element column site, so each
+    // reads a type the same way. For a value object or factory type it is the reader
+    // of the wrapped primitive; the emit wraps the read in the convention.
+    private static string? ResolveColumnReader(ITypeSymbol underlying, ConventionResult resolution)
+        => resolution.Kind switch
+        {
+            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveUnderlyingReaderForFactory(resolution),
+            // Enum (default int round-trip) reads via the enum's underlying integral
+            // primitive — typically GetInt32; byte/short/long-backed enums route
+            // through their matching reader (GetByte / GetInt16 / GetInt64). The
+            // emitter then wraps the read in a `(EnumType)` cast.
+            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+            // [StoreAsString] enums round-trip as strings; reader is GetString
+            // and the emitter wraps the read in `global::System.Enum.Parse<T>(...)`.
+            ConventionKind.EnumAsString => "GetString",
+            // A PostgreSQL array reads as `T[]` for every shape; ApplyReadConvention
+            // copies it into a List<T> for that shape.
+            ConventionKind.PrimitiveArray when resolution.ElementType is { } element
+                => PrimitiveCatalog.GetArrayReaderMethod(element),
+            _ => null,
+        };
 
     // v0.5 Phase B — flatten a MultiArgCtor convention into the per-field model
     // the composite-binding emit consumes. Returns `default` (IsDefault, length 0)
@@ -4535,6 +4562,52 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
+    // ZAO082 for each PostgreSQL array column of a classified result. A row column is
+    // named by its ctor parameter or column, a tuple scalar by its element, and a
+    // scalar return, which has no name, by the method.
+    private static void ReportArrayColumnsWithoutNpgsql(
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        LocationInfo? location,
+        string methodName,
+        MaterializationModel? materialization,
+        EquatableArray<MultiResultElement>? elements)
+    {
+        if (materialization is not null)
+            ReportArrayColumns(diagnostics, location, methodName, materialization.Columns);
+        if (elements is not { } tupleElements)
+            return;
+        foreach (var element in tupleElements)
+        {
+            if (element.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
+                diagnostics.Add(ArrayRequiresNpgsql(element.TupleFieldName, location));
+            ReportArrayColumns(diagnostics, location, methodName, element.Columns);
+        }
+    }
+
+    private static void ReportArrayColumns(
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        LocationInfo? location,
+        string methodName,
+        EquatableArray<ColumnBinding> columns)
+    {
+        foreach (var col in columns)
+        {
+            if (col.InnerColumns.Length > 0)
+            {
+                ReportArrayColumns(diagnostics, location, methodName, col.InnerColumns);
+                continue;
+            }
+            if (col.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
+                diagnostics.Add(ArrayRequiresNpgsql(col.CtorArgName ?? col.ColumnName ?? methodName, location));
+        }
+    }
+
+    private static DiagnosticInfo ArrayRequiresNpgsql(string name, LocationInfo? location)
+        => new(
+            DescriptorId: "ZAO082",
+            Location: location,
+            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(name, "a PostgreSQL array")));
+
     // Npgsql is never a reference of ZeroAlloc.ORM; an adopter's compilation has it
     // when it references the Npgsql package. Roslyn caches GetTypeByMetadataName per
     // compilation, so the per-method call costs one lookup per compilation.
@@ -4791,6 +4864,9 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     break;
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.ScalarArray:
+                    EmitScalarArray(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.FlatRow:
                     EmitFlatRow(sb, m, repo.ConnectionAccess);
@@ -5285,7 +5361,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
             sb.AppendLine($"                    {paramLocal}.ParameterName = {cache}.{BulkInsertNamesField(binding, i)}[__i];");
-            sb.AppendLine($"                    {paramLocal}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
+            sb.AppendLine($"                    {paramLocal}.Value = {BuildBoundValue(valueExpr, isNullable: true, binding.Convention)};");
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
         sb.AppendLine("                }");
@@ -5969,7 +6045,13 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // byte[] falls back to a direct cast.
         var bang = col.IsNullable ? "" : "!";
         string materialized;
-        if (col.Convention is { } conv && conv.FactoryFullName is not null)
+        if (col.Convention is { Kind: (int)ConventionKind.PrimitiveArray } array)
+        {
+            // Npgsql's ExecuteScalar returns a PostgreSQL array as `T[]`, the one array
+            // shape ClassifyCommandScalar accepts, so a cast is the whole conversion.
+            materialized = $"({array.ArrayElementTypeName}[])__result{bang}";
+        }
+        else if (col.Convention is { } conv && conv.FactoryFullName is not null)
         {
             // For factory shapes the inner expression unwraps `__result` to the
             // factory's expected primitive — Convert.ToXxx when available so the
@@ -6187,6 +6269,56 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
         sb.AppendLine($"            return __reader.IsDBNull(0) ? null : __reader.{readerMethod}(0);");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // A [Query] returning one PostgreSQL array: column 0 of the first row. A nullable
+    // return maps no row and NULL to null, as EmitNullableScalar does. A non-nullable
+    // one throws ZeroAllocOrmMaterializationException for both: the no-row check runs
+    // inline, and a NULL surfaces through the #249 finder, so the valid path reads
+    // the column once and checks nothing else.
+    private static void EmitScalarArray(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null || mat.Columns.Length != 1)
+        {
+            // Defensive — classification should never assign ScalarArray without a column.
+            sb.AppendLine($"    // TODO: ScalarArray without single-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var col = mat.Columns[0];
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        if (col.IsNullable)
+        {
+            sb.AppendLine("                return null;");
+            sb.AppendLine($"            return {BuildPositionalReadExpression(col, 0)};");
+        }
+        else
+        {
+            var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
+            var typeDisplay = DisplayTypeName(col.TypeName);
+            var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+                $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+            sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
+            var checks = new List<NullCheck>
+            {
+                new(ColumnName: null, Ordinal: 0, Member: $"the return value of '{method}'", TypeName: col.TypeName),
+            };
+            EmitNullGuarded(sb, "            ", checks, "__NullColumn", $"            return {BuildPositionalReadExpression(col, 0)};\n");
+        }
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -6803,8 +6935,16 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     // Wrap a raw GetXxx read in the column's convention: an enum cast,
     // Enum.Parse for [StoreAsString], or the value object's ctor or factory.
+    // A PostgreSQL array reads as `T[]`, which a `T[]` or IReadOnlyList<T> member
+    // takes as it is; a List<T> member gets a copy.
     private static string ApplyReadConvention(ConventionInfo? conv, string readExpr)
     {
+        if (conv is { Kind: (int)ConventionKind.PrimitiveArray })
+        {
+            return conv.ArrayShape == (int)PrimitiveArrayShape.List
+                ? $"new global::System.Collections.Generic.List<{conv.ArrayElementTypeName}>({readExpr})"
+                : readExpr;
+        }
         if (conv is null || conv.FactoryFullName is null)
         {
             return readExpr;
@@ -7554,34 +7694,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
-            var valueExpr = "@" + p.Name;
-            if (p.Convention is { } conv)
-            {
-                if (conv.Kind == (int)ConventionKind.Enum)
-                {
-                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                    valueExpr = $"({castType})@{p.Name}";
-                }
-                else if (conv.Kind == (int)ConventionKind.EnumAsString)
-                {
-                    valueExpr = $"@{p.Name}.ToString()";
-                }
-                else if (conv.ValuePropertyName is { } propName)
-                {
-                    // A nullable value object binds its inner value, or null: `@p?.Value`.
-                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
-                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
-                }
-            }
-
-            if (p.IsNullable)
-            {
-                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-            }
-            else
-            {
-                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
-            }
+            sb.AppendLine($"{indent}{local}.Value = {BuildParameterValue(p)};");
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -7662,34 +7775,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output: null);
             }
 
-            var valueExpr = "@" + p.Name;
-            if (p.Convention is { } conv)
-            {
-                if (conv.Kind == (int)ConventionKind.Enum)
-                {
-                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                    valueExpr = $"({castType})@{p.Name}";
-                }
-                else if (conv.Kind == (int)ConventionKind.EnumAsString)
-                {
-                    valueExpr = $"@{p.Name}.ToString()";
-                }
-                else if (conv.ValuePropertyName is { } propName)
-                {
-                    // A nullable value object binds its inner value, or null: `@p?.Value`.
-                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
-                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
-                }
-            }
-
-            if (p.IsNullable)
-            {
-                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-            }
-            else
-            {
-                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
-            }
+            sb.AppendLine($"{indent}{local}.Value = {BuildParameterValue(p)};");
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
@@ -7863,34 +7949,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            var valueExpr = "@" + p.Name;
-            if (p.Convention is { } conv)
-            {
-                if (conv.Kind == (int)ConventionKind.Enum)
-                {
-                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                    valueExpr = $"({castType})@{p.Name}";
-                }
-                else if (conv.Kind == (int)ConventionKind.EnumAsString)
-                {
-                    valueExpr = $"@{p.Name}.ToString()";
-                }
-                else if (conv.ValuePropertyName is { } propName)
-                {
-                    // A nullable value object binds its inner value, or null: `@p?.Value`.
-                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
-                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
-                }
-            }
-
-            if (p.IsNullable)
-            {
-                sb.AppendLine($"            {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-            }
-            else
-            {
-                sb.AppendLine($"            {local}.Value = {valueExpr};");
-            }
+            sb.AppendLine($"            {local}.Value = {BuildParameterValue(p)};");
             sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8152,53 +8211,79 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
-            // through their discovered `Value` property before binding to the
-            // DbParameter so the provider sees the underlying primitive. Phase D
-            // extends this to enums: default-int round-trip casts via `(int)@x`,
-            // [StoreAsString] uses `@x.ToString()`. Falls back to the raw value when
-            // no convention applies — the v0.1 emit path stays byte-identical.
-            var valueExpr = "@" + p.Name;
-            if (p.Convention is { } conv)
-            {
-                if (conv.Kind == (int)ConventionKind.Enum)
-                {
-                    // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
-                    // for an int-backed enum; for byte/short/long-backed enums the cast
-                    // target derives from the GetXxx reader name. The provider then sees
-                    // the integral value; SQL stores it as INTEGER.
-                    var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                    valueExpr = $"({castType})@{p.Name}";
-                }
-                else if (conv.Kind == (int)ConventionKind.EnumAsString)
-                {
-                    // Round-trip as the enum member name. ToString() is allocating but
-                    // [StoreAsString] is opt-in; a source-generated parse/format table
-                    // is a v0.3+ optimization.
-                    valueExpr = $"@{p.Name}.ToString()";
-                }
-                else if (conv.ValuePropertyName is { } propName)
-                {
-                    // A nullable value object binds its inner value, or null: `@p?.Value`.
-                    // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
-                    valueExpr = $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
-                }
-            }
-
-            // Nullable parameters need a DBNull sentinel — assigning a CLR null to
-            // DbParameter.Value is provider-dependent (some treat it as "missing
-            // parameter" rather than "SQL NULL"), so we route through DBNull.Value
-            // explicitly. Non-nullable parameters skip the cast for cleaner emit.
-            if (p.IsNullable)
-            {
-                sb.AppendLine($"            {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-            }
-            else
-            {
-                sb.AppendLine($"            {local}.Value = {valueExpr};");
-            }
+            sb.AppendLine($"            {local}.Value = {BuildParameterValue(p)};");
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
+    }
+
+    // The right-hand side of `__p_x.Value = ...;` for one method parameter. The four
+    // binding sites, single-command and batch, with and without indent, share it.
+    private static string BuildParameterValue(ParameterInfo p)
+        => BuildBoundValue(BuildParameterValueExpression(p), p.IsNullable, p.Convention);
+
+    // Phase C: ValueObject / SingleArgCtor / StaticFactory parameters unwrap
+    // through their discovered `Value` property before binding to the
+    // DbParameter so the provider sees the underlying primitive. Phase D
+    // extends this to enums: default-int round-trip casts via `(int)@x`,
+    // [StoreAsString] uses `@x.ToString()`. Falls back to the raw value when
+    // no convention applies — the v0.1 emit path stays byte-identical.
+    private static string BuildParameterValueExpression(ParameterInfo p)
+    {
+        var valueExpr = "@" + p.Name;
+        if (p.Convention is not { } conv) return valueExpr;
+        if (conv.Kind == (int)ConventionKind.Enum)
+        {
+            // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
+            // for an int-backed enum; for byte/short/long-backed enums the cast
+            // target derives from the GetXxx reader name. The provider then sees
+            // the integral value; SQL stores it as INTEGER.
+            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            return $"({castType})@{p.Name}";
+        }
+        if (conv.Kind == (int)ConventionKind.EnumAsString)
+        {
+            // Round-trip as the enum member name. ToString() is allocating but
+            // [StoreAsString] is opt-in; a source-generated parse/format table
+            // is a v0.3+ optimization.
+            return $"@{p.Name}.ToString()";
+        }
+        if (conv.ValuePropertyName is { } propName)
+        {
+            // A nullable value object binds its inner value, or null: `@p?.Value`.
+            // A plain `.Value` on `Sku?` would be Nullable<T>.Value, the struct itself.
+            return $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
+        }
+        return valueExpr;
+    }
+
+    // The value a DbParameter gets for `valueExpr`, the parameter, composite field or
+    // bulk-insert row property after its convention unwrapped it.
+    //
+    // Nullable values need a DBNull sentinel — assigning a CLR null to
+    // DbParameter.Value is provider-dependent (some treat it as "missing
+    // parameter" rather than "SQL NULL"), so we route through DBNull.Value
+    // explicitly. Non-nullable values skip the cast for cleaner emit.
+    //
+    // A PostgreSQL array is a reference, so it always gets the sentinel, whatever
+    // its annotation says. Npgsql infers the array type from the CLR value, so no
+    // NpgsqlDbType is set and the emit names no Npgsql type. A `T[]` or List<T>
+    // binds as it is. Npgsql writes only arrays and lists, so any other
+    // IReadOnlyList<T> binds as a `T[]` copy, unless it already is one of the two.
+    private static string BuildBoundValue(string valueExpr, bool isNullable, ConventionInfo? conv)
+    {
+        if (conv is { Kind: (int)ConventionKind.PrimitiveArray })
+        {
+            if (conv.ArrayShape != (int)PrimitiveArrayShape.ReadOnlyList)
+                return $"(object?){valueExpr} ?? global::System.DBNull.Value";
+            var element = conv.ArrayElementTypeName;
+            return $"{valueExpr} is null ? global::System.DBNull.Value"
+                + $" : (object?)({valueExpr} as {element}[])"
+                + $" ?? (object?)({valueExpr} as global::System.Collections.Generic.List<{element}>)"
+                + $" ?? ({element}[])[.. {valueExpr}]";
+        }
+        return isNullable
+            ? $"(object?){valueExpr} ?? global::System.DBNull.Value"
+            : valueExpr;
     }
 
     // Forward the user's CancellationToken parameter to OpenAsync / ReadAsync /
@@ -8316,14 +8401,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 // we patch that to `@total.Value.Amount` by injecting `.Value`
                 // between the parameter name and the field accessor.
                 var valueExpr = BuildCompositeFieldValueExpressionForNullable(p.Name, field);
-                if (field.IsNullable)
-                {
-                    sb.AppendLine($"{indent}    {local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-                }
-                else
-                {
-                    sb.AppendLine($"{indent}    {local}.Value = {valueExpr};");
-                }
+                sb.AppendLine($"{indent}    {local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8339,14 +8417,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
 
             var valueExpr = BuildCompositeFieldValueExpression(p.Name, field);
-            if (field.IsNullable)
-            {
-                sb.AppendLine($"{indent}{local}.Value = (object?){valueExpr} ?? global::System.DBNull.Value;");
-            }
-            else
-            {
-                sb.AppendLine($"{indent}{local}.Value = {valueExpr};");
-            }
+            sb.AppendLine($"{indent}{local}.Value = {BuildBoundValue(valueExpr, field.IsNullable, field.Convention)};");
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
