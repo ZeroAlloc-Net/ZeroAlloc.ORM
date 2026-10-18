@@ -21,7 +21,7 @@ jobs:
     # EnableArrays) under NativeAOT. Locally the path is skipped unless ZAORM_AOT_PG is set.
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
         ports:
