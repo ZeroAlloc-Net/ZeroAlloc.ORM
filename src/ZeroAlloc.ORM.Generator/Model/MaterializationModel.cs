@@ -205,7 +205,9 @@ internal sealed record ParameterInfo(
     ParamFacets? Facets = null,
     // v2.0, #235 — the BulkInsert row collection. It binds one DbParameter per
     // placeholder and row, never one for itself, so no `[Param]` member applies.
-    bool IsBulkInsertCollection = false);
+    bool IsBulkInsertCollection = false,
+    // A string marked `[Json]`: the binding sets NpgsqlDbType.Jsonb after `.Value`.
+    bool IsJson = false);
 
 // v2.0, #235 — `[Param]` members that shape the DbParameter's type. Each field is
 // null unless the adopter wrote the member, so the emit sets only what was asked
@@ -250,7 +252,10 @@ internal sealed record ParamFacets(
 //                        SingleArgCtor / StaticFactory / Enum / EnumAsString —
 //                        mirrors the materialization-side recursive unwrap.
 //                        Null for primitive fields.
+//   IsJson            -- the inner field is a string marked `[Json]`, on the ctor
+//                        parameter or its property; it binds as jsonb.
 internal sealed record CompositeBindingField(
     string CtorArgName,
     bool IsNullable,
-    ConventionInfo? Convention);
+    ConventionInfo? Convention,
+    bool IsJson = false);
