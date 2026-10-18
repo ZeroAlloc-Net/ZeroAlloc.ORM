@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.4...v2.4.0) (2026-10-18)
+
+
+### Features
+
+* adopt an existing EF Core database with a migration baseline ([#373](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/373)) ([19ac828](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/19ac828b66cd4135cf1aa9995dfdc483f46198f0))
+* bind [Json] strings as jsonb ([#380](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/380)) ([c8151f2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c8151f2742e05da73a73d2b7c3c176241b389b6e))
+* bind PostgreSQL arrays as parameters and columns ([#377](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/377)) ([f454cb9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f454cb9d28ae704b2efcc7efb256d4ab466c3335))
+
+
+### Documentation
+
+* add ZeroAlloc.ORM.Linq and ORM gaps designs ([#374](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/374)) ([a6e76e4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a6e76e4523ebaabc2c1f11c8224bd0b95a89839f))
+
 ## [2.3.4](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.3...v2.3.4) (2026-10-16)
 
 
