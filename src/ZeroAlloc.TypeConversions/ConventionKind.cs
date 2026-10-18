@@ -33,4 +33,12 @@ public enum ConventionKind
 
     /// <summary>Explicit <c>[Materialize]</c> annotation overrides discovery. Reserved.</summary>
     ExplicitMaterialize,
+
+    /// <summary>
+    /// A PostgreSQL array: <c>T[]</c>, <c>List&lt;T&gt;</c> or <c>IReadOnlyList&lt;T&gt;</c> of
+    /// <c>string</c>, <c>int</c>, <c>long</c> or <c>Guid</c>. <see cref="ConventionResult.ElementType"/>
+    /// and <see cref="ConventionResult.ArrayShape"/> name the element and the collection shape.
+    /// <c>byte[]</c> is a <see cref="Primitive"/>, never a PrimitiveArray.
+    /// </summary>
+    PrimitiveArray,
 }

@@ -45,12 +45,22 @@ internal enum MaterializationKind
 //   UnderlyingReader    -- IDataReader.GetXxx method for the wrapped primitive,
 //                          e.g. "GetInt32" for `OrderId(int Value)` or for a default
 //                          int-backed enum; "GetString" for [StoreAsString] enums.
+//                          Null for a PostgreSQL array, which wraps no primitive.
+//   ArrayElementTypeName -- PostgreSQL arrays only: the element type, globally
+//                          qualified, with its nullable annotation as written, such
+//                          as "string", "string?" or "global::System.Guid". The
+//                          binding emit names `T[]` and `List<T>` with it; the read
+//                          emit names `List<T>`.
+//   ArrayShape          -- PostgreSQL arrays only: the PrimitiveArrayShape value, as
+//                          an int for the same reason as Kind. 0, None, otherwise.
 internal sealed record ConventionInfo(
     int Kind,
     string? FactoryFullName,
     bool FactoryIsCtor,
     string? ValuePropertyName,
-    string? UnderlyingReader);
+    string? UnderlyingReader,
+    string? ArrayElementTypeName = null,
+    int ArrayShape = 0);
 
 // One ctor parameter <-> one reader column. Stored as primitives + strings so the
 // surrounding model stays cache-safe for incremental-generator equality.

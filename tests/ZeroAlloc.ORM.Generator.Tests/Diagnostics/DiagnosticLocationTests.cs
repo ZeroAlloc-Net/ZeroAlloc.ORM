@@ -391,6 +391,14 @@ public class DiagnosticLocationTests
             }
         }
         """)]
+    // ZAO082: the PostgreSQL array parameter, without Npgsql referenced.
+    [InlineData("ZAO082", """
+        public sealed partial class Repo(IAsyncDbConnection connection)
+        {
+            [Query("SELECT COUNT(*) FROM posts WHERE tags && @tags")]
+            public partial Task<int> CountTaggedAsync(string[] [|tags|], CancellationToken ct);
+        }
+        """)]
     public void Diagnostic_is_reported_at_its_source_location(string id, string markedSource)
     {
         var (source, span) = Unmark(Prelude + markedSource);

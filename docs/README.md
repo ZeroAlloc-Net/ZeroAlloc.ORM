@@ -97,6 +97,7 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 **Parameters and columns**
 
 - Primitives: `int`, `long`, `short`, `byte`, `bool`, `decimal`, `double`, `float`, `string`, `Guid`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `byte[]`, and their nullable forms.
+- PostgreSQL arrays: `T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long` or `Guid` bind as parameters (for `= ANY(@ids)`) and read as columns, including as members of composites and bulk-insert rows. `null` binds `NULL`. They need Npgsql referenced, otherwise ZAO082. See [provider quirks](cookbook/provider-quirks.md#postgresql-arrays).
 - Enums round-trip as their underlying integer, or as the member name with `[StoreAsString]`.
 - Value objects (`[ValueObject]` from [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects), or any type with a single-argument constructor or static `From` factory) bind through their primitive.
 - Multi-column composites such as `Money(decimal Amount, string Currency)` unpack into several columns; a parameter `Money total` binds `@total_Amount` and `@total_Currency`. Composites of composites are not supported yet (ZAO052).
@@ -167,7 +168,7 @@ PostgreSQL time ratios carry BenchmarkDotNet's RatioSD, because every query is a
 
 ## Diagnostics
 
-The generator reports signature, binding, materialization, stored-procedure, `BulkInsert` and transaction problems at build time, from `ZAO001` to `ZAO081`. Every code has a page under [docs/diagnostics/](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/diagnostics), and the IDE help link on each diagnostic opens it. The canonical index of every shipped code, with severity and trigger, is [docs/diagnostics/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md). `DiagnosticHelpLinkTests` fails the build if a descriptor lacks its page or its index row.
+The generator reports signature, binding, materialization, stored-procedure, `BulkInsert` and transaction problems at build time, from `ZAO001` to `ZAO082`. Every code has a page under [docs/diagnostics/](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/diagnostics), and the IDE help link on each diagnostic opens it. The canonical index of every shipped code, with severity and trigger, is [docs/diagnostics/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md). `DiagnosticHelpLinkTests` fails the build if a descriptor lacks its page or its index row.
 
 ## Documentation
 
@@ -196,4 +197,4 @@ ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards
 
 ## Not supported yet
 
-Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued and array parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).
+Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).

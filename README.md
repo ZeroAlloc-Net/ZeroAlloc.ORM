@@ -19,7 +19,7 @@ with no runtime reflection and NativeAOT-ready.
 - **Works under NativeAOT and trimming.** CI publishes and runs AOT consumers on every PR, including
   ones that share the build with other source generators, where EF Core's precompiled queries collide.
 - **Compile-time diagnostics instead of runtime surprises.** A non-partial method, a tuple that does not
-  match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO081`.
+  match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO082`.
 
 ## Install
 

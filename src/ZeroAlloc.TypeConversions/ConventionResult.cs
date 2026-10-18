@@ -16,4 +16,19 @@ public sealed record ConventionResult(
     ConventionKind Kind,
     ISymbol? Factory,
     IPropertySymbol? Value,
-    ImmutableArray<IParameterSymbol> ExpandedColumns);
+    ImmutableArray<IParameterSymbol> ExpandedColumns)
+{
+    /// <summary>
+    /// The element type of a <see cref="ConventionKind.PrimitiveArray"/>, for example
+    /// <c>string</c> for <c>List&lt;string&gt;</c>; <c>null</c> for every other kind.
+    /// It keeps the nullable annotation as written, so strip it with
+    /// <c>WithNullableAnnotation(NullableAnnotation.NotAnnotated)</c> before rendering a type name.
+    /// </summary>
+    public ITypeSymbol? ElementType { get; init; }
+
+    /// <summary>
+    /// Which collection shape a <see cref="ConventionKind.PrimitiveArray"/> matched;
+    /// <see cref="PrimitiveArrayShape.None"/> for every other kind.
+    /// </summary>
+    public PrimitiveArrayShape ArrayShape { get; init; }
+}

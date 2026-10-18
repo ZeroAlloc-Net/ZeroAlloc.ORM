@@ -34,6 +34,8 @@ public sealed class PostgresFixture : IAsyncDisposable
 {
     private readonly PostgreSqlContainer _container;
     private NpgsqlConnection? _raw;
+    private NpgsqlDataSource? _dataSource;
+    private readonly bool _slim;
 
     public IAsyncDbConnection Connection { get; private set; } = null!;
 
@@ -42,8 +44,13 @@ public sealed class PostgresFixture : IAsyncDisposable
     // keep the fixture's surface minimal (post-review Fix 8).
     internal string ConnectionString => _container.GetConnectionString();
 
-    public PostgresFixture()
+    public PostgresFixture() : this(slim: false)
     {
+    }
+
+    private PostgresFixture(bool slim)
+    {
+        _slim = slim;
         // Testcontainers 4.x requires passing the image to the builder ctor
         // (the parameterless overload is obsolete as of 4.10+).
         _container = new PostgreSqlBuilder("postgres:16-alpine").Build();
@@ -62,10 +69,30 @@ public sealed class PostgresFixture : IAsyncDisposable
         return fx;
     }
 
+    /// <summary>
+    /// Like <see cref="CreateAndInitializeAsync"/>, but opens the connection from
+    /// <c>new NpgsqlSlimDataSourceBuilder(cs).EnableArrays().Build()</c>. The slim builder
+    /// registers no optional type handlers, so array support has to be switched on explicitly.
+    /// </summary>
+    public static async Task<PostgresFixture> CreateSlimAndInitializeAsync()
+    {
+        var fx = new PostgresFixture(slim: true);
+        await fx.InitializeAsync().ConfigureAwait(false);
+        return fx;
+    }
+
     public async ValueTask InitializeAsync()
     {
         await _container.StartAsync().ConfigureAwait(false);
-        _raw = new NpgsqlConnection(_container.GetConnectionString());
+        if (_slim)
+        {
+            _dataSource = new NpgsqlSlimDataSourceBuilder(_container.GetConnectionString()).EnableArrays().Build();
+            _raw = _dataSource.CreateConnection();
+        }
+        else
+        {
+            _raw = new NpgsqlConnection(_container.GetConnectionString());
+        }
         Connection = _raw.AsAsync();
         await Connection.OpenAsync().ConfigureAwait(false);
     }
@@ -89,6 +116,10 @@ public sealed class PostgresFixture : IAsyncDisposable
         if (_raw is not null)
         {
             await _raw.DisposeAsync().ConfigureAwait(false);
+        }
+        if (_dataSource is not null)
+        {
+            await _dataSource.DisposeAsync().ConfigureAwait(false);
         }
         await _container.DisposeAsync().ConfigureAwait(false);
     }

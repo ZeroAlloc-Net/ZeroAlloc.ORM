@@ -42,6 +42,20 @@ public static class PrimitiveCatalog
         };
     }
 
+    // The reader for a PostgreSQL array column whose element is `elementType`:
+    // `GetFieldValue<T[]>`, which Npgsql implements for every array column. Every
+    // array shape reads as `T[]`; the generator copies it into a `List<T>` for that
+    // shape. Returns null for an element type ConventionKind.PrimitiveArray does not
+    // accept. The element's nullable annotation, as in `string?[]`, is dropped.
+    public static string? GetArrayReaderMethod(ITypeSymbol elementType)
+    {
+        if (!IsPrimitiveArrayElement(elementType)) return null;
+        var element = elementType
+            .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+            .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return "GetFieldValue<" + element + "[]>";
+    }
+
     // Convention-discovery shortcut: "does this type round-trip via a single GetXxx
     // call?" Equivalent to "GetScalarReaderMethod returns non-null" but expressed as
     // a predicate so callers don't have to encode the null-check pattern themselves.
@@ -123,6 +137,15 @@ public static class PrimitiveCatalog
             _ => throw new InvalidOperationException(
                 $"PrimitiveCatalog.GetDbTypeNameFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
         };
+
+    // The element types a PostgreSQL array may hold: string, int, long and Guid. The one
+    // definition both ConventionDiscovery's PrimitiveArray rule and GetArrayReaderMethod
+    // use, so the classified set and the readable set cannot drift apart.
+    internal static bool IsPrimitiveArrayElement(ITypeSymbol element)
+        => element.SpecialType is SpecialType.System_String or SpecialType.System_Int32 or SpecialType.System_Int64
+           || (element.MetadataName == "Guid"
+               && element.ContainingNamespace is { Name: "System" } ns
+               && ns.ContainingNamespace?.IsGlobalNamespace == true);
 
     // byte[] is the canonical BLOB carrier in ADO.NET. It is recognized as an
     // array of SpecialType.System_Byte; the array itself has no SpecialType.
