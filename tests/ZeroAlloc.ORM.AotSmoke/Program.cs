@@ -123,7 +123,7 @@ await using (raw.ConfigureAwait(false))
     }
 }
 
-await RunPostgresArraysAsync().ConfigureAwait(false);
+await RunPostgresAsync().ConfigureAwait(false);
 
 Console.WriteLine("AOT smoke test passed.");
 return 0;
@@ -150,14 +150,14 @@ static void AssertValueRow(ValueRow? actual, ValueRow expected, string label)
     }
 }
 
-// PostgreSQL arrays through a slim data source, which needs EnableArrays. Skipped without a server so
-// CI needs none; the publish still trims and analyses the generated array code either way.
-static async Task RunPostgresArraysAsync()
+// PostgreSQL arrays and jsonb strings through a slim data source, which needs EnableArrays. Skipped
+// without a server; the publish still trims and analyses the generated code either way.
+static async Task RunPostgresAsync()
 {
     var cs = Environment.GetEnvironmentVariable("ZAORM_AOT_PG");
     if (string.IsNullOrEmpty(cs))
     {
-        Console.WriteLine("Postgres array smoke skipped: ZAORM_AOT_PG is not set.");
+        Console.WriteLine("Postgres smoke skipped: ZAORM_AOT_PG is not set.");
         return;
     }
 
@@ -191,9 +191,25 @@ static async Task RunPostgresArraysAsync()
                 var list = await repo.GetListAsync(a, CancellationToken.None).ConfigureAwait(false);
                 if (list is null || !list.Tags.SequenceEqual(["x", "y"], StringComparer.Ordinal))
                     throw new InvalidOperationException("Unexpected List<string> column.");
+                Console.WriteLine("Postgres array smoke passed.");
+
+                var ddlJson = connection.CreateCommand();
+                await using (ddlJson.ConfigureAwait(false))
+                {
+                    ddlJson.CommandText = "CREATE TABLE documents (id uuid PRIMARY KEY, body jsonb NOT NULL, note jsonb NULL);";
+                    await ddlJson.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+
+                var json = new JsonRepo(connection);
+                var d = new Guid("1b4e28ba-2fa1-11d2-883f-0016d3cca427");
+                await json.InsertAsync(d, "{\"a\": 1}", null, CancellationToken.None).ConfigureAwait(false);
+                var doc = await json.GetAsync(d, CancellationToken.None).ConfigureAwait(false);
+                if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
+                    throw new InvalidOperationException("Unexpected jsonb row.");
+                await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
             }
         }
     }
 
-    Console.WriteLine("Postgres array smoke passed.");
+    Console.WriteLine("Postgres jsonb smoke passed.");
 }
