@@ -583,8 +583,8 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO081"));
 
-    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array
-    // today, and [Json] next. The generator detects Npgsql by looking up
+    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array,
+    // or a string marked [Json] that binds as jsonb. The generator detects Npgsql by looking up
     // `Npgsql.NpgsqlParameter` in the compilation; ZeroAlloc.ORM itself never
     // references Npgsql.
     //
@@ -599,4 +599,21 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO082"));
+
+    // ZAO083 — [Json] on something that is not a string. [Json] binds the value as
+    // PostgreSQL jsonb, a JSON document the adopter holds as a string; any other type,
+    // a string[] included, has no jsonb meaning. Reported from its own pipeline, at the
+    // attribute, wherever the marker is written.
+    //
+    // MessageArgs:
+    //   {0} = the parameter or property name
+    //   {1} = its type, as written
+    public static readonly DiagnosticDescriptor ZAO083_JsonRequiresString = new(
+        id: "ZAO083",
+        title: "[Json] requires a string",
+        messageFormat: "'{0}' carries [Json] but is of type '{1}'. [Json] marks a JSON document held as a string; use string or string?.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO083"));
 }
