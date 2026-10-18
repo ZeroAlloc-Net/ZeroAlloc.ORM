@@ -1,3 +1,1 @@
 #nullable enable
-ZeroAlloc.ORM.JsonAttribute
-ZeroAlloc.ORM.JsonAttribute.JsonAttribute() -> void

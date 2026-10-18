@@ -123,3 +123,12 @@ Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
 ZAO015  | ZeroAlloc.ORM | Error    | [Param(DbType)] is rejected by the declared dialect
 ZAO069  | ZeroAlloc.ORM | Error    | Return value parameter on a dialect without procedure return values
+
+## Release 2.4.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO082  | ZeroAlloc.ORM | Error    | Provider-specific type requires Npgsql
+ZAO083  | ZeroAlloc.ORM | Error    | [Json] requires a string

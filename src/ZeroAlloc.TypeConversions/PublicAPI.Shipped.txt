@@ -10,6 +10,7 @@ static ZeroAlloc.TypeConversions.ConventionContext.operator ==(ZeroAlloc.TypeCon
 static ZeroAlloc.TypeConversions.ConventionDiscovery.Resolve(Microsoft.CodeAnalysis.ITypeSymbol! type, ZeroAlloc.TypeConversions.ConventionContext! context) -> ZeroAlloc.TypeConversions.ConventionResult!
 static ZeroAlloc.TypeConversions.ConventionResult.operator !=(ZeroAlloc.TypeConversions.ConventionResult? left, ZeroAlloc.TypeConversions.ConventionResult? right) -> bool
 static ZeroAlloc.TypeConversions.ConventionResult.operator ==(ZeroAlloc.TypeConversions.ConventionResult? left, ZeroAlloc.TypeConversions.ConventionResult? right) -> bool
+static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetArrayReaderMethod(Microsoft.CodeAnalysis.ITypeSymbol! elementType) -> string?
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetDbTypeNameFromReader(string? readerMethod) -> string!
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetScalarCastTypeFromReader(string? readerMethod) -> string!
 static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetScalarReaderMethod(Microsoft.CodeAnalysis.ITypeSymbol! type) -> string?
@@ -30,14 +31,19 @@ ZeroAlloc.TypeConversions.ConventionKind.EnumAsString = 3 -> ZeroAlloc.TypeConve
 ZeroAlloc.TypeConversions.ConventionKind.ExplicitMaterialize = 8 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.MultiArgCtor = 7 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.Primitive = 1 -> ZeroAlloc.TypeConversions.ConventionKind
+ZeroAlloc.TypeConversions.ConventionKind.PrimitiveArray = 9 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.SingleArgCtor = 6 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.StaticFactory = 5 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.Unknown = 0 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionKind.ValueObject = 4 -> ZeroAlloc.TypeConversions.ConventionKind
 ZeroAlloc.TypeConversions.ConventionResult
 ZeroAlloc.TypeConversions.ConventionResult.<Clone>$() -> ZeroAlloc.TypeConversions.ConventionResult!
+ZeroAlloc.TypeConversions.ConventionResult.ArrayShape.get -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.ConventionResult.ArrayShape.init -> void
 ZeroAlloc.TypeConversions.ConventionResult.ConventionResult(ZeroAlloc.TypeConversions.ConventionKind Kind, Microsoft.CodeAnalysis.ISymbol? Factory, Microsoft.CodeAnalysis.IPropertySymbol? Value, System.Collections.Immutable.ImmutableArray<Microsoft.CodeAnalysis.IParameterSymbol!> ExpandedColumns) -> void
 ZeroAlloc.TypeConversions.ConventionResult.Deconstruct(out ZeroAlloc.TypeConversions.ConventionKind Kind, out Microsoft.CodeAnalysis.ISymbol? Factory, out Microsoft.CodeAnalysis.IPropertySymbol? Value, out System.Collections.Immutable.ImmutableArray<Microsoft.CodeAnalysis.IParameterSymbol!> ExpandedColumns) -> void
+ZeroAlloc.TypeConversions.ConventionResult.ElementType.get -> Microsoft.CodeAnalysis.ITypeSymbol?
+ZeroAlloc.TypeConversions.ConventionResult.ElementType.init -> void
 ZeroAlloc.TypeConversions.ConventionResult.Equals(ZeroAlloc.TypeConversions.ConventionResult? other) -> bool
 ZeroAlloc.TypeConversions.ConventionResult.ExpandedColumns.get -> System.Collections.Immutable.ImmutableArray<Microsoft.CodeAnalysis.IParameterSymbol!>
 ZeroAlloc.TypeConversions.ConventionResult.ExpandedColumns.init -> void
@@ -47,5 +53,10 @@ ZeroAlloc.TypeConversions.ConventionResult.Kind.get -> ZeroAlloc.TypeConversions
 ZeroAlloc.TypeConversions.ConventionResult.Kind.init -> void
 ZeroAlloc.TypeConversions.ConventionResult.Value.get -> Microsoft.CodeAnalysis.IPropertySymbol?
 ZeroAlloc.TypeConversions.ConventionResult.Value.init -> void
+ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.Array = 1 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.List = 2 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.None = 0 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
+ZeroAlloc.TypeConversions.PrimitiveArrayShape.ReadOnlyList = 3 -> ZeroAlloc.TypeConversions.PrimitiveArrayShape
 ZeroAlloc.TypeConversions.PrimitiveCatalog
 ZeroAlloc.TypeConversions.SqlStatementSplitter

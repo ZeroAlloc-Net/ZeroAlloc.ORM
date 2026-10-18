@@ -18,6 +18,8 @@ ZeroAlloc.ORM.CommandKind.Scalar = 1 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.DialectAttribute
 ZeroAlloc.ORM.DialectAttribute.Dialect.get -> ZeroAlloc.ORM.SqlDialect
 ZeroAlloc.ORM.DialectAttribute.DialectAttribute(ZeroAlloc.ORM.SqlDialect dialect) -> void
+ZeroAlloc.ORM.JsonAttribute
+ZeroAlloc.ORM.JsonAttribute.JsonAttribute() -> void
 ZeroAlloc.ORM.MaterializeAttribute
 ZeroAlloc.ORM.MaterializeAttribute.Factory.get -> string?
 ZeroAlloc.ORM.MaterializeAttribute.Factory.init -> void
