@@ -1,1 +1,3 @@
 #nullable enable
+ZeroAlloc.ORM.ColumnMapAttribute.Ignore.get -> bool
+ZeroAlloc.ORM.ColumnMapAttribute.Ignore.init -> void

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 
 namespace ZeroAlloc.ORM.Generator.Tests;
 
@@ -68,6 +69,22 @@ internal static class GeneratorHarness
             syntaxTrees: syntaxTrees,
             references: BuildReferences(),
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+    // A reference to a library compiled on its own, the way a referenced project or package reaches
+    // the generator: through metadata, where a private member is not imported. A reference
+    // assembly, as a build passes for a project reference, drops private members altogether.
+    public static MetadataReference CompileReference(string source, string assemblyName, bool referenceAssembly)
+    {
+        var library = CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) }).WithAssemblyName(assemblyName);
+        var options = referenceAssembly
+            ? new EmitOptions(metadataOnly: true, includePrivateMembers: false)
+            : new EmitOptions();
+        using var image = new MemoryStream();
+        var emitted = library.Emit(image, options: options);
+        if (!emitted.Success)
+            throw new InvalidOperationException("The library does not compile: " + string.Join("; ", emitted.Diagnostics.Select(d => d.ToString())));
+        return MetadataReference.CreateFromImage(image.ToArray());
+    }
 
     private static IEnumerable<SyntaxTree> ParseAll(string source, string[] additionalSources)
         => new[] { source }.Concat(additionalSources).Select(s => CSharpSyntaxTree.ParseText(s));

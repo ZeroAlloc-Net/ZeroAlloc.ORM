@@ -707,8 +707,8 @@ internal static class DiagnosticDescriptors
         helpLinkUri: HelpLink("ZAO104"));
 
     // ZAO105 — the chain uses an entity member that is not a mapped column: a field, or a property
-    // that is not public, readable and an instance member, or a computed property with neither a
-    // setter nor a backing field. Reported at the member access.
+    // that is not public, readable and an instance member, a computed property the map does not
+    // name, or one it marks Ignore. Reported at the member access.
     //
     // MessageArgs:
     //   {0} = the member name
