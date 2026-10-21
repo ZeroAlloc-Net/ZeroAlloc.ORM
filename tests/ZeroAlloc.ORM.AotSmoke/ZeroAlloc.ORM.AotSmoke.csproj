@@ -14,6 +14,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM\ZeroAlloc.ORM.csproj" />
+    <!-- [LinqQuery] smoke, see LinqRepo.cs. -->
+    <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Linq\ZeroAlloc.ORM.Linq.csproj" />
     <ProjectReference Include="..\..\src\ZeroAlloc.ORM.Generator\ZeroAlloc.ORM.Generator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />

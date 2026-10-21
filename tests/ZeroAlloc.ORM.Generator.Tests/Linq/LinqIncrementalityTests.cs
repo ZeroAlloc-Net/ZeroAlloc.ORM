@@ -116,6 +116,49 @@ public class LinqIncrementalityTests
         AssertCached(second, "EntityMaps", "LinqQueryReads", "LinqQueryMethods");
     }
 
+    // ZAO109: invocations are read by name only, and only a call whose name a companion has is
+    // bound. An unrelated edit leaves the companion set, the names and the bound call unchanged.
+    [Fact]
+    public void Unrelated_edit_leaves_the_companion_call_steps_cached()
+    {
+        var store = CSharpSyntaxTree.ParseText(
+            LinqProjectionTests.Prelude + Store.Replace(
+                "private static IQuery<TaskSummary> SummariesQuery()",
+                "public IQuery<TaskSummary> Wrong() => SummariesQuery();\n\n    private static IQuery<TaskSummary> SummariesQuery()",
+                StringComparison.Ordinal),
+            path: "/src/Store.cs");
+        var other = CSharpSyntaxTree.ParseText(
+            "namespace TestApp; public static class Other { public static int Y() => System.Math.Abs(-1); }",
+            path: "/src/Other.cs");
+        var compilation = GeneratorHarness.CreateCompilation([store, other]);
+
+        var driver = CreateDriver().RunGenerators(compilation);
+        var first = driver.GetRunResult().Results[0];
+        Assert.Equal("ZAO109", Assert.Single(first.Diagnostics).Id);
+
+        var edited = compilation.ReplaceSyntaxTree(
+            other,
+            CSharpSyntaxTree.ParseText(
+                "namespace TestApp; public static class Other { public static int Y() => System.Math.Abs(-1); public static int X => 1; }",
+                path: "/src/Other.cs"));
+        var second = driver.RunGenerators(edited).GetRunResult().Results[0];
+
+        Assert.Equal("ZAO109", Assert.Single(second.Diagnostics).Id);
+        AssertCached(second, "LinqCompanions", "CompanionCalls");
+        foreach (var step in second.TrackedSteps["InvocationNames"])
+        {
+            foreach (var (value, reason) in step.Outputs)
+            {
+                // Only the edited file's invocations are read again.
+                var call = (ZeroAlloc.ORM.Generator.Linq.InvocationCandidate)value;
+                if (string.Equals(call.Location.Tree.FilePath, "/src/Other.cs", StringComparison.Ordinal)) continue;
+                Assert.True(
+                    reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged,
+                    $"InvocationNames output '{call.Name}' was {reason}.");
+            }
+        }
+    }
+
     [Fact]
     public void Editing_the_map_rebinds_the_method_to_the_new_table()
     {

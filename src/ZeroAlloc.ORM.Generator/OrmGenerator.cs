@@ -120,6 +120,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // methods that bind join the union below. See OrmGenerator.Linq.cs.
         var linqQueryMethods = LinqQueryMethods(context, entityMaps);
 
+        // ZAO109 — code that calls a [LinqQuery] companion, which never runs. See OrmGenerator.Linq.cs.
+        RegisterCompanionCalls(context);
+
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
         // location, etc.) — we take them from g.First() instead of duplicating them
@@ -5001,6 +5004,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO105" => DiagnosticDescriptors.ZAO105_UnmappedLinqMember,
         "ZAO107" => DiagnosticDescriptors.ZAO107_UnsupportedLinqProjection,
         "ZAO108" => DiagnosticDescriptors.ZAO108_LinqRequiresPostgreSql,
+        "ZAO109" => DiagnosticDescriptors.ZAO109_LinqCompanionCalled,
         "ZAO110" => DiagnosticDescriptors.ZAO110_LinqPagingWithoutOrder,
         "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,

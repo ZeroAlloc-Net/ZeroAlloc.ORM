@@ -19,7 +19,10 @@ with no runtime reflection and NativeAOT-ready.
 - **Works under NativeAOT and trimming.** CI publishes and runs AOT consumers on every PR, including
   ones that share the build with other source generators, where EF Core's precompiled queries collide.
 - **Compile-time diagnostics instead of runtime surprises.** A non-partial method, a tuple that does not
-  match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO082`.
+  match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO082`,
+  and a LINQ chain that cannot be translated is one too, `ZAO100` to `ZAO112`.
+- **LINQ as a compile-time SQL source.** With `ZeroAlloc.ORM.Linq`, a query's SQL can be written as a
+  LINQ chain that the generator translates to PostgreSQL at build time; the chain never runs.
 
 ## Install
 
@@ -63,7 +66,50 @@ public sealed partial class CustomerRepository(IAsyncDbConnection connection)
 
 The generator fills in each `partial` method with typed parameter binding and row materialization
 against [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)'s `IAsyncDbConnection`. There
-is no LINQ provider, no expression compilation and no runtime reflection.
+is no runtime LINQ provider, no expression compilation and no runtime reflection.
+
+## LINQ queries
+
+On PostgreSQL, `ZeroAlloc.ORM.Linq` lets you write the SQL as LINQ instead. Each query is a `partial`
+method plus a companion that holds the chain. The generator reads the companion at build time and emits
+the SQL as a `const string`; the companion never runs, and its parameters become the SQL parameters.
+
+```bash
+dotnet add package ZeroAlloc.ORM.Linq
+```
+
+```csharp
+using System.Data.Async;
+using ZeroAlloc.ORM;
+using ZeroAlloc.ORM.Linq;
+
+[TableMap(typeof(TaskEntity), "Tasks")]
+[ColumnMap(nameof(TaskEntity.Kind), EnumAsString = true)]
+internal static class TaskMap;
+
+[Dialect(SqlDialect.PostgreSql)]
+public sealed partial class TaskStore(IAsyncDbConnection connection)
+{
+    [LinqQuery(nameof(OpenTasksQuery))]
+    public partial Task<List<TaskSummary>> OpenTasks(Guid projectId, WorkKind? kind, CancellationToken ct);
+
+    // SELECT "Id", "Title" FROM "Tasks"
+    // WHERE "ProjectId" = @projectId AND (@kind IS NULL OR "Kind" = @kind) ORDER BY "CreatedAt", "Id"
+    private static IQuery<TaskSummary> OpenTasksQuery(Guid projectId, WorkKind? kind) =>
+        Sql.Table<TaskEntity>()
+            .Where(t => t.ProjectId == projectId)
+            .Where(t => kind == null || t.Kind == kind)
+            .OrderBy(t => t.CreatedAt)
+            .ThenBy(t => t.Id)
+            .Select(t => new TaskSummary(t.Id, t.Title));
+}
+```
+
+`TaskEntity` is any class with the mapped properties, such as a Domain entity; columns default to the
+property names, as in EF Core. Filters, ordering, `Skip`/`Take`, `Sql.Row` keyset paging, `Count`,
+`LongCount` and `Any` translate today. See the
+[LINQ recipe](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) for every
+operator, result shape and diagnostic.
 
 ## What you get
 

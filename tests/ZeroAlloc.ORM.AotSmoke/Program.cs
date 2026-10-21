@@ -207,9 +207,44 @@ static async Task RunPostgresAsync()
                 if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
                     throw new InvalidOperationException("Unexpected jsonb row.");
                 await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
+                Console.WriteLine("Postgres jsonb smoke passed.");
+
+                await RunLinqAsync(connection).ConfigureAwait(false);
             }
         }
     }
+}
 
-    Console.WriteLine("Postgres jsonb smoke passed.");
+// [LinqQuery] through a map with a schema, column overrides and an EnumAsString column: a filter
+// with an optional parameter, ordering, and a count.
+static async Task RunLinqAsync(IAsyncDbConnection connection)
+{
+    var ddl = connection.CreateCommand();
+    await using (ddl.ConfigureAwait(false))
+    {
+        ddl.CommandText = "CREATE TABLE public.linq_items (id uuid PRIMARY KEY, name text NOT NULL, rank integer NOT NULL, priority text NOT NULL, status text NOT NULL);";
+        await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    var linq = new LinqRepo(connection);
+    var high = new Guid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var low = new Guid("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+    await linq.InsertAsync(high, "alpha", 5, "High", Status.Active, CancellationToken.None).ConfigureAwait(false);
+    await linq.InsertAsync(low, "beta", 3, "Low", Status.Active, CancellationToken.None).ConfigureAwait(false);
+    await linq.InsertAsync(Guid.NewGuid(), "gamma", 9, "High", Status.Archived, CancellationToken.None).ConfigureAwait(false);
+    await linq.InsertAsync(Guid.NewGuid(), "delta", 1, "Normal", Status.Active, CancellationToken.None).ConfigureAwait(false);
+
+    var all = await linq.ActiveAsync(2, null, CancellationToken.None).ConfigureAwait(false);
+    if (all.Count != 2 || all[0].Id != high || all[1].Id != low || all[0].Priority != Priority.High || all[1].Priority != Priority.Low)
+        throw new InvalidOperationException($"Unexpected LINQ rows: {all.Count}.");
+
+    var lows = await linq.ActiveAsync(2, Priority.Low, CancellationToken.None).ConfigureAwait(false);
+    if (lows.Count != 1 || lows[0].Id != low || !string.Equals(lows[0].Name, "beta", StringComparison.Ordinal))
+        throw new InvalidOperationException($"Unexpected filtered LINQ rows: {lows.Count}.");
+
+    var count = await linq.CountActiveAsync(2, CancellationToken.None).ConfigureAwait(false);
+    if (count != 2)
+        throw new InvalidOperationException($"Unexpected LINQ count: {count}.");
+
+    Console.WriteLine("Postgres LINQ smoke passed.");
 }

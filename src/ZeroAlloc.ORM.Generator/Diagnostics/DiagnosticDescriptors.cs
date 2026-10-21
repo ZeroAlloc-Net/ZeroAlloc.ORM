@@ -751,6 +751,22 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO108"));
 
+    // ZAO109 — code calls a method that a [LinqQuery] names as its companion. The companion is
+    // read at build time and never runs; what it returns describes a query, it holds no rows.
+    // Reported at the invocation.
+    //
+    // MessageArgs:
+    //   {0} = the companion name
+    //   {1} = the [LinqQuery] method that names it
+    public static readonly DiagnosticDescriptor ZAO109_LinqCompanionCalled = new(
+        id: "ZAO109",
+        title: "LINQ companion is called",
+        messageFormat: "'{0}' is a [LinqQuery] companion and is never run; call '{1}' instead",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO109"));
+
     // ZAO110 — a [LinqQuery] list or stream pages with Skip or Take, or a single-row method skips
     // with Skip, but the chain has no OrderBy, so which rows a page holds is up to PostgreSQL. A
     // warning: the query runs as written. The single-row shape without a Skip, which reads any

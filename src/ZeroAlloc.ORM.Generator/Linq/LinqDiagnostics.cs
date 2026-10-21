@@ -35,6 +35,9 @@ internal static class LinqDiagnostics
     public static DiagnosticInfo DialectNotPostgres(string method, string found, Location? location)
         => Create("ZAO108", location, method, found);
 
+    public static DiagnosticInfo CompanionCalled(string companion, string method, LocationInfo location)
+        => new("ZAO109", location, Args(companion, method));
+
     public static DiagnosticInfo UnorderedPaging(Location? location)
         => Create("ZAO110", location);
 
