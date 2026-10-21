@@ -127,7 +127,7 @@ internal static partial class LinqQueryReader
             bool flag => new SqlLiteralExpression(SqlLiteralKind.Boolean, flag ? "true" : "false"),
             string text => new SqlLiteralExpression(SqlLiteralKind.String, text),
             double d => Finite(d) ? SqlLiteralExpression.Number(d.ToString("R", CultureInfo.InvariantCulture)) : null,
-            float f => Finite(f) ? SqlLiteralExpression.Number(f.ToString("R", CultureInfo.InvariantCulture)) : null,
+            float f => Finite(f) ? new SqlLiteralExpression(SqlLiteralKind.Real, f.ToString("R", CultureInfo.InvariantCulture)) : null,
             sbyte or byte or short or ushort or int or uint or long or ulong or decimal
                 => SqlLiteralExpression.Number(Convert.ToString(value, CultureInfo.InvariantCulture)!),
             _ => null,

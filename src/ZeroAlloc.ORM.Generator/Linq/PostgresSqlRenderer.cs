@@ -346,6 +346,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlLiteralKind.String:
                 sb.Append('\'').Append(literal.Value.Replace("'", "''")).Append('\'');
                 break;
+            case SqlLiteralKind.Real:
+                sb.Append(literal.Value).Append("::real");
+                break;
             default:
                 sb.Append(literal.Value);
                 break;

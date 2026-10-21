@@ -205,6 +205,38 @@ public class LinqWhereTests
             """);
     }
 
+    // A float constant is a real: written as a bare number it would be numeric, which PostgreSQL
+    // compares with a real column as double precision, so `0.1f` would never match a stored 0.1.
+    [Fact]
+    public void Float_literal_compares_as_real()
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery() =>
+                    Sql.Table<TaskEntity>().Where(t => t.Weight == 0.1f || t.Weight < -2.5f || t.Ratio == 0.1).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal(
+            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((\"Weight\" = 0.1::real OR \"Weight\" < -2.5::real) OR \"Ratio\" = 0.1)",
+            method.Sql);
+    }
+
+    [Fact]
+    public void Float_literal_renders_with_a_real_cast()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery() =>
+                    Sql.Table<TaskEntity>().Where(t => t.Weight == 0.1f).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
     [Fact]
     public void Contains_on_array_parameter()
     {

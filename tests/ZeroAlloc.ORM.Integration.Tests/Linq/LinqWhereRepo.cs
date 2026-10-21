@@ -34,6 +34,9 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(NotAboveQuery))]
     public partial Task<List<TaskLine>> NotAboveAsync(int priority, CancellationToken ct);
 
+    [LinqQuery(nameof(RatedQuery))]
+    public partial Task<List<TaskLine>> RatedAsync(CancellationToken ct);
+
     [LinqQuery(nameof(KindUnlessBugQuery))]
     public partial Task<List<TaskLine>> KindUnlessBugAsync(WorkKind kind, CancellationToken ct);
 
@@ -129,6 +132,10 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
     // C# reads `null > p` as false, so its negation keeps the rows without a priority.
     private static IQuery<TaskLine> NotAboveQuery(int priority) =>
         Sql.Table<TaskEntity>().Where(t => !(t.Priority > priority)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // A float literal compares as real, the column's type, not as a double.
+    private static IQuery<TaskLine> RatedQuery() =>
+        Sql.Table<TaskEntity>().Where(t => t.Rating == 0.1f).Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     // The constant is compared with a parameter that binds by name, so it is written by name.
     private static IQuery<TaskLine> KindUnlessBugQuery(WorkKind kind) =>

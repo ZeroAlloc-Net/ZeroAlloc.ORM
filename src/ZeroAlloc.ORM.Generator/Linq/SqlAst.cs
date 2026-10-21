@@ -81,7 +81,7 @@ internal sealed record SqlParameterExpression(string Name, string ClrName, bool 
 /// <summary>A compile-time constant, inlined as a SQL literal.</summary>
 /// <param name="Kind">How the renderer writes the value.</param>
 /// <param name="Value">
-/// Invariant text: the number for <see cref="SqlLiteralKind.Number"/>, <c>true</c> or <c>false</c>
+/// Invariant text: the number for <see cref="SqlLiteralKind.Number"/> and <see cref="SqlLiteralKind.Real"/>, <c>true</c> or <c>false</c>
 /// for <see cref="SqlLiteralKind.Boolean"/>, the raw unescaped text for
 /// <see cref="SqlLiteralKind.String"/>, empty for <see cref="SqlLiteralKind.Null"/>.
 /// </param>
@@ -181,6 +181,12 @@ internal enum SqlLiteralKind
     Boolean,
     Number,
     String,
+
+    /// <summary>
+    /// A <c>float</c>, written <c>0.1::real</c>. A bare <c>0.1</c> is numeric, which PostgreSQL
+    /// compares with a real column as double precision, where the float's value differs.
+    /// </summary>
+    Real,
 }
 
 /// <summary>

@@ -249,5 +249,7 @@ public sealed class PostgresLinqWhereTests
         Titles(await repo.OtherCategoryAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low");
         Titles(await repo.OtherPriorityAsync(5, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
         Titles(await repo.NotAboveAsync(3, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
+
+        Titles(await repo.RatedAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal("low");
     }
 }
