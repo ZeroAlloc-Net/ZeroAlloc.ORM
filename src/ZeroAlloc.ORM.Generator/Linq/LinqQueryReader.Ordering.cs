@@ -35,7 +35,7 @@ internal static partial class LinqQueryReader
             return false;
         }
 
-        chain.Ordering.Add(new SqlOrdering(key, name.EndsWith("Descending", StringComparison.Ordinal)));
+        chain.Ordering.Add(new SqlOrdering(key, name.EndsWith("Descending", StringComparison.Ordinal), MayBeNull(key, context.NullableValues)));
         return true;
     }
 
@@ -52,7 +52,7 @@ internal static partial class LinqQueryReader
         switch (ReadGroupValue(returned, group, key, context, out var expression))
         {
             case OperandRead.Read:
-                chain.Ordering.Add(new SqlOrdering(expression!, name.EndsWith("Descending", StringComparison.Ordinal)));
+                chain.Ordering.Add(new SqlOrdering(expression!, name.EndsWith("Descending", StringComparison.Ordinal), MayBeNull(expression!, context.NullableValues)));
                 return true;
             case OperandRead.Reported:
                 return false;

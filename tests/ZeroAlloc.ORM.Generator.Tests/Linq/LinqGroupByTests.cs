@@ -149,6 +149,29 @@ public class LinqGroupByTests
             """ + Rows);
     }
 
+    // A nullable group key and a nullable aggregate order as LINQ does, nulls first ascending and
+    // last descending; a Count, which is never null, does not say.
+    [Fact]
+    public void Grouped_order_by_nullable_key_and_nullable_aggregate()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(ByNoteQuery))]
+                public partial Task<List<NoteTop>> ByNote(CancellationToken ct);
+
+                private static IQuery<NoteTop> ByNoteQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .GroupBy(t => t.Note)
+                        .OrderBy(g => g.Key)
+                        .ThenByDescending(g => g.Max(t => t.Priority))
+                        .ThenBy(g => g.Count())
+                        .Select(g => new NoteTop(g.Key, g.Max(t => t.Priority), g.Count()));
+            }
+            """ + Rows + """
+
+        public sealed record NoteTop(string? Note, int? Top, int Count);
+        """);
+    }
+
     // HAVING and counting the groups are not translated yet, nor is a key that is not a column,
     // a column's `.Date` or an anonymous type of those; nor reading an anonymous g.Key whole. Min
     // and Max reject a Guid and an enum stored by name, by [StoreAsString] or by the map.

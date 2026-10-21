@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.BusiestDaysQuery
-    private const string __sql0_BusiestDays = "SELECT \"Note\", date_trunc('day', \"LocalAt\"), sum(\"Order\")::bigint, sum(\"Size\")::bigint, count(*)::int FROM \"Tasks\" GROUP BY \"Note\", date_trunc('day', \"LocalAt\") ORDER BY date_trunc('day', \"LocalAt\"), sum(\"Size\")::bigint DESC, \"Note\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)";
+    private const string __sql0_BusiestDays = "SELECT \"Note\", date_trunc('day', \"LocalAt\"), sum(\"Order\")::bigint, sum(\"Size\")::bigint, count(*)::int FROM \"Tasks\" GROUP BY \"Note\", date_trunc('day', \"LocalAt\") ORDER BY date_trunc('day', \"LocalAt\"), sum(\"Size\")::bigint DESC, \"Note\" NULLS FIRST LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.NoteDayTokens>> BusiestDays(int @skip, int @take, global::System.Threading.CancellationToken @ct)

@@ -94,9 +94,12 @@ internal static partial class LinqQueryReader
             case SqlPagingCountExpression count:
                 return MayBeNull(count.Count, nullableValues);
             case SqlAggregateCallExpression call:
-                // A count is never NULL, nor is a COALESCEd sum; any other aggregate of no values is.
-                return !call.CoalesceToZero
-                    && call.Function is not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount);
+                // Only a group's aggregate is read here, and a group has rows. Then a count is never
+                // NULL, nor is a sum; Min, Max and Average are NULL when every value is, so when the
+                // argument can be.
+                return call.Function is not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum)
+                    && call.Argument is { } argument
+                    && MayBeNull(argument, nullableValues);
             default:
                 throw new InvalidOperationException("No nullability rule for " + expression.GetType().Name + ".");
         }

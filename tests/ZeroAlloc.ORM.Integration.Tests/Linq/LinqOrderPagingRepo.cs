@@ -24,6 +24,12 @@ internal sealed partial class LinqOrderPagingRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(FirstPageQuery))]
     public partial Task<List<KeysetRow>> FirstPageAsync(int take, CancellationToken ct);
 
+    [LinqQuery(nameof(ByDueQuery))]
+    public partial Task<List<TaskLine>> ByDueAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(ByDueDescendingQuery))]
+    public partial Task<List<TaskLine>> ByDueDescendingAsync(CancellationToken ct);
+
     [LinqQuery(nameof(NextPageQuery))]
     public partial Task<List<KeysetRow>> NextPageAsync(DateTimeOffset afterAt, Guid afterId, int take, CancellationToken ct);
 
@@ -60,6 +66,18 @@ internal sealed partial class LinqOrderPagingRepo(IAsyncDbConnection connection)
             .ThenBy(t => t.Id)
             .Take(take)
             .Select(t => new KeysetRow(t.Id, t.CreatedAt));
+
+    private static IQuery<TaskLine> ByDueQuery() =>
+        Sql.Table<TaskEntity>()
+            .OrderBy(t => t.DueAt)
+            .ThenBy(t => t.Order)
+            .Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> ByDueDescendingQuery() =>
+        Sql.Table<TaskEntity>()
+            .OrderByDescending(t => t.DueAt)
+            .ThenBy(t => t.Order)
+            .Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     private static IQuery<KeysetRow> NextPageQuery(DateTimeOffset afterAt, Guid afterId, int take) =>
         Sql.Table<TaskEntity>()

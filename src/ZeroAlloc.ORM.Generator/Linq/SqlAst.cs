@@ -285,8 +285,12 @@ internal enum SqlAggregateFunction
     Average,
 }
 
-/// <summary>One ORDER BY key.</summary>
-internal sealed record SqlOrdering(SqlExpression Expression, bool Descending);
+/// <summary>
+/// One ORDER BY key. <paramref name="NullsLikeLinq"/> is set when the key can be NULL: LINQ sorts
+/// null first ascending and last descending, where PostgreSQL's default is the opposite, so the
+/// renderer says NULLS FIRST or NULLS LAST. A key that cannot be NULL renders without it.
+/// </summary>
+internal sealed record SqlOrdering(SqlExpression Expression, bool Descending, bool NullsLikeLinq = false);
 
 /// <summary>LIMIT and OFFSET, each null when absent.</summary>
 internal sealed record SqlPaging(SqlExpression? Limit, SqlExpression? Offset)

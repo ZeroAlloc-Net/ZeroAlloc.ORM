@@ -129,13 +129,12 @@ public sealed class PostgresLinqGroupByTests
         var rows = await repo.CountPerModelAsync(CancellationToken.None).ConfigureAwait(false);
 
         // Both null models are one group, as in LINQ. A nullable Sum whose values are all null
-        // is 0, as LINQ's is. The order pins PostgreSQL's current NULLS LAST for ascending keys,
-        // which differs from LINQ, where null sorts first; null ordering awaits a decision.
+        // is 0, as LINQ's is. The null key sorts first, as it does in LINQ.
         var expected = new[]
         {
+            new ModelCount(null, 2, 1),
             new ModelCount("a", 1, 0),
             new ModelCount("b", 3, 3),
-            new ModelCount(null, 2, 1),
         };
         rows.Should().Equal(expected);
 

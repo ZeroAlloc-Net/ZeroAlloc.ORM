@@ -176,7 +176,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         {
             sb.Append(i == 0 ? " ORDER BY " : ", ");
             RenderExpression(sb, select.Ordering[i].Expression, names);
-            if (select.Ordering[i].Descending) sb.Append(" DESC");
+            var ordering = select.Ordering[i];
+            if (ordering.Descending) sb.Append(" DESC");
+            if (ordering.NullsLikeLinq) sb.Append(ordering.Descending ? " NULLS LAST" : " NULLS FIRST");
         }
     }
 

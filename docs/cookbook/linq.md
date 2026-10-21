@@ -216,6 +216,11 @@ The order is checked, and each break of it reports [ZAO102](../diagnostics/ZAO10
 
 Ordering keys are mapped columns. An enum stored by name orders by its member names, as text.
 
+Nulls sort as in LINQ: first in an ascending ordering, last in a descending one. PostgreSQL's own
+default is the opposite, so a key that can be null, a nullable column, a nullable group key or a
+`Min`, `Max` or `Average` of a nullable selector, renders `NULLS FIRST` after `ORDER BY "A"` and
+`NULLS LAST` after `"A" DESC`. A key that cannot be null renders without it.
+
 `Skip` and `Take` take a companion parameter or an `int` literal. A negative parameter counts as 0, as
 in LINQ, through `GREATEST`. A negative literal is a build error. On the single-row shape a `Take`
 caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter gives
