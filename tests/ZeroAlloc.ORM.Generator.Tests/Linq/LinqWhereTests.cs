@@ -445,6 +445,57 @@ public class LinqWhereTests
         Assert.Contains("can be null", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
+    // HasValue on a nullable companion parameter is its null test; a parameter without a DbType
+    // facet gets the same cast as `p != null`.
+    [Fact]
+    public void HasValue_on_a_parameter_is_a_null_test()
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(int? minOrder, DateTime? at, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(int? minOrder, DateTime? at) =>
+                    Sql.Table<TaskEntity>()
+                        .WhereIf(minOrder.HasValue, t => t.Order >= minOrder)
+                        .Where(t => !minOrder.HasValue || t.Order < minOrder)
+                        .Where(t => !at.HasValue || t.LocalAt < at)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal(
+            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@minOrder IS NOT NULL) IS NOT TRUE OR (\"Order\" >= @minOrder))"
+                + " AND (@minOrder IS NULL OR \"Order\" < @minOrder) AND (@at::timestamptz IS NULL OR \"LocalAt\" < @at)",
+            method.Sql);
+    }
+
+    // Any other member of a companion parameter, such as Value, is ZAO102 with a hint; it is a
+    // parameter, so ZAO103's "pass it as a companion parameter" would be wrong.
+    [Theory]
+    [InlineData("t => t.Order >= minOrder.Value", "minOrder.Value", "'Value'")]
+    [InlineData("t => title.Length > 2", "title.Length", "'Length'")]
+    public void Other_member_of_a_parameter_reports_ZAO102_with_a_hint(string predicate, string located, string member)
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(int? minOrder, string title, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(int? minOrder, string title) =>
+                    Sql.Table<TaskEntity>().Where(
+            """ + predicate + """
+            ).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
+        var message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+        Assert.Contains(member, message, StringComparison.Ordinal);
+        Assert.Contains("rather than the parameter itself", message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Several_Wheres_join_with_AND()
     {

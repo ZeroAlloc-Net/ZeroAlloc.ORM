@@ -45,6 +45,20 @@ internal static partial class LinqQueryReader
             return OperandRead.Reported;
         }
 
+        // A member of a companion parameter, such as `minOrder.Value`, is not a value the SQL can
+        // bind. It is no capture either: the parameter already is one. `p.HasValue` is read as a
+        // condition, by ReadPredicate.
+        if (op is IMemberReferenceOperation { Instance: IParameterReferenceOperation owner } member
+            && context.SqlNames.ContainsKey(owner.Parameter))
+        {
+            expression = null;
+            context.Report(LinqDiagnostics.Unsupported(
+                "Reading '" + member.Member.Name + "' of companion parameter '" + owner.Parameter.Name
+                    + "', rather than the parameter itself or a HasValue test,",
+                op.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
+
         expression = op.ConstantValue.HasValue ? ReadConstant(op) : ReadReference(op, row, context);
         if (expression is not null) return OperandRead.Read;
         if (op.ConstantValue.HasValue || !IsCapture(op, row)) return OperandRead.Unsupported;

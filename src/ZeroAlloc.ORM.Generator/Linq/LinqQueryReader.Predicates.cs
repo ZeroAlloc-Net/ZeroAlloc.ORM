@@ -62,6 +62,11 @@ internal static partial class LinqQueryReader
         {
             case IBinaryOperation binary:
                 return ReadBinary(binary, row, context);
+            case IPropertyReferenceOperation when HasValueOf(op, context) is { } tested:
+                return ReadNullTestOf(tested, negated: true, op, row, context);
+            case IUnaryOperation { OperatorKind: UnaryOperatorKind.Not, OperatorMethod: null } not
+                when HasValueOf(Unwrap(not.Operand), context) is { } tested:
+                return ReadNullTestOf(tested, negated: false, op, row, context);
             case IUnaryOperation { OperatorKind: UnaryOperatorKind.Not, OperatorMethod: null } not:
                 var operand = ReadPredicate(not.Operand, row, context);
                 return operand is null ? null : Negate(operand, context);
@@ -140,7 +145,7 @@ internal static partial class LinqQueryReader
         return Compare(compare, left, right, context);
     }
 
-    // `x == null`, `null != x` or `string.Equals(x, null)`: IS [NOT] NULL. Exactly one side must be
+    // `x == null`, `null != x`, `string.Equals(x, null)` or `p.HasValue`: IS [NOT] NULL. Exactly one side must be
     // the null constant. A parameter without a DbType facet gets a cast here, since PostgreSQL
     // types a parameter at its first use and `@p IS NULL` gives it none; a type with no cast is
     // ZAO102 rather than a 42P08 at run time.
@@ -154,7 +159,26 @@ internal static partial class LinqQueryReader
     {
         var leftNull = IsNullConstant(left);
         if (leftNull && IsNullConstant(right)) return ReportUnsupported(at, context);
-        var testedOperation = leftNull ? right : left;
+        return ReadNullTestOf(leftNull ? right : left, negated, at, row, context);
+    }
+
+    // `p.HasValue` on a nullable companion parameter: the parameter reference, which a null
+    // test reads; null for anything else.
+    private static IOperation? HasValueOf(IOperation op, ReaderContext context)
+        => op is IPropertyReferenceOperation { Property.Name: "HasValue", Instance: IParameterReferenceOperation reference }
+            && reference.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+            && context.SqlNames.ContainsKey(reference.Parameter)
+                ? reference
+                : null;
+
+    // `tested IS [NOT] NULL`, reported at `at`.
+    private static SqlIsNullExpression? ReadNullTestOf(
+        IOperation testedOperation,
+        bool negated,
+        IOperation at,
+        IParameterSymbol? row,
+        ReaderContext context)
+    {
         var tested = ReadComparand(testedOperation, row, context);
         if (tested is null) return null;
 

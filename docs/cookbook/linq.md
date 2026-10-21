@@ -208,6 +208,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 |---|---|
 | `t.Order == n`, `!=`, `<`, `<=`, `>`, `>=` | `"Order" = @n`, `<>`, `<`, `<=`, `>`, `>=` |
 | `t.Note == null`, `t.Note != null` | `"Note" IS NULL`, `"Note" IS NOT NULL` |
+| `p.HasValue`, `!p.HasValue`, for a nullable parameter | `@p IS NOT NULL`, `@p IS NULL` |
 | `a && b`, `a \|\| b`, `!a` | `a AND b`, `(a OR b)`, `NOT (a)`, or `(a) IS NOT TRUE` when `a` can be null |
 | `t.IsActive` | `"IsActive"` |
 | `t.Status == WorkStatus.Done` | `"Status" = 1`, or `'Done'` when stored by name |
