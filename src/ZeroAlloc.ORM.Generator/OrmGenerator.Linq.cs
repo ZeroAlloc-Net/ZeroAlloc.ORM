@@ -50,38 +50,6 @@ public sealed partial class OrmGenerator
             .Select(static (r, _) => r.Method!);
     }
 
-    // ZAO109. Three steps, so an edit binds nothing unless a call shares a companion's name:
-    //
-    //   LinqCompanions   -- every companion a [LinqQuery] names, by type and name; symbol-free.
-    //   InvocationNames  -- every invocation, by the simple name it calls; syntax only, no symbols.
-    //   CompanionCalls   -- the invocations whose name a companion has, bound against the
-    //                       compilation. Only these see a semantic model.
-    private static void RegisterCompanionCalls(IncrementalGeneratorInitializationContext context)
-    {
-        var companions = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
-                fullyQualifiedMetadataName: LinqQueryAttributeFullName,
-                predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, _) => LinqCompanionCalls.ReadCompanion(ctx))
-            .Collect()
-            .Select(static (refs, _) => LinqCompanionCalls.Sort(refs))
-            .WithTrackingName("LinqCompanions");
-
-        var calls = context.SyntaxProvider
-            .CreateSyntaxProvider(
-                predicate: static (node, _) => LinqCompanionCalls.IsNamedInvocation(node),
-                transform: static (ctx, _) => LinqCompanionCalls.ReadInvocation(ctx.Node))
-            .WithTrackingName("InvocationNames")
-            .Combine(companions)
-            .Where(static pair => LinqCompanionCalls.SharesAName(pair.Left, pair.Right))
-            .Combine(context.CompilationProvider)
-            .Select(static (pair, ct) => LinqCompanionCalls.Resolve(pair.Left.Left, pair.Left.Right, pair.Right, ct))
-            .WithTrackingName("CompanionCalls")
-            .Where(static d => d is not null);
-
-        context.RegisterSourceOutput(calls, ReportStandaloneDiagnostic);
-    }
-
     private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, CancellationToken ct)
     {
         var translation = LinqQueryReader.Read(ctx, ct);

@@ -752,9 +752,10 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO108"));
 
-    // ZAO109 — code calls a method that a [LinqQuery] names as its companion. The companion is
-    // read at build time and never runs; what it returns describes a query, it holds no rows.
-    // Reported at the invocation.
+    // ZAO109 — code calls a method that a [LinqQuery] names as its companion, or takes it as a
+    // method group. The companion is read at build time and never runs; what it returns
+    // describes a query, it holds no rows. Reported by LinqCompanionCallAnalyzer at the
+    // invocation or the method group.
     //
     // MessageArgs:
     //   {0} = the companion name

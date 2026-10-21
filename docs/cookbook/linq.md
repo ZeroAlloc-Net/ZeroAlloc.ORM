@@ -118,8 +118,8 @@ The rules:
 - The chain may read its own parameters, constants, which are inlined as literals, and the entity's
   mapped columns. A field, a local or `this` reports [ZAO103](../diagnostics/ZAO103.md).
 - The companion never runs. Its operators all throw `InvalidOperationException`, and any call to it
-  from code reports [ZAO109](../diagnostics/ZAO109.md). Call the `[LinqQuery]` method instead. Keep
-  companions `private`.
+  from code, or any use of it as a method group, reports [ZAO109](../diagnostics/ZAO109.md). Call the
+  `[LinqQuery]` method instead. Keep companions `private`.
 - Everything else is `[Query]`'s: parameter binding, typed ids and value objects, materialisation, and
   joining a caller's transaction through an `IAsyncDbTransaction` parameter on the method.
 
