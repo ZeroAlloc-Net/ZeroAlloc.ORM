@@ -4489,7 +4489,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // or when Factory is unset / null / empty. The attribute itself is found
     // by fully-qualified display name so the lookup is robust against alias
     // / partial-namespace usage at the call site.
-    private static string? ReadMaterializeFactoryName(ImmutableArray<AttributeData> attrs)
+    internal static string? ReadMaterializeFactoryName(ImmutableArray<AttributeData> attrs)
     {
         foreach (var attr in attrs)
         {

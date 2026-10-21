@@ -283,11 +283,22 @@ public class LinqFrontEndDiagnosticsTests
 
         public readonly record struct Span(int From, int To);
 
+        [Materialize(Factory = nameof(FromStorage))]
+        public sealed class Period
+        {
+            private Period(int days) => Days = days;
+
+            public int Days { get; }
+
+            public static Period FromStorage(int days, string unit) => new(days);
+        }
+
         public sealed class Priced
         {
             public Guid Id { get; private set; }
             public Money Price { get; private set; } = new(0m, "EUR");
             public Span Window { get; private set; }
+            public Period? Term { get; private set; }
         }
 
         [TableMap(typeof(Priced), "Priced")]
@@ -326,6 +337,8 @@ public class LinqFrontEndDiagnosticsTests
     [InlineData("p => p.Price == total", "Money total", "Money total")]
     [InlineData("p => total == null", "Money? total", "Money? total")]
     [InlineData("p => window == null", "Span? window", "Span? window")]
+    [InlineData("p => p.Term == null", "int order", "p.Term")]
+    [InlineData("p => term == null", "Period? term", "Period? term")]
     public void Composite_member_or_parameter_reports_ZAO102(string predicate, string parameter, string expected)
     {
         var (d, located) = Single(Priced + Repo + """

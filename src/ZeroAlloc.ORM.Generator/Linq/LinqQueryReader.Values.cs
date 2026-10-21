@@ -116,9 +116,15 @@ internal static partial class LinqQueryReader
     }
 
     // A multi-field composite: the [Query] path binds it as one DbParameter per constructor
-    // argument, @p_Amount and @p_Currency, and reads it from as many columns.
+    // argument, @p_Amount and @p_Currency, and reads it from as many columns. A type with
+    // [Materialize(Factory = ...)] counts too, whatever convention it resolves to: the read
+    // side expands it into the factory's inner columns.
     private static bool IsComposite(ITypeSymbol type, ConventionContext conventions)
-        => ConventionDiscovery.Resolve(UnwrapNullable(type), conventions).Kind == ConventionKind.MultiArgCtor;
+    {
+        var underlying = UnwrapNullable(type);
+        return ConventionDiscovery.Resolve(underlying, conventions).Kind == ConventionKind.MultiArgCtor
+            || OrmGenerator.ReadMaterializeFactoryName(underlying.GetAttributes()) is not null;
+    }
 
     private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type)
         => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type));
