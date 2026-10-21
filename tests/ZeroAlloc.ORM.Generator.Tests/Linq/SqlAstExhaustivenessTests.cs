@@ -39,6 +39,7 @@ public class SqlAstExhaustivenessTests
 
         Walk(select);
         Walk(new SqlAggregateStatement(SqlAggregate.Count, select));
+        Walk(new SqlScalarAggregateStatement(Call(expression), select));
         _ = LinqQueryReader.MayBeNull(expression, new HashSet<SqlExpression>());
     }
 
@@ -56,7 +57,10 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlCastExpression), expressions);
         Assert.Contains(typeof(SqlConditionalExpression), expressions);
         Assert.True(expressions.Count >= 15, "found " + expressions.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        Assert.Equal([typeof(SqlAggregateStatement), typeof(SqlSelectStatement)], Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
+        Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
+        Assert.Equal(
+            [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
+            Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
     }
 
     private static void Walk(SqlStatement statement)
@@ -77,6 +81,10 @@ public class SqlAstExhaustivenessTests
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(expression, Descending: false))),
             new SqlPaging(expression, expression));
+
+    // The expression as an aggregate's argument, the position a scalar aggregate adds.
+    private static SqlAggregateCallExpression Call(SqlExpression argument)
+        => new(SqlAggregateFunction.Sum, argument, ResultCast: "int", CoalesceToZero: true);
 
     private static TheoryData<string> Names(Type root)
     {
@@ -118,6 +126,7 @@ public class SqlAstExhaustivenessTests
         if (type == typeof(SqlTableSource)) return From;
         if (type == typeof(SqlPaging)) return SqlPaging.None;
         if (type == typeof(SqlSelectStatement)) return Select(Column);
+        if (type == typeof(SqlAggregateCallExpression)) return Call(Column);
         throw new InvalidOperationException(
             "No placeholder for " + type.Name + " in " + parameter.Member.DeclaringType?.Name + "; add one here.");
     }

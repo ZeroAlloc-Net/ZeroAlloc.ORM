@@ -51,6 +51,20 @@ internal enum SqlAggregate
     Any,
 }
 
+/// <summary>
+/// A <c>Sum</c>, <c>Min</c>, <c>Max</c> or <c>Average</c> terminal over a SELECT:
+/// <c>SELECT call FROM ... WHERE ...</c>, one value read through the <c>[Query]</c> scalar shapes.
+/// A record of its own rather than a <see cref="SqlAggregateStatement"/> with an optional call,
+/// so each statement says one thing: that one is a bare count or existence, this one a call.
+/// </summary>
+/// <param name="Call">The aggregate, over a column of <paramref name="Source"/>.</param>
+/// <param name="Source">
+/// The rows the aggregate reads: the chain's table, WHERE and paging, without a projection. It
+/// has an ordering only when it is paged, since which rows a page holds changes a sum, and an
+/// ORDER BY next to an aggregate without a GROUP BY is an error.
+/// </param>
+internal sealed record SqlScalarAggregateStatement(SqlAggregateCallExpression Call, SqlSelectStatement Source) : SqlStatement;
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
@@ -206,6 +220,47 @@ internal enum SqlLiteralKind
 /// <param name="Count">The parameter.</param>
 /// <param name="AtMostOne">Whether the count is also capped at 1.</param>
 internal sealed record SqlPagingCountExpression(SqlExpression Count, bool AtMostOne) : SqlExpression;
+
+/// <summary>
+/// An aggregate call: <c>COALESCE(fn(argument), 0)::cast</c>, each part optional. Scalar
+/// aggregates use it as their whole SELECT list; a grouped SELECT can project several.
+/// </summary>
+/// <param name="Function">The aggregate function.</param>
+/// <param name="Argument">The aggregated column; null for <c>count(*)</c>.</param>
+/// <param name="ResultCast">
+/// The PostgreSQL type the result is cast to, so it is exactly the CLR type the scalar reads,
+/// such as <c>int</c> for a <c>Sum</c> over int, whose <c>sum</c> is bigint. Null for none.
+/// </param>
+/// <param name="CoalesceToZero">
+/// Whether NULL, the aggregate of no values, reads as 0. LINQ's <c>Sum</c> is 0 for no values,
+/// nullable selectors included.
+/// </param>
+internal sealed record SqlAggregateCallExpression(
+    SqlAggregateFunction Function,
+    SqlExpression? Argument,
+    string? ResultCast,
+    bool CoalesceToZero) : SqlExpression;
+
+internal enum SqlAggregateFunction
+{
+    /// <summary><c>count</c>.</summary>
+    Count,
+
+    /// <summary><c>count</c>, read as a long.</summary>
+    LongCount,
+
+    /// <summary><c>sum</c>.</summary>
+    Sum,
+
+    /// <summary><c>min</c>.</summary>
+    Min,
+
+    /// <summary><c>max</c>.</summary>
+    Max,
+
+    /// <summary><c>avg</c>.</summary>
+    Average,
+}
 
 /// <summary>One ORDER BY key.</summary>
 internal sealed record SqlOrdering(SqlExpression Expression, bool Descending);

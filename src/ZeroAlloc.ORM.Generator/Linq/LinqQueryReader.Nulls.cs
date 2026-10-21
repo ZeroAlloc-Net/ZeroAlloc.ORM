@@ -91,6 +91,10 @@ internal static partial class LinqQueryReader
                 return MayBeNull(conditional.Predicate, nullableValues);
             case SqlPagingCountExpression count:
                 return MayBeNull(count.Count, nullableValues);
+            case SqlAggregateCallExpression call:
+                // A count is never NULL, nor is a COALESCEd sum; any other aggregate of no values is.
+                return !call.CoalesceToZero
+                    && call.Function is not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount);
             default:
                 throw new InvalidOperationException("No nullability rule for " + expression.GetType().Name + ".");
         }

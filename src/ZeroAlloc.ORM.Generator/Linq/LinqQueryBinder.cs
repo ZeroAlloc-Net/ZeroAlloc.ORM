@@ -46,6 +46,7 @@ internal static class LinqQueryBinder
     {
         SqlSelectStatement select => select.From,
         SqlAggregateStatement aggregate => aggregate.Source.From,
+        SqlScalarAggregateStatement scalar => scalar.Source.From,
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 

@@ -27,6 +27,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlAggregateStatement aggregate:
                 RenderAggregate(sb, aggregate, names);
                 break;
+            case SqlScalarAggregateStatement scalar:
+                RenderScalarAggregate(sb, scalar, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -70,6 +73,53 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         RenderFromWhere(sb, source, names);
         RenderPaging(sb, source.Paging, names);
         sb.Append(") AS q");
+    }
+
+    // As a paged count, a paged aggregate reads a paged subquery. The subquery selects the
+    // aggregated column, so the call outside names it the same way, and keeps the ORDER BY,
+    // which picks the rows of the page:
+    //   SELECT COALESCE(sum("X"), 0)::int FROM "T" WHERE ...
+    //   SELECT COALESCE(sum("X"), 0)::int FROM (SELECT "X" FROM "T" WHERE ... ORDER BY ... LIMIT @take) AS q
+    private static void RenderScalarAggregate(StringBuilder sb, SqlScalarAggregateStatement scalar, SqlNameScope names)
+    {
+        var source = scalar.Source;
+        sb.Append("SELECT ");
+        RenderExpression(sb, scalar.Call, names);
+        if (source.Paging.Limit is null && source.Paging.Offset is null)
+        {
+            RenderFromWhere(sb, source, names);
+            return;
+        }
+        sb.Append(" FROM (SELECT ");
+        if (scalar.Call.Argument is { } argument)
+            RenderExpression(sb, argument, names);
+        else
+            sb.Append('1');
+        RenderFromWhere(sb, source, names);
+        RenderOrdering(sb, source, names);
+        RenderPaging(sb, source.Paging, names);
+        sb.Append(") AS q");
+    }
+
+    // `COALESCE(sum("X"), 0)::int`, `avg("X")::double precision`, `count(*)`.
+    private static void RenderAggregateCall(StringBuilder sb, SqlAggregateCallExpression call, SqlNameScope names)
+    {
+        if (call.CoalesceToZero) sb.Append("COALESCE(");
+        sb.Append(call.Function switch
+        {
+            SqlAggregateFunction.Count or SqlAggregateFunction.LongCount => "count(",
+            SqlAggregateFunction.Sum => "sum(",
+            SqlAggregateFunction.Min => "min(",
+            SqlAggregateFunction.Max => "max(",
+            _ => "avg(",
+        });
+        if (call.Argument is { } argument)
+            RenderExpression(sb, argument, names);
+        else
+            sb.Append('*');
+        sb.Append(')');
+        if (call.CoalesceToZero) sb.Append(", 0)");
+        if (call.ResultCast is { } cast) sb.Append("::").Append(cast);
     }
 
     // ` FROM "schema"."table" [WHERE a AND b]`.
@@ -197,6 +247,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 sb.Append(" = ANY(");
                 RenderExpression(sb, any.Array, names);
                 sb.Append(')');
+                break;
+            case SqlAggregateCallExpression call:
+                RenderAggregateCall(sb, call, names);
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

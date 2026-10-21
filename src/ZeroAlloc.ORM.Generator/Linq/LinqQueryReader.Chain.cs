@@ -39,6 +39,9 @@ internal static partial class LinqQueryReader
         // Count, LongCount or Any, which end the chain.
         public SqlAggregate? Terminal { get; set; }
 
+        // Sum, Min, Max or Average, which end the chain too.
+        public SqlAggregateCallExpression? Call { get; set; }
+
         public string? TerminalOperator { get; set; }
     }
 
@@ -50,11 +53,13 @@ internal static partial class LinqQueryReader
 
         // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
         // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,
-        // or a Take, reads any one row. A scalar shape does not depend on the order at all.
+        // or a Take, reads any one row. A count or an existence does not depend on the order at
+        // all, but a sum, an average, a min or a max over a page does.
         var unorderedPaging = shape switch
         {
             LinqResultShape.List or LinqResultShape.Stream => chain.PagingLocation,
             LinqResultShape.SingleRow when chain.Offset is not null => chain.PagingLocation,
+            LinqResultShape.Scalar when chain.Call is not null => chain.PagingLocation,
             _ => null,
         };
         if (unorderedPaging is not null && chain.Ordering.Count == 0)
@@ -73,6 +78,9 @@ internal static partial class LinqQueryReader
                 new SqlPaging(chain.Limit, chain.Offset)));
         }
 
+        if (chain.Call is { } call)
+            return ScalarAggregate(call, chain);
+
         if (chain.Projection is not { } projection)
         {
             context.Report(LinqDiagnostics.UnsupportedProjection(
@@ -88,6 +96,19 @@ internal static partial class LinqQueryReader
             new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
             new EquatableArray<SqlOrdering>(chain.Ordering.ToImmutable()),
             new SqlPaging(limit, chain.Offset));
+    }
+
+    // The rows a Sum, Min, Max or Average reads. A page keeps its ordering, which picks the
+    // page's rows; without paging the ordering changes nothing and goes.
+    private static SqlScalarAggregateStatement ScalarAggregate(SqlAggregateCallExpression call, ChainBuilder chain)
+    {
+        var paged = chain.Limit is not null || chain.Offset is not null;
+        return new SqlScalarAggregateStatement(call, new SqlSelectStatement(
+            chain.From!,
+            default,
+            new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
+            paged ? new EquatableArray<SqlOrdering>(chain.Ordering.ToImmutable()) : default,
+            new SqlPaging(chain.Limit, chain.Offset)));
     }
 
     // Reads the chain source first, so operators apply in written order.
@@ -118,6 +139,8 @@ internal static partial class LinqQueryReader
         if (!ReadChain(invocation.Arguments[0].Value, chain, context)) return false;
         if (chain.TerminalOperator is { } terminal)
             return Unsupported(invocation, "'" + target.Name + "' after '" + terminal + "'", context);
+        // Count, LongCount and Any drop a projection. Sum, Min, Max and Average would read the
+        // projected row's members, which are not columns.
         if (chain.Projection is not null && TerminalOf(target.Name) is null)
             return Unsupported(invocation, "'" + target.Name + "' after 'Select'", context);
         return ReadOperator(invocation, chain, context);
@@ -138,6 +161,8 @@ internal static partial class LinqQueryReader
         // ordering would apply to the page alone, which one SELECT cannot express.
         if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
             return Unsupported(invocation, "'" + name + "' after '" + paging + "'", context);
+
+        if (IsValueAggregate(name)) return ReadAggregate(invocation, chain, context);
 
         return name switch
         {

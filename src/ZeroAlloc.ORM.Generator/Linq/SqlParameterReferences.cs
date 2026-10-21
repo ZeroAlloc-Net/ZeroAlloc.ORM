@@ -20,6 +20,10 @@ internal static class SqlParameterReferences
             case SqlAggregateStatement aggregate:
                 AddSelect(aggregate.Source, names);
                 break;
+            case SqlScalarAggregateStatement scalar:
+                Add(scalar.Call, names);
+                AddSelect(scalar.Source, names);
+                break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + statement.GetType().Name + ".");
         }
@@ -83,6 +87,9 @@ internal static class SqlParameterReferences
                 break;
             case SqlPagingCountExpression count:
                 Add(count.Count, names);
+                break;
+            case SqlAggregateCallExpression call:
+                if (call.Argument is { } argument) Add(argument, names);
                 break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + expression.GetType().Name + ".");
