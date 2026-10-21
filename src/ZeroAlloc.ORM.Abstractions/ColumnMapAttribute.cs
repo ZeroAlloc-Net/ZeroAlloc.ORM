@@ -21,8 +21,8 @@ public sealed class ColumnMapAttribute(string property) : Attribute
 
     /// <summary>
     /// Gets or sets a value indicating whether the property is left out of the map: it has no column,
-    /// and a LINQ query that uses it does not compile. Set it on a computed property the generator
-    /// would otherwise take for a column; it cannot be combined with <see cref="Column"/> or
+    /// and a LINQ query that uses it does not compile. Set it on a property that holds a value but is
+    /// not stored, such as a cached auto-property; it cannot be combined with <see cref="Column"/> or
     /// <see cref="EnumAsString"/>.
     /// </summary>
     public bool Ignore { get; init; }

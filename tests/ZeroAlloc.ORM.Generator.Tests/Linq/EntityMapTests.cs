@@ -319,6 +319,7 @@ public class EntityMapTests
     [Theory]
     [InlineData(false, "Column = \"c\"")]
     [InlineData(true, "Column = \"c\"")]
+    [InlineData(false, "EnumAsString = true")]
     [InlineData(true, "EnumAsString = true")]
     public void Ignore_with_Column_or_EnumAsString_on_a_referenced_property_reports_ZAO106(
         bool referenceAssembly, string setting)
@@ -332,6 +333,77 @@ public class EntityMapTests
         Assert.Contains("Ignore", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         var text = d.Location.SourceTree!.ToString();
         Assert.Contains("Ignore = true", text.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length), StringComparison.Ordinal);
+    }
+
+    // A shared kernel in a referenced assembly: the DDD base every entity derives from, and a
+    // virtual property overridden there by a computed one.
+    private const string Kernel = """
+        namespace Kernel;
+
+        public abstract class Entity
+        {
+            public int Id { get; private set; }
+        }
+
+        public class Named : Entity
+        {
+            public virtual string Name { get; set; } = "";
+        }
+
+        public sealed class Fixed : Named
+        {
+            public override string Name => "x";
+        }
+        """;
+
+    private static EntityMapModel KernelMap(bool referenceAssembly, string source)
+    {
+        var compilation = GeneratorHarness.CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) })
+            .AddReferences(GeneratorHarness.CompileReference(Kernel, "Kernel", referenceAssembly));
+        return Assert.Single(Maps(CreateDriver().RunGenerators(compilation).GetRunResult()));
+    }
+
+    // An override counts its base's setter in metadata too, as it does in source.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Referenced_override_of_a_settable_property_is_a_column(bool referenceAssembly)
+    {
+        var map = KernelMap(referenceAssembly, """
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [TableMap(typeof(Kernel.Fixed), "F")]
+            internal static class FMap;
+            """);
+
+        Assert.Equal(["Id", "Name"], map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    // The common DDD shape: an entity in this compilation derives from a referenced base whose Id
+    // has a private setter. Id is a column, since its getter is compiler generated.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Entity_deriving_from_a_referenced_base_maps_the_base_auto_property(bool referenceAssembly)
+    {
+        var map = KernelMap(referenceAssembly, """
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class Order : Kernel.Entity
+            {
+                public string Number { get; private set; } = "";
+                public string Label => Number + "!";
+            }
+
+            [TableMap(typeof(Order), "Orders")]
+            internal static class OrderMap;
+            """);
+
+        Assert.Equal(["Id", "Number"], map.Columns.Select(c => c.Property).ToArray());
     }
 
     // A query that uses a property the map leaves out fails at build time with ZAO105, not at run

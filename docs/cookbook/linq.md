@@ -64,7 +64,8 @@ internal static class TaskMap;
   a private setter is not visible. There a property without a visible setter is a column only when
   it is an auto-property, which the compiler marks `[CompilerGenerated]`. A hand-written getter
   backed by a private setter, `Note { get => _note; private set => _note = value; }`, looks computed
-  from outside and is left out.
+  from outside and is left out. So does a C# 14 `field`-keyword getter with logic, such as
+  `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
 - A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
   leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
   combined with `Column` or `EnumAsString`. Either way a wrong guess fails the build with ZAO105,
