@@ -12,7 +12,9 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 /// </param>
 /// <param name="Table">The table name.</param>
 /// <param name="Schema">The schema, or null for the connection default.</param>
-/// <param name="Columns">Every public readable instance property of the entity, in declaration order.</param>
+/// <param name="Columns">
+/// Every public readable instance property of the entity: base type first, then declaration order.
+/// </param>
 internal sealed record EntityMapModel(
     string EntityTypeFullName,
     string Table,
@@ -30,14 +32,12 @@ internal sealed record ColumnMapModel(
 
 /// <summary>
 /// What one map class yields: its model when the entity resolved, and the diagnostics found in it.
-/// The sort key orders the duplicate check across map classes deterministically.
+/// The table attribute's location (file path, then position) orders the duplicate check across map classes.
 /// </summary>
 internal sealed record EntityMapReadResult(
     EntityMapModel? Model,
     EquatableArray<DiagnosticInfo> Diagnostics,
-    LocationInfo? TableMapLocation,
-    string FilePath,
-    int Position) : IEquatable<EntityMapReadResult>;
+    LocationInfo? TableMapLocation) : IEquatable<EntityMapReadResult>;
 
 /// <summary>
 /// Every map in the compilation, after the duplicate check: the maps Task-5 consumers combine with
