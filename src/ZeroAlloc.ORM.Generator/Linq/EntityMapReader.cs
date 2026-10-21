@@ -36,7 +36,7 @@ internal static class EntityMapReader
         var order = new List<string>();
         var properties = ReadableProperties(entity, order);
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        var overrides = new Dictionary<string, (string Column, bool EnumAsString)>(StringComparer.Ordinal);
+        var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore)>(StringComparer.Ordinal);
         var overrideLocations = new Dictionary<string, LocationInfo?>(StringComparer.Ordinal);
 
         foreach (var attribute in ctx.TargetSymbol.GetAttributes())
@@ -54,7 +54,7 @@ internal static class EntityMapReader
             if (!properties.TryGetValue(propertyName, out var property))
             {
                 diagnostics.Add(Invalid(
-                    $"[ColumnMap] names '{propertyName}', which is not a public readable property of {entityName} with a setter or a backing field",
+                    $"[ColumnMap] names '{propertyName}', which is not a public readable instance property of {entityName}",
                     location));
                 continue;
             }
@@ -67,18 +67,41 @@ internal static class EntityMapReader
 
             var column = propertyName;
             var enumAsString = false;
+            var ignore = false;
+            var storageSet = false;
             foreach (var named in attribute.NamedArguments)
             {
-                if (string.Equals(named.Key, "Column", StringComparison.Ordinal) && named.Value.Value is string c)
-                    column = c;
-                else if (string.Equals(named.Key, "EnumAsString", StringComparison.Ordinal) && named.Value.Value is bool b)
-                    enumAsString = b;
+                if (string.Equals(named.Key, "Column", StringComparison.Ordinal))
+                {
+                    storageSet = true;
+                    if (named.Value.Value is string c)
+                        column = c;
+                }
+                else if (string.Equals(named.Key, "EnumAsString", StringComparison.Ordinal))
+                {
+                    storageSet = true;
+                    enumAsString = named.Value.Value is true;
+                }
+                else if (string.Equals(named.Key, "Ignore", StringComparison.Ordinal))
+                {
+                    ignore = named.Value.Value is true;
+                }
             }
 
-            overrides[propertyName] = (column, enumAsString && IsEnum(property.Type));
+            overrides[propertyName] = (column, enumAsString && IsEnum(property.Type), ignore);
             overrideLocations[propertyName] = location;
 
-            if (enumAsString && !IsEnum(property.Type))
+            if (ignore)
+            {
+                // An ignored property has no column, so how it is stored means nothing.
+                if (storageSet)
+                {
+                    diagnostics.Add(Invalid(
+                        $"Ignore is set on '{propertyName}' of {entityName} together with Column or EnumAsString; an ignored property has no column",
+                        location));
+                }
+            }
+            else if (enumAsString && !IsEnum(property.Type))
             {
                 diagnostics.Add(Invalid(
                     $"EnumAsString is set on '{propertyName}' of {entityName}, which is not an enum",
@@ -86,12 +109,20 @@ internal static class EntityMapReader
             }
         }
 
+        // A [ColumnMap] decides: Ignore leaves the property out, anything else makes it a column. A
+        // property without one is a column when it holds a value.
         var columns = ImmutableArray.CreateBuilder<ColumnMapModel>(properties.Count);
         foreach (var name in order)
         {
-            columns.Add(overrides.TryGetValue(name, out var o)
-                ? new ColumnMapModel(name, o.Column, o.EnumAsString)
-                : new ColumnMapModel(name, name, EnumAsString: false));
+            if (overrides.TryGetValue(name, out var o))
+            {
+                if (!o.Ignore)
+                    columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString));
+            }
+            else if (IsStored(properties[name]))
+            {
+                columns.Add(new ColumnMapModel(name, name, EnumAsString: false));
+            }
         }
 
         // Two properties may not share a column. At least one of the pair carries an override, since
@@ -198,12 +229,10 @@ internal static class EntityMapReader
         || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
             && nullable.TypeArguments[0].TypeKind == TypeKind.Enum;
 
-    // Public instance properties with a public getter that a column can stand behind, from the
-    // base types first and then the entity, each in declaration order; `order` receives the names
-    // in that order. The setter may have any accessibility, init included: entities with private
-    // setters are mapped too. A get-only auto-property counts, since it has a backing field; a
-    // computed one declared in source, such as `Label => First + "!"`, does not. A property that
+    // Public instance properties with a public getter, from the base types first and then the
+    // entity, each in declaration order; `order` receives the names in that order. A property that
     // hides or overrides a base one of the same name replaces it and keeps the base position.
+    // Which of them are columns is decided by IsStored and the map's [ColumnMap] attributes.
     private static Dictionary<string, IPropertySymbol> ReadableProperties(INamedTypeSymbol entity, List<string> order)
     {
         var chain = new List<INamedTypeSymbol>();
@@ -221,8 +250,7 @@ internal static class EntityMapReader
                         IsIndexer: false,
                         DeclaredAccessibility: Accessibility.Public,
                         GetMethod.DeclaredAccessibility: Accessibility.Public,
-                    } property
-                    && IsStored(property))
+                    } property)
                 {
                     if (!result.ContainsKey(property.Name))
                         order.Add(property.Name);
@@ -234,15 +262,43 @@ internal static class EntityMapReader
         return result;
     }
 
-    // Whether the property holds a value: it, or a property it overrides, has a setter or a
-    // backing field, the implicitly declared field of an auto-property. A property from a
-    // referenced assembly always counts: a private setter is not imported from metadata, so a
-    // computed property cannot be told from one with a private setter there.
+    // Whether the property holds a value: it, or a property it overrides, has a visible setter of
+    // any accessibility, init included, or is an auto-property. In source every setter is visible
+    // and an auto-property has a backing field, so a computed `Label => First + "!"` has neither.
+    // Metadata imports neither a private setter nor the private backing field, so there a get-only
+    // property counts only when its getter is compiler generated: the compiler marks an
+    // auto-property's accessors so, and not a hand-written getter.
     private static bool IsStored(IPropertySymbol property)
     {
         for (var p = property; p is not null; p = p.OverriddenProperty)
         {
-            if (p.SetMethod is not null || p.DeclaringSyntaxReferences.IsEmpty || HasBackingField(p)) return true;
+            if (p.SetMethod is not null) return true;
+            if (p.DeclaringSyntaxReferences.IsEmpty ? IsCompilerGenerated(p.GetMethod) : HasBackingField(p)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsCompilerGenerated(IMethodSymbol? method)
+    {
+        if (method is null) return false;
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (attribute.AttributeClass is
+                {
+                    MetadataName: "CompilerGeneratedAttribute",
+                    ContainingNamespace:
+                    {
+                        Name: "CompilerServices",
+                        ContainingNamespace:
+                        {
+                            Name: "Runtime",
+                            ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true },
+                        },
+                    },
+                })
+            {
+                return true;
+            }
         }
         return false;
     }

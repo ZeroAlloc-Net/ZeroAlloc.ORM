@@ -59,8 +59,24 @@ internal static class TaskMap;
 - Every public readable instance property that holds a value is a column, whatever its setter's
   accessibility: one with a setter, `init` included, or a get-only auto-property. A computed
   property such as `public string Label => First + Last;` is not a column, and a query that uses it
-  reports ZAO105. An entity from another assembly keeps all its readable properties, because a
-  private setter is not visible there.
+  reports ZAO105.
+- An entity from another assembly, such as a separate Domain project, is read from metadata, where
+  a private setter is not visible. There a property without a visible setter is a column only when
+  it is an auto-property, which the compiler marks `[CompilerGenerated]`. A hand-written getter
+  backed by a private setter, `Note { get => _note; private set => _note = value; }`, looks computed
+  from outside and is left out. So does a C# 14 `field`-keyword getter with logic, such as
+  `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
+- A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
+  leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
+  combined with `Column` or `EnumAsString`. Either way a wrong guess fails the build with ZAO105,
+  and one attribute fixes it:
+
+  ```csharp
+  [TableMap(typeof(Domain.Note), "Notes")]
+  [ColumnMap(nameof(Domain.Note.Body))]                  // hand-written getter, stored
+  [ColumnMap(nameof(Domain.Note.Cached), Ignore = true)] // auto-property, not stored
+  internal static class NoteMap;
+  ```
 - Every identifier is quoted, so `"Order"`, `"Tasks"` and mixed-case names are safe.
 - An enum type marked `[StoreAsString]` is stored by its member name everywhere. For an enum
   without the attribute, `[ColumnMap(nameof(E.P), EnumAsString = true)]` stores this one column by

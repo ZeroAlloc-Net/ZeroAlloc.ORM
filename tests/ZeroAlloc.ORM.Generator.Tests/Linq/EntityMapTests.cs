@@ -229,50 +229,248 @@ public class EntityMapTests
             map.Columns.Select(c => c.Property).ToArray());
     }
 
-    // An entity from a referenced assembly keeps every readable property: metadata does not
-    // import a private setter, so Note, which has one, looks exactly like the computed Label.
-    // Skipping both would make Note unusable with no way around it.
-    [Fact]
-    public void Every_readable_property_of_a_referenced_entity_is_a_column()
+    // ---- entities from a referenced assembly ----
+
+    // Metadata does not import a private setter, so Note, which has one, and the computed Label
+    // both look get-only there. A get-only property counts only when its getter is compiler
+    // generated, that is an auto-property: Id and Created are columns, Note and Label are not.
+    private const string Remote = """
+        namespace Lib;
+
+        public enum Kind { A, B }
+
+        public sealed class Remote
+        {
+            private string _note = "";
+            public int Id { get; private set; }
+            public string Created { get; } = "";
+            public string Title { get; set; } = "";
+            public Kind Kind { get; init; }
+            public string Note { get => _note; private set => _note = value; }
+            public string Label => Created + "!";
+        }
+        """;
+
+    private static EntityMapModel RemoteMap(bool referenceAssembly, string map) =>
+        Assert.Single(Maps(CreateDriver().RunGenerators(RemoteCompilation(referenceAssembly, map)).GetRunResult()));
+
+    private static Diagnostic[] RemoteZao106(bool referenceAssembly, string map) =>
+        CreateDriver().RunGenerators(RemoteCompilation(referenceAssembly, map)).GetRunResult().Results[0].Diagnostics
+            .Where(d => string.Equals(d.Id, "ZAO106", StringComparison.Ordinal))
+            .ToArray();
+
+    private static CSharpCompilation RemoteCompilation(bool referenceAssembly, string source) =>
+        GeneratorHarness.CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) })
+            .AddReferences(GeneratorHarness.CompileReference(Remote, "Lib", referenceAssembly));
+
+    private const string RemoteMapHead = """
+        using ZeroAlloc.ORM;
+
+        namespace TestApp;
+
+        [TableMap(typeof(Lib.Remote), "R")]
+
+        """;
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Referenced_entity_maps_auto_properties_and_skips_computed_ones(bool referenceAssembly)
     {
-        var library = GeneratorHarness.CreateCompilation(new[]
-        {
-            CSharpSyntaxTree.ParseText("""
-                namespace Lib;
+        var map = RemoteMap(referenceAssembly, RemoteMapHead + "internal static class RMap;");
 
-                public sealed class Remote
-                {
-                    private string _note = "";
-                    public int Id { get; private set; }
-                    public string Created { get; } = "";
-                    public string Note { get => _note; private set => _note = value; }
-                    public string Label => Created + "!";
-                }
-                """),
-        }).WithAssemblyName("Lib");
-        using var image = new System.IO.MemoryStream();
-        Assert.True(library.Emit(image).Success);
-
-        var compilation = GeneratorHarness.CreateCompilation(new[]
-        {
-            CSharpSyntaxTree.ParseText("""
-                using ZeroAlloc.ORM;
-
-                namespace TestApp;
-
-                [TableMap(typeof(Lib.Remote), "R")]
-                internal static class RMap;
-                """),
-        }).AddReferences(MetadataReference.CreateFromImage(image.ToArray()));
-        var map = Assert.Single(Maps(CreateDriver().RunGenerators(compilation).GetRunResult()));
-
-        Assert.Equal(["Id", "Created", "Note", "Label"], map.Columns.Select(c => c.Property).ToArray());
+        Assert.Equal(["Id", "Created", "Title", "Kind"], map.Columns.Select(c => c.Property).ToArray());
     }
 
-    [Fact]
-    public void Column_map_on_a_computed_property_reports_ZAO106()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Column_map_forces_a_referenced_property_in(bool referenceAssembly)
     {
-        var diagnostics = Zao106(Entity + """
+        var source = RemoteMapHead + """
+            [ColumnMap(nameof(Lib.Remote.Note))]
+            [ColumnMap(nameof(Lib.Remote.Label), Column = "label")]
+            internal static class RMap;
+            """;
+
+        Assert.Empty(RemoteZao106(referenceAssembly, source));
+        Assert.Equal(
+            ["Id", "Created", "Title", "Kind", "Note", "Label"],
+            RemoteMap(referenceAssembly, source).Columns.Select(c => c.Property).ToArray());
+        Assert.Equal("label", Column(RemoteMap(referenceAssembly, source), "Label").Column);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Ignore_drops_a_referenced_auto_property(bool referenceAssembly)
+    {
+        var source = RemoteMapHead + """
+            [ColumnMap(nameof(Lib.Remote.Created), Ignore = true)]
+            internal static class RMap;
+            """;
+
+        Assert.Empty(RemoteZao106(referenceAssembly, source));
+        Assert.Equal(
+            ["Id", "Title", "Kind"],
+            RemoteMap(referenceAssembly, source).Columns.Select(c => c.Property).ToArray());
+    }
+
+    [Theory]
+    [InlineData(false, "Column = \"c\"")]
+    [InlineData(true, "Column = \"c\"")]
+    [InlineData(false, "EnumAsString = true")]
+    [InlineData(true, "EnumAsString = true")]
+    public void Ignore_with_Column_or_EnumAsString_on_a_referenced_property_reports_ZAO106(
+        bool referenceAssembly, string setting)
+    {
+        var diagnostics = RemoteZao106(referenceAssembly, RemoteMapHead + $$"""
+            [ColumnMap(nameof(Lib.Remote.Kind), Ignore = true, {{setting}})]
+            internal static class RMap;
+            """);
+
+        var d = Assert.Single(diagnostics);
+        Assert.Contains("Ignore", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        var text = d.Location.SourceTree!.ToString();
+        Assert.Contains("Ignore = true", text.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length), StringComparison.Ordinal);
+    }
+
+    // A shared kernel in a referenced assembly: the DDD base every entity derives from, and a
+    // virtual property overridden there by a computed one.
+    private const string Kernel = """
+        namespace Kernel;
+
+        public abstract class Entity
+        {
+            public int Id { get; private set; }
+        }
+
+        public class Named : Entity
+        {
+            public virtual string Name { get; set; } = "";
+        }
+
+        public sealed class Fixed : Named
+        {
+            public override string Name => "x";
+        }
+        """;
+
+    private static EntityMapModel KernelMap(bool referenceAssembly, string source)
+    {
+        var compilation = GeneratorHarness.CreateCompilation(new[] { CSharpSyntaxTree.ParseText(source) })
+            .AddReferences(GeneratorHarness.CompileReference(Kernel, "Kernel", referenceAssembly));
+        return Assert.Single(Maps(CreateDriver().RunGenerators(compilation).GetRunResult()));
+    }
+
+    // An override counts its base's setter in metadata too, as it does in source.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Referenced_override_of_a_settable_property_is_a_column(bool referenceAssembly)
+    {
+        var map = KernelMap(referenceAssembly, """
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            [TableMap(typeof(Kernel.Fixed), "F")]
+            internal static class FMap;
+            """);
+
+        Assert.Equal(["Id", "Name"], map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    // The common DDD shape: an entity in this compilation derives from a referenced base whose Id
+    // has a private setter. Id is a column, since its getter is compiler generated.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Entity_deriving_from_a_referenced_base_maps_the_base_auto_property(bool referenceAssembly)
+    {
+        var map = KernelMap(referenceAssembly, """
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed class Order : Kernel.Entity
+            {
+                public string Number { get; private set; } = "";
+                public string Label => Number + "!";
+            }
+
+            [TableMap(typeof(Order), "Orders")]
+            internal static class OrderMap;
+            """);
+
+        Assert.Equal(["Id", "Number"], map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    // A query that uses a property the map leaves out fails at build time with ZAO105, not at run
+    // time; [ColumnMap] on it brings it in.
+    [Theory]
+    [InlineData(false, "", "Label", "ZAO105")]
+    [InlineData(true, "", "Label", "ZAO105")]
+    [InlineData(true, "", "Note", "ZAO105")]
+    [InlineData(true, "[ColumnMap(nameof(Lib.Remote.Note))]", "Note", null)]
+    [InlineData(true, "[ColumnMap(nameof(Lib.Remote.Created), Ignore = true)]", "Created", "ZAO105")]
+    public void Query_on_a_property_the_map_leaves_out_reports_ZAO105(
+        bool referenceAssembly, string columnMap, string member, string? expected)
+    {
+        var source = $$"""
+            #nullable enable
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+            using ZeroAlloc.ORM.Linq;
+
+            namespace TestApp;
+
+            [TableMap(typeof(Lib.Remote), "R")]
+            {{columnMap}}
+            internal static class RMap;
+
+            public sealed record Row(int Id, string Text);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class Store(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(RowsQuery))]
+                public partial Task<List<Row>> Rows(CancellationToken ct);
+
+                private static IQuery<Row> RowsQuery() =>
+                    Sql.Table<Lib.Remote>().Select(r => new Row(r.Id, r.{{member}}));
+            }
+            """;
+
+        var result = CreateDriver().RunGenerators(RemoteCompilation(referenceAssembly, source)).GetRunResult();
+        var diagnostics = result.Results[0].Diagnostics;
+
+        if (expected is null)
+        {
+            Assert.Empty(diagnostics);
+            // The SQL sits in a C# string literal, so its quotes are escaped.
+            var generated = Assert.Single(result.Results[0].GeneratedSources).SourceText.ToString();
+            Assert.Contains("SELECT \\\"Id\\\", \\\"Note\\\" FROM \\\"R\\\"", generated, StringComparison.Ordinal);
+        }
+        else
+        {
+            var d = Assert.Single(diagnostics);
+            Assert.Equal(expected, d.Id);
+            var text = d.Location.SourceTree!.ToString();
+            Assert.Equal("r." + member, text.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length));
+        }
+    }
+
+    // ---- overrides on a same-compilation entity ----
+
+    // [ColumnMap] names a property the map should store, so it brings a computed one in too.
+    [Fact]
+    public void Column_map_forces_a_computed_property_in()
+    {
+        var source = Entity + """
             public sealed class WithLabel
             {
                 public int Id { get; private set; }
@@ -282,10 +480,52 @@ public class EntityMapTests
             [TableMap(typeof(WithLabel), "L")]
             [ColumnMap(nameof(WithLabel.Label), Column = "label")]
             internal static class LabelMap;
-            """);
+            """;
 
-        var d = Assert.Single(diagnostics);
-        Assert.Contains("Label", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Assert.Empty(Zao106(source));
+        var map = MapsOfSingle(source);
+        Assert.Equal(["Id", "Label"], map.Columns.Select(c => c.Property).ToArray());
+        Assert.Equal("label", Column(map, "Label").Column);
+    }
+
+    [Fact]
+    public void Ignore_drops_a_property()
+    {
+        var source = Entity + """
+            [TableMap(typeof(TaskEntity), "Tasks")]
+            [ColumnMap(nameof(TaskEntity.Title), Ignore = true)]
+            internal static class TaskMap;
+            """;
+
+        Assert.Empty(Zao106(source));
+        Assert.Equal(["Id", "Kind"], MapsOfSingle(source).Columns.Select(c => c.Property).ToArray());
+    }
+
+    // An ignored property holds no column, so another may take its name.
+    [Fact]
+    public void Ignored_property_does_not_claim_its_column()
+    {
+        var source = Entity + """
+            [TableMap(typeof(TaskEntity), "Tasks")]
+            [ColumnMap(nameof(TaskEntity.Title), Ignore = true)]
+            [ColumnMap(nameof(TaskEntity.Kind), Column = "Title")]
+            internal static class TaskMap;
+            """;
+
+        Assert.Empty(Zao106(source));
+        Assert.Equal("Title", Column(MapsOfSingle(source), "Kind").Column);
+    }
+
+    [Fact]
+    public void Ignore_with_EnumAsString_reports_ZAO106()
+    {
+        var d = Assert.Single(Zao106(Entity + """
+            [TableMap(typeof(TaskEntity), "Tasks")]
+            [ColumnMap(nameof(TaskEntity.Kind), Ignore = true, EnumAsString = true)]
+            internal static class TaskMap;
+            """));
+
+        Assert.Contains("Kind", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     [Fact]
