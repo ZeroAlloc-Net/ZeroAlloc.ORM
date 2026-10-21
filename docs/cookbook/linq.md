@@ -220,14 +220,19 @@ The order is checked, and each break of it reports [ZAO102](../diagnostics/ZAO10
 - `Take` before `Skip`, and `Skip` or `Take` twice;
 - an operator after `Select`, other than a terminal, and any operator after a terminal.
 
-Ordering keys are mapped columns. An enum stored by name orders by its member names, as text.
+Ordering keys are mapped columns. An enum stored by name orders by its member names, as text. A
+string orders by the database collation, where LINQ's `OrderBy` uses the current culture, so the two
+can differ: under the `C` collation `"B"` sorts before `"a"`. This is a known difference.
 
 Nulls sort as in LINQ: first in an ascending ordering, last in a descending one. PostgreSQL's own
 default is the opposite, so a key that can be null, such as a nullable column, a nullable group key,
 or a `Min`, `Max` or `Average` of a nullable selector, renders `NULLS FIRST` after `ORDER BY "A"` and
 `NULLS LAST` after `"A" DESC`. A key that cannot be null renders without it. Releases up to 2.5.0
 ordered a nullable key by PostgreSQL's default, nulls last ascending, so the row order of such a query
-changes with this version.
+changes with this version. A default B-tree index is ascending with nulls last and serves neither
+`ORDER BY "A" NULLS FIRST` nor `"A" DESC NULLS LAST`, so `OrderBy(t => t.A).Take(n)` on a nullable
+column that used an index top-N scan now sorts. Index such a column as `("A" NULLS FIRST)`, or make
+it non-nullable if it never holds NULL.
 
 `Skip` and `Take` take a companion parameter or an `int` literal. A negative parameter counts as 0, as
 in LINQ, through `GREATEST`. A negative literal is a build error. On the single-row shape a `Take`
@@ -335,8 +340,8 @@ private static IQuery<double> MeanTokensQuery(Guid taskId) =>
 
 | C# | SQL |
 |---|---|
-| `Sum(e => e.Tokens)` | `COALESCE(sum("Tokens"), 0)::<type>`, an exact cast back to the selector's type: `integer`, `bigint`, `numeric` or `double precision` |
-| `Sum(e => e.Weight)`, a `float` widened to `double` | `COALESCE(sum("Weight"::double precision), 0)`: the sum adds doubles, as C# does |
+| `Sum(e => e.Tokens)` | `COALESCE(sum("Tokens"), 0)::<type>`, an exact cast back to the selector's type: `int`, `bigint`, `numeric` or `double precision`. A `decimal` sum over a `decimal` column gets no cast: `COALESCE(sum("Price"), 0)` |
+| `Sum(e => e.Weight)`, a `float` widened to `double` | `COALESCE(sum("Weight"::double precision), 0)::double precision`: the sum adds doubles, as C# does |
 | `Average(e => e.Tokens)`, `int` or `long` | `avg("Tokens")::double precision` |
 | `Average(e => e.Price)`, `decimal` | `avg("Price")` |
 | `Min(e => e.At)`, `Max(e => e.At)` | `min("At")`, `max("At")` |
@@ -355,8 +360,11 @@ The result follows LINQ to Objects, with these rules:
 - `Min` and `Max` over a `bool`, a `Guid` or an enum stored by name report ZAO102, because
   PostgreSQL has no such aggregate or would compare names. A method that returns an enum from a
   terminal reports [ZAO112](../diagnostics/ZAO112.md).
+- `Min` and `Max` over a string compare by the database collation, where LINQ uses the current
+  culture, so they can pick a different string: under the `C` collation `"B"` is less than `"a"`.
+  This is a known difference.
 - Over a page, `Skip` and `Take` run in a subquery:
-  `SELECT sum("Tokens") FROM (SELECT "Tokens" FROM ... ORDER BY ... LIMIT ...) AS q`.
+  `SELECT COALESCE(sum("Tokens"), 0)::bigint FROM (SELECT "Tokens" FROM ... ORDER BY ... LIMIT ...) AS q`.
   The `ORDER BY` stays inside it, because which rows form the page decides the result; without one
   the chain reports [ZAO110](../diagnostics/ZAO110.md). A paged `Count` or `Any` needs no ordering.
 
@@ -457,8 +465,8 @@ The rules:
   filters the outer side.
 
 Not translated, each reported as ZAO102: a composite key, a computed result member, an inner side
-with an operator other than `Where`, left joins, and `Join` after
-`GroupBy`, `Select`, `Skip`, `Take` or `OrderBy`.
+with an operator other than `Where`, and `Join` after `GroupBy`, `Select`, `Skip`, `Take` or
+`OrderBy`. There is no left-join operator yet.
 
 ## Keyset paging
 
@@ -531,8 +539,9 @@ Also not supported today:
 - `HAVING`: `Where` after `GroupBy` reports ZAO102. Filter the rows before grouping.
 - Counting groups, such as `GroupBy(...).Count()` (ZAO102), and `GroupBy` without a final `Select`
   (ZAO107).
-- Left joins, composite join keys, an inner side other than `Sql.Table<T>()` with `Where`, and
-  `Join` after `GroupBy`, `Select`, `Skip`, `Take` or `OrderBy`.
+- Left joins: there is no left-join operator yet.
+- Composite join keys, an inner side other than `Sql.Table<T>()` with `Where`, and `Join` after
+  `GroupBy`, `Select`, `Skip`, `Take` or `OrderBy` (ZAO102).
 - Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
   (ZAO107). Project into a one-member record instead.
 - `Skip` and `Take` after `Select` (ZAO102). Put them before it.
