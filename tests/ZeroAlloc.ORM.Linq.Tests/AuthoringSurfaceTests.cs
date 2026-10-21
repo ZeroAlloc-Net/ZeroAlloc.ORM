@@ -1,7 +1,6 @@
 using System.Reflection;
 using AwesomeAssertions;
 using Xunit;
-using ZeroAlloc.ORM;
 using ZeroAlloc.ORM.Linq;
 
 namespace ZeroAlloc.ORM.Linq.Tests;
@@ -9,6 +8,7 @@ namespace ZeroAlloc.ORM.Linq.Tests;
 public sealed class AuthoringSurfaceTests
 {
     private const string Guidance = "read at build time";
+    private const string Call = "Call the [LinqQuery] method";
 
     [TableMap(typeof(Order), "orders", Schema = "sales")]
     [ColumnMap("Id", Column = "order_id")]
@@ -22,7 +22,7 @@ public sealed class AuthoringSurfaceTests
     {
         var act = () => Sql.Table<object>();
 
-        act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*");
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
     }
 
     [Fact]
@@ -30,10 +30,10 @@ public sealed class AuthoringSurfaceTests
     {
         IQuery<int> query = null!;
 
-        ((Action)(() => query.Where(x => x > 1))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*");
-        ((Action)(() => query.Select(x => x + 1))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*");
-        ((Action)(() => query.Count())).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*");
-        ((Action)(() => _ = Sql.Row(1, 2) > Sql.Row(1, 2))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*");
+        ((Action)(() => query.Where(x => x > 1))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
+        ((Action)(() => query.Select(x => x + 1))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
+        ((Action)(() => query.Count())).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
+        ((Action)(() => _ = Sql.Row(1, 2) > Sql.Row(1, 2))).Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
     }
 
     [Fact]
