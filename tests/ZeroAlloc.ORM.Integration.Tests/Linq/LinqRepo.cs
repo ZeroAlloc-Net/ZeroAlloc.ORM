@@ -42,6 +42,9 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(ProjectLinesQuery))]
     public partial Task<IList<ProjectLine>> ProjectLinesAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(LiteralsQuery))]
+    public partial Task<List<LiteralRow>> LiteralsAsync(string label, CancellationToken ct);
+
     private static IQuery<TaskProjection> ProjectionsQuery() =>
         Sql.Table<TaskEntity>().Select(t => new TaskProjection(t.Id, t.ProjectId, t.Status, t.Kind, t.Tags, t.DueAt));
 
@@ -51,4 +54,7 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
 
     private static IQuery<ProjectLine> ProjectLinesQuery() =>
         Sql.Table<ProjectEntity>().Select(p => new ProjectLine(p.Id, p.Order, p.Title));
+
+    private static IQuery<LiteralRow> LiteralsQuery(string label) =>
+        Sql.Table<TaskEntity>().Select(t => new LiteralRow(t.Id, label, 42, 0.5, null, Origin.Imported));
 }

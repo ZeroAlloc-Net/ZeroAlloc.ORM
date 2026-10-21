@@ -96,4 +96,18 @@ public sealed class PostgresLinqProjectionTests
 
         lines.Should().ContainSingle().Which.Should().Be(new TaskLine(id, "write the plan", 42));
     }
+
+    [Fact]
+    public async Task Parameters_and_literals_read_back_into_member_types()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqRepo(fx.Connection);
+        var id = Guid.NewGuid();
+        await repo.InsertTaskAsync(id, ProjectId.From(Guid.NewGuid()), "t", WorkStatus.Open, "Bug", Created, null, [], 1, CancellationToken.None)
+            .ConfigureAwait(false);
+
+        var rows = await repo.LiteralsAsync("from a parameter", CancellationToken.None).ConfigureAwait(false);
+
+        rows.Should().ContainSingle().Which.Should().Be(new LiteralRow(id, "from a parameter", 42L, 0.5, null, Origin.Imported));
+    }
 }
