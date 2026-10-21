@@ -107,4 +107,173 @@ public static class QueryOperators
     /// <returns>Never returns; the generator reads the call at build time.</returns>
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static IQuery<bool> Any<T>(this IQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>Groups rows by a key; read the group's <c>Key</c> and aggregates in a following Select.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <typeparam name="TKey">The grouping key type.</typeparam>
+    /// <param name="source">The query to group.</param>
+    /// <param name="key">The key, translated to a column or composite key.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<IGroup<TKey, T>> GroupBy<T, TKey>(this IQuery<T> source, Func<T, TKey> key) => throw Guidance.Exception();
+
+    /// <summary>Inner-joins two queries on a key.</summary>
+    /// <typeparam name="TOuter">The element type of the outer query.</typeparam>
+    /// <typeparam name="TInner">The element type of the inner query.</typeparam>
+    /// <typeparam name="TKey">The join key type.</typeparam>
+    /// <typeparam name="TResult">The projected element type of the join.</typeparam>
+    /// <param name="outer">The outer query.</param>
+    /// <param name="inner">The inner query.</param>
+    /// <param name="outerKey">The outer join key, translated to a column.</param>
+    /// <param name="innerKey">The inner join key, translated to a column.</param>
+    /// <param name="result">The projection over the joined pair, translated to columns.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<TResult> Join<TOuter, TInner, TKey, TResult>(this IQuery<TOuter> outer, IQuery<TInner> inner, Func<TOuter, TKey> outerKey, Func<TInner, TKey> innerKey, Func<TOuter, TInner, TResult> result) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected int column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<int> Sum<T>(this IQuery<T> source, Func<T, int> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected long column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<long> Sum<T>(this IQuery<T> source, Func<T, long> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected decimal column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<decimal> Sum<T>(this IQuery<T> source, Func<T, decimal> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected double column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double> Sum<T>(this IQuery<T> source, Func<T, double> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected int? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<int?> Sum<T>(this IQuery<T> source, Func<T, int?> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected long? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<long?> Sum<T>(this IQuery<T> source, Func<T, long?> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected decimal? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<decimal?> Sum<T>(this IQuery<T> source, Func<T, decimal?> selector) => throw Guidance.Exception();
+
+    /// <summary>Sums the selected double? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double?> Sum<T>(this IQuery<T> source, Func<T, double?> selector) => throw Guidance.Exception();
+
+    /// <summary>Takes the smallest selected value.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <typeparam name="TValue">The value type of the selected column.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<TValue> Min<T, TValue>(this IQuery<T> source, Func<T, TValue> selector) => throw Guidance.Exception();
+
+    /// <summary>Takes the largest selected value.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <typeparam name="TValue">The value type of the selected column.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<TValue> Max<T, TValue>(this IQuery<T> source, Func<T, TValue> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected int column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double> Average<T>(this IQuery<T> source, Func<T, int> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected long column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double> Average<T>(this IQuery<T> source, Func<T, long> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected decimal column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<decimal> Average<T>(this IQuery<T> source, Func<T, decimal> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected double column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double> Average<T>(this IQuery<T> source, Func<T, double> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected int? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double?> Average<T>(this IQuery<T> source, Func<T, int?> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected long? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double?> Average<T>(this IQuery<T> source, Func<T, long?> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected decimal? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<decimal?> Average<T>(this IQuery<T> source, Func<T, decimal?> selector) => throw Guidance.Exception();
+
+    /// <summary>Averages the selected double? column.</summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The query to reduce to a single value.</param>
+    /// <param name="selector">The column to aggregate, translated to SQL.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<double?> Average<T>(this IQuery<T> source, Func<T, double?> selector) => throw Guidance.Exception();
 }
