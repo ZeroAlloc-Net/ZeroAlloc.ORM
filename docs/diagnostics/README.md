@@ -47,6 +47,19 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO081 | Error | Containing type must be partial (nested repository) | [ZAO081](ZAO081.md) |
 | ZAO082 | Error | Provider-specific type requires Npgsql | [ZAO082](ZAO082.md) |
 | ZAO083 | Error | `[Json]` requires a string | [ZAO083](ZAO083.md) |
+| ZAO100 | Error | Invalid LINQ companion | [ZAO100](ZAO100.md) |
+| ZAO101 | Error | LINQ companion parameters do not match the method | [ZAO101](ZAO101.md) |
+| ZAO102 | Error | Unsupported LINQ construct | [ZAO102](ZAO102.md) |
+| ZAO103 | Error | LINQ query captures a value | [ZAO103](ZAO103.md) |
+| ZAO104 | Error | LINQ entity has no table map | [ZAO104](ZAO104.md) |
+| ZAO105 | Error | LINQ member is not a mapped column | [ZAO105](ZAO105.md) |
+| ZAO106 | Error | Invalid entity map | [ZAO106](ZAO106.md) |
+| ZAO107 | Error | Unsupported LINQ projection | [ZAO107](ZAO107.md) |
+| ZAO108 | Error | LINQ query requires the PostgreSQL dialect | [ZAO108](ZAO108.md) |
+| ZAO109 | Error | LINQ companion is called | [ZAO109](ZAO109.md) |
+| ZAO110 | Warning | LINQ paging without OrderBy | [ZAO110](ZAO110.md) |
+| ZAO111 | Error | LINQ enum parameter compared with differently stored columns | [ZAO111](ZAO111.md) |
+| ZAO112 | Error | LINQ method return type does not fit the query | [ZAO112](ZAO112.md) |
 
 ## Code-range conventions
 
@@ -57,6 +70,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 - `ZAO082`–`ZAO083` — provider-specific types and their markers: PostgreSQL arrays and `[Json]` strings need Npgsql, and `[Json]` needs a string.
+- `ZAO100`–`ZAO199` — `[LinqQuery]` translation and its `[TableMap]` / `[ColumnMap]` entity maps. `ZAO106` is an invalid entity map; `ZAO109` is a call to a companion, which never runs; `ZAO110` is a warning about paging without an order; the others report a companion, chain, projection, parameter, dialect or return type the translator cannot use.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.
 

@@ -123,6 +123,8 @@ internal static class GeneratorHarness
             // it made the reference set a property of the host rather than of
             // the test. Name it explicitly.
             typeof(System.Data.ConnectionState).Assembly,
+            // ZeroAlloc.ORM.Linq: the authoring API that [LinqQuery] companion methods are written against.
+            typeof(ZeroAlloc.ORM.Linq.Sql).Assembly,
         };
         _ = forceLoadAssemblies;
 

@@ -10,6 +10,9 @@ internal enum EmitShape
 {
     Unknown,
     ScalarInt,
+    // Task<bool> / Task<long> [Query] results; same ExecuteScalar shape as ScalarInt.
+    ScalarBool,
+    ScalarLong,
     NullableScalar,
     FlatRow,
     // Multi-arg class with column-name-keyed reads. Detected when the return-type
@@ -278,7 +281,19 @@ internal sealed record QueryMethodModel(
     // Whether the compilation references Npgsql, by `Npgsql.NpgsqlParameter`.
     // PostgreSQL arrays report ZAO082 without it; the emit for Npgsql-only
     // shapes reads it. A bool, not the Compilation, keeps the model cache-safe.
-    bool HasNpgsql = false);
+    bool HasNpgsql = false,
+    // [LinqQuery] — the one-line description of the LINQ chain the SQL came from.
+    // Non-null only for a [LinqQuery] method: the emit then writes the SQL as a
+    // `private const string __sql<index>_<Method>` above the method, preceded by
+    // this text as a `//` comment, and uses the constant as the CommandText. Null
+    // for [Query] / [Command] / [StoredProcedure], whose emit is unchanged.
+    string? LinqSourceComment = null,
+    // [LinqQuery] — the name of that SQL constant. Emit-only: never set by the
+    // transform, so it plays no part in incremental caching. RenderRepository sets
+    // it once per method from the method's index in the repository, so overloads
+    // get distinct constants, and BuildCommandTextAssignment uses it as the
+    // CommandText when non-null.
+    string? LinqSqlConstantName = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

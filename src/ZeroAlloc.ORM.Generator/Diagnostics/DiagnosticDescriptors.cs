@@ -616,4 +616,201 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO083"));
+
+    // ZAO106 — an entity map the LINQ translator cannot rely on: a second [TableMap] for an entity,
+    // a [ColumnMap] for a property the entity lacks, a property mapped twice, or EnumAsString on a
+    // property that is not an enum. Reported at the offending attribute.
+    //
+    // MessageArgs:
+    //   {0} = what is wrong with the map
+    public static readonly DiagnosticDescriptor ZAO106_InvalidEntityMap = new(
+        id: "ZAO106",
+        title: "Invalid entity map",
+        messageFormat: "Invalid entity map: {0}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO106"));
+
+    // ZAO100 — the [LinqQuery] companion is unusable: not found in the method's type, overloaded,
+    // not static, without a body that is one expression or one return statement, or not returning
+    // IQuery<T>. Reported at the attribute argument when it is missing, else at the companion.
+    //
+    // MessageArgs:
+    //   {0} = the companion name
+    //   {1} = the [LinqQuery] method name
+    //   {2} = what is wrong
+    public static readonly DiagnosticDescriptor ZAO100_InvalidLinqCompanion = new(
+        id: "ZAO100",
+        title: "Invalid LINQ companion",
+        messageFormat: "Companion '{0}' of [LinqQuery] method '{1}' is invalid: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO100"));
+
+    // ZAO101 — the companion's parameters are not the method's value parameters, the method's
+    // parameters minus the CancellationToken and the transaction, by name, type and order.
+    // Reported at the companion's parameter list.
+    //
+    // MessageArgs:
+    //   {0} = the companion name
+    //   {1} = the [LinqQuery] method name
+    //   {2} = the expected parameter list
+    public static readonly DiagnosticDescriptor ZAO101_LinqCompanionParameterMismatch = new(
+        id: "ZAO101",
+        title: "LINQ companion parameters do not match the method",
+        messageFormat: "Companion '{0}' must take the value parameters of '{1}' by name, type and order: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO101"));
+
+    // ZAO102 — a LINQ construct the translator does not support. Reported at the construct.
+    //
+    // MessageArgs:
+    //   {0} = the construct, quoted
+    public static readonly DiagnosticDescriptor ZAO102_UnsupportedLinqConstruct = new(
+        id: "ZAO102",
+        title: "Unsupported LINQ construct",
+        messageFormat: "{0} is not supported in a [LinqQuery] chain",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO102"));
+
+    // ZAO103 — the chain reads a value from outside it: a field, a local, a static member or
+    // `this`. Only companion parameters reach the SQL. Reported at the reference.
+    //
+    // MessageArgs:
+    //   {0} = the captured expression
+    public static readonly DiagnosticDescriptor ZAO103_LinqCapture = new(
+        id: "ZAO103",
+        title: "LINQ query captures a value",
+        messageFormat: "The [LinqQuery] chain reads '{0}'; pass it as a companion parameter instead",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO103"));
+
+    // ZAO104 — the entity of Sql.Table<T>() has no [TableMap]. Reported at the Sql.Table call.
+    //
+    // MessageArgs:
+    //   {0} = the entity type
+    public static readonly DiagnosticDescriptor ZAO104_UnmappedLinqEntity = new(
+        id: "ZAO104",
+        title: "LINQ entity has no table map",
+        messageFormat: "'{0}' has no [TableMap]; add a map class with [TableMap(typeof({0}), \"Table\")]",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO104"));
+
+    // ZAO105 — the chain uses an entity member that is not a mapped column: a field, or a property
+    // that is not public, readable and an instance member, or a computed property with neither a
+    // setter nor a backing field. Reported at the member access.
+    //
+    // MessageArgs:
+    //   {0} = the member name
+    //   {1} = the entity type
+    public static readonly DiagnosticDescriptor ZAO105_UnmappedLinqMember = new(
+        id: "ZAO105",
+        title: "LINQ member is not a mapped column",
+        messageFormat: "'{0}' is not a mapped column of '{1}'",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO105"));
+
+    // ZAO107 — an unsupported projection. Select must construct a positional record through the
+    // constructor rows are read with, each argument a mapped column, a companion parameter or a
+    // literal. Reported at the projection or the offending argument.
+    //
+    // MessageArgs:
+    //   {0} = what is wrong
+    public static readonly DiagnosticDescriptor ZAO107_UnsupportedLinqProjection = new(
+        id: "ZAO107",
+        title: "Unsupported LINQ projection",
+        messageFormat: "Unsupported [LinqQuery] projection: {0}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO107"));
+
+    // ZAO108 — [LinqQuery] renders PostgreSQL only, and the repository does not declare it: its
+    // [Dialect], else the assembly's, is another dialect or missing. Reported at the method.
+    //
+    // MessageArgs:
+    //   {0} = the [LinqQuery] method name
+    //   {1} = what the repository declares
+    public static readonly DiagnosticDescriptor ZAO108_LinqRequiresPostgreSql = new(
+        id: "ZAO108",
+        title: "LINQ query requires the PostgreSQL dialect",
+        messageFormat: "[LinqQuery] method '{0}' needs [Dialect(SqlDialect.PostgreSql)] on its type or assembly, but {1}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO108"));
+
+    // ZAO109 — code calls a method that a [LinqQuery] names as its companion, or takes it as a
+    // method group. The companion is read at build time and never runs; what it returns
+    // describes a query, it holds no rows. Reported by LinqCompanionCallAnalyzer at the
+    // invocation or the method group.
+    //
+    // MessageArgs:
+    //   {0} = the companion name
+    //   {1} = the [LinqQuery] method that names it
+    public static readonly DiagnosticDescriptor ZAO109_LinqCompanionCalled = new(
+        id: "ZAO109",
+        title: "LINQ companion is called",
+        messageFormat: "'{0}' is a [LinqQuery] companion and is never run; call '{1}' instead",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO109"));
+
+    // ZAO110 — a [LinqQuery] list or stream pages with Skip or Take, or a single-row method skips
+    // with Skip, but the chain has no OrderBy, so which rows a page holds is up to PostgreSQL. A
+    // warning: the query runs as written. The single-row shape without a Skip, which reads any
+    // one row, and the Count, LongCount and Any terminals do not report it. Reported at the
+    // first Skip or Take.
+    public static readonly DiagnosticDescriptor ZAO110_LinqPagingWithoutOrder = new(
+        id: "ZAO110",
+        title: "LINQ paging without OrderBy",
+        messageFormat: "Skip or Take without OrderBy returns rows in no defined order",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO110"));
+
+    // ZAO111 — an enum parameter without [StoreAsString] is compared with a column that stores
+    // the enum by name (EnumAsString) and with one that stores its integer, so no single binding
+    // fits both. Reported at the parameter reference in the comparison that disagrees.
+    //
+    // MessageArgs:
+    //   {0} = the parameter's SQL name
+    public static readonly DiagnosticDescriptor ZAO111_LinqEnumParameterStorageConflict = new(
+        id: "ZAO111",
+        title: "LINQ enum parameter compared with differently stored columns",
+        messageFormat: "Parameter '{0}' is compared with columns that store its enum differently",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO111"));
+
+    // ZAO112 — the method's return type does not fit the companion's IQuery<T>. Reported at the
+    // method's return type.
+    //
+    // MessageArgs:
+    //   {0} = the [LinqQuery] method name
+    //   {1} = the method's return type
+    //   {2} = the companion's return type
+    public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
+        id: "ZAO112",
+        title: "LINQ method return type does not fit the query",
+        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; after Count, LongCount or Any, return Task or ValueTask of int, long or bool",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO112"));
 }

@@ -50,4 +50,29 @@ public class ZAO005Tests
 
         Assert.DoesNotContain(diagnostics, d => string.Equals(d.Id, "ZAO005", System.StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Method_with_query_and_linq_query_attributes_emits_ZAO005()
+    {
+        var source = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+            using ZeroAlloc.ORM.Linq;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT 1")]
+                [LinqQuery("Companion")]
+                public partial Task<int> DoSomethingAsync(CancellationToken ct);
+            }
+            """;
+        var result = GeneratorHarness.RunGenerator(source);
+        var diagnostics = result.Results[0].Diagnostics;
+
+        Assert.Contains(diagnostics, d => string.Equals(d.Id, "ZAO005", System.StringComparison.Ordinal));
+    }
 }

@@ -14,4 +14,8 @@ internal enum AttributePipelineKind
     Query,
     Command,
     StoredProcedure,
+
+    // [LinqQuery]: the SQL is generated from the companion's LINQ chain and then
+    // takes the [Query] path through TransformMethodCore, with LinqOverrides set.
+    LinqQuery,
 }

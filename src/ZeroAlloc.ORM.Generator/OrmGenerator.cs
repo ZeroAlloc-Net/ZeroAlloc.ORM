@@ -8,17 +8,19 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using ZeroAlloc.ORM.Generator.Diagnostics;
+using ZeroAlloc.ORM.Generator.Linq;
 using ZeroAlloc.ORM.Generator.Model;
 using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator;
 
 [Generator(LanguageNames.CSharp)]
-public sealed class OrmGenerator : IIncrementalGenerator
+public sealed partial class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
+    private const string LinqQueryAttributeFullName = "ZeroAlloc.ORM.Linq.LinqQueryAttribute";
     private const string DialectAttributeFullName = "ZeroAlloc.ORM.DialectAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
@@ -33,7 +35,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // computes a ToDisplayString on a parameter type for FlatRow / DomainEntity /
     // composite materialization. Hoisted to a static readonly so the
     // SymbolDisplayFormat builder isn't rebuilt per Resolve() / per ctor param.
-    private static readonly SymbolDisplayFormat TypeDisplayFormat =
+    internal static readonly SymbolDisplayFormat TypeDisplayFormat =
         SymbolDisplayFormat.FullyQualifiedFormat
             .WithMiscellaneousOptions(
                 SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
@@ -89,6 +91,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Where(static m => m is not null)
             .WithTrackingName("StoredProcedureMethods")!;
 
+        // Entity maps — `[TableMap]` on a map class, with `[ColumnMap]` overrides beside it. One read
+        // per map class, then a collect that orders them (file path, position), drops the second map
+        // of an entity and reports it as ZAO106. `entityMaps` is the provider the LINQ query pipeline
+        // combines with its methods; `entityMapSets` also carries the diagnostics.
+        var entityMapSets = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.TableMapAttribute",
+                predicate: static (node, _) => node is ClassDeclarationSyntax,
+                transform: static (ctx, ct) => EntityMapReader.Read(ctx, TypeDisplayFormat, ct))
+            .WithTrackingName("EntityMapReads")
+            .Collect()
+            .Select(static (results, _) => EntityMapReader.Resolve(results))
+            .WithTrackingName("EntityMapSets");
+
+        var entityMaps = entityMapSets
+            .Select(static (set, _) => set.Maps)
+            .WithTrackingName("EntityMaps");
+
+        context.RegisterSourceOutput(entityMapSets, static (sourceCtx, set) =>
+        {
+            foreach (var diagnostic in set.Diagnostics)
+                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
+        });
+
+        // [LinqQuery] — the SQL comes from the companion's LINQ chain. Each method is read into a
+        // symbol-free translation plus its [Query]-path model, then bound to the entity maps; the
+        // methods that bind join the union below. See OrmGenerator.Linq.cs.
+        var linqQueryMethods = LinqQueryMethods(context, entityMaps);
+
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
         // location, etc.) — we take them from g.First() instead of duplicating them
@@ -110,10 +141,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var allMethods = queryMethods.Collect()
             .Combine(commandMethods.Collect())
             .Combine(storedProcedureMethods.Collect())
+            .Combine(linqQueryMethods.Collect())
             .SelectMany(static (combined, _) =>
             {
-                var pair = combined.Left;
-                var sprocs = combined.Right;
+                var pair = combined.Left.Left;
+                var sprocs = combined.Left.Right;
+                var linq = combined.Right;
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
@@ -129,6 +162,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 foreach (var m in sprocs)
                 {
                     if (m is null) continue;
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
+                }
+                foreach (var m in linq)
+                {
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 return union.ToImmutable();
@@ -332,7 +369,50 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return JsonRequiresStringDiagnostic(name, type, attributeLocation ?? ctx.TargetNode.GetLocation());
     }
 
+    // The attribute-reading wrapper for the [Query] / [Command] / [StoredProcedure]
+    // pipelines: reads the triggering attribute's string ctor arg and hands it to
+    // TransformMethodCore with no LINQ overrides. [LinqQuery] never comes through
+    // here: its string ctor arg names the companion method and is not SQL.
     private static QueryMethodWithTypeContext? TransformMethod(GeneratorAttributeSyntaxContext ctx, AttributePipelineKind pipelineKind)
+    {
+        // The triggering attribute. For [Query] this is the QueryAttribute; for the
+        // [Command] pipeline this is the CommandAttribute; for [StoredProcedure]
+        // (Phase D) it's StoredProcedureAttribute. All three share a single
+        // string-typed ctor arg — Query/Command call it "Sql", StoredProcedure calls
+        // it "ProcedureName" — so we pull the raw value into `firstStringArg` and
+        // TransformMethodCore dispatches it to the right model field.
+        //
+        // All three triggering attributes today declare a `string` first ctor arg
+        // ([Query(Sql)], [Command(Sql)], [StoredProcedure(ProcedureName)]). The branch
+        // where Value isn't a string is structurally unreachable as long as the
+        // Abstractions surface stays string-typed. The defensive `is string` pattern
+        // (replacing the older `as string ?? string.Empty`) ensures that if a future
+        // overload ever changed the ctor signature, the failure is loud (the empty
+        // fallback would silently emit an empty CommandText, which on the sproc
+        // pipeline becomes a confusing runtime "stored procedure '' not found" error).
+        var rawCtorArg = ctx.Attributes.FirstOrDefault()?.ConstructorArguments.FirstOrDefault().Value;
+        var firstStringArg = rawCtorArg is string s
+            ? s
+            : rawCtorArg is null
+                ? string.Empty
+                : throw new global::System.InvalidOperationException(
+                    $"ORM triggering attribute ctor arg expected to be string, was {rawCtorArg.GetType().Name}.");
+        return TransformMethodCore(ctx, pipelineKind, firstStringArg, linq: null);
+    }
+
+    // The SQL-to-model core shared by every pipeline. `sql` is the command text the
+    // method runs: the [Query] / [Command] SQL, the [StoredProcedure] procedure name,
+    // or the SQL a [LinqQuery] chain was translated to. The core never reads it from
+    // the attribute, so a [LinqQuery] companion name cannot be mistaken for SQL.
+    //
+    // `linq` is non-null only for [LinqQuery]. Its facets are applied to the matching
+    // parameters, as `[Param(DbType = ...)]` would be, so ZAO015 checks them through
+    // a DbTypeCheck; its source comment becomes QueryMethodModel.LinqSourceComment.
+    private static QueryMethodWithTypeContext? TransformMethodCore(
+        GeneratorAttributeSyntaxContext ctx,
+        AttributePipelineKind pipelineKind,
+        string sql,
+        LinqOverrides? linq)
     {
         // Convenience bools — every downstream branch reads these instead of
         // re-pattern-matching the enum. The original Phase A code carried
@@ -354,33 +434,14 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // the Compilation, so it stays cache-safe.
         var hasNpgsql = HasNpgsql(ctx.SemanticModel.Compilation);
 
-        // The triggering attribute. For [Query] this is the QueryAttribute; for the
-        // [Command] pipeline this is the CommandAttribute; for [StoredProcedure]
-        // (Phase D) it's StoredProcedureAttribute. All three share a single
-        // string-typed ctor arg — Query/Command call it "Sql", StoredProcedure calls
-        // it "ProcedureName" — so we pull the raw value into `firstStringArg` and
-        // then dispatch to the right model field. For sprocs, m.Sql stays empty
-        // (multi-result-set classification doesn't read it for the sproc path,
-        // and ZAO008/ZAO032/ZAO033 SQL-statement-counting checks are suppressed
-        // for sprocs since the procedure body lives server-side).
+        // For sprocs, m.Sql stays empty (multi-result-set classification doesn't
+        // read it for the sproc path, and ZAO008/ZAO032/ZAO033 SQL-statement-counting
+        // checks are suppressed for sprocs since the procedure body lives
+        // server-side). The named args (Kind, FromResource, Batch) are still read
+        // from the triggering attribute below.
         var triggeringAttribute = ctx.Attributes.FirstOrDefault();
-        // All three triggering attributes today declare a `string` first ctor arg
-        // ([Query(Sql)], [Command(Sql)], [StoredProcedure(ProcedureName)]). The branch
-        // where Value isn't a string is structurally unreachable as long as the
-        // Abstractions surface stays string-typed. The defensive `is string` pattern
-        // (replacing the older `as string ?? string.Empty`) ensures that if a future
-        // overload ever changed the ctor signature, the failure is loud (the empty
-        // fallback would silently emit an empty CommandText, which on the sproc
-        // pipeline becomes a confusing runtime "stored procedure '' not found" error).
-        var rawCtorArg = triggeringAttribute?.ConstructorArguments.FirstOrDefault().Value;
-        var firstStringArg = rawCtorArg is string s
-            ? s
-            : rawCtorArg is null
-                ? string.Empty
-                : throw new global::System.InvalidOperationException(
-                    $"ORM triggering attribute ctor arg expected to be string, was {rawCtorArg.GetType().Name}.");
-        var sql = isStoredProcedureAttribute ? string.Empty : firstStringArg;
-        var procedureName = isStoredProcedureAttribute ? firstStringArg : string.Empty;
+        var procedureName = isStoredProcedureAttribute ? sql : string.Empty;
+        var methodSql = isStoredProcedureAttribute ? string.Empty : sql;
 
         // v0.4 Phase A — read [Command(Kind = ...)] from the named args. Default is
         // NonQuery to mirror the abstraction default. Only consulted when this method
@@ -479,9 +540,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ZAO005 — multiple ORM attributes on one method.
         // v0.4 Phase D extends from the v0.4-A two-attribute check to a three-way
         // exclusivity rule: counts QueryAttribute + CommandAttribute +
-        // StoredProcedureAttribute. Counting all three pipelines' attributes on the
-        // same method covers every pair (Query+Command, Query+StoredProcedure,
-        // Command+StoredProcedure) and the all-three case via a single >1 threshold.
+        // StoredProcedureAttribute, and since [LinqQuery] also LinqQueryAttribute.
+        // Counting every pipeline's attribute on the same method covers every pair
+        // (Query+Command, Query+StoredProcedure, Command+StoredProcedure, any of
+        // them with LinqQuery) and the all-of-them case via a single >1 threshold.
         //
         // Every pipeline emits ZAO005 from TransformMethod (since method.GetAttributes()
         // surfaces ALL attributes regardless of which pipeline triggered the transform).
@@ -494,7 +556,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 var fqn = a.AttributeClass?.ToDisplayString();
                 return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
                     || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal)
-                    || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal);
+                    || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal)
+                    || string.Equals(fqn, LinqQueryAttributeFullName, StringComparison.Ordinal);
             });
         if (ormAttrCount > 1)
         {
@@ -531,9 +594,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                         && named.Value.Value is int companionKindValue
                         && (CommandKindModel)companionKindValue == CommandKindModel.BulkInsert)
                     {
-                        var companionAttributeLabel = isStoredProcedureAttribute
-                            ? "[StoredProcedure]"
-                            : "[Query]";
+                        var companionAttributeLabel = pipelineKind switch
+                        {
+                            AttributePipelineKind.StoredProcedure => "[StoredProcedure]",
+                            AttributePipelineKind.LinqQuery => "[LinqQuery]",
+                            _ => "[Query]",
+                        };
                         diagnostics.Add(new DiagnosticInfo(
                             DescriptorId: "ZAO074",
                             Location: LocationInfo.From(methodSyntax.Identifier.GetLocation()),
@@ -573,7 +639,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // behaviour (the boolean expression evaluates identically either way).
         if (!isCommandAttribute
             && !isStoredProcedureAttribute
-            && SqlStatementSplitter.CountStatements(sql) > 1
+            && SqlStatementSplitter.CountStatements(methodSql) > 1
             && !IsMultiResultReturnType(method.ReturnType))
         {
             diagnostics.Add(new DiagnosticInfo(
@@ -677,6 +743,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     {
                         AttributePipelineKind.Command => "Command",
                         AttributePipelineKind.StoredProcedure => "StoredProcedure",
+                        AttributePipelineKind.LinqQuery => "LinqQuery",
                         _ => "Query",
                     };
                     diagnostics.Add(new DiagnosticInfo(
@@ -717,7 +784,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     "BatchMode." + batchModeName))));
         }
 
-        var strategy = ResolveBatchStrategy(sql, batchMode);
+        var strategy = ResolveBatchStrategy(methodSql, batchMode);
 
         var (shape, nullableReaderMethod, materialization, multiResultMaterialization, hasReturnValue, sprocOutputParamsMaterialization, bulkInsertMaterialization) = ClassifyEmitShape(
             method,
@@ -727,7 +794,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
             isStoredProcedureAttribute,
             diagnostics,
             LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
-            sql,
+            methodSql,
             hasNpgsql);
 
         // ZAO082 — a PostgreSQL array column reads only through Npgsql, like an array
@@ -839,7 +906,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null && !isStoredProcedureAttribute)
         {
             var tupleArity = multiResultMaterialization.Elements.Values.Length;
-            var statementCount = SqlStatementSplitter.CountStatements(sql);
+            var statementCount = SqlStatementSplitter.CountStatements(methodSql);
             if (tupleArity > statementCount)
             {
                 diagnostics.Add(new DiagnosticInfo(
@@ -1291,6 +1358,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
                     IsJson: isJson);
             })
             .ToImmutableArray();
+        if (linq is not null)
+            methodParameters = ApplyLinqFacets(methodParameters, linq.Facets);
 
         // v2.0, #235 — `[Param]` facet and direction checks, and ZAO065 for a
         // decimal output parameter without a scale. Runs here because it needs
@@ -1322,7 +1391,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var methodModel = new QueryMethodModel(
             MethodName: method.Name,
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            Sql: sql,
+            Sql: methodSql,
             Shape: shape,
             Strategy: strategy,
             ReturnTypeDisplay: returnTypeDisplay,
@@ -1368,7 +1437,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
             // #307 — reported against the repository's dialect in ReportDiagnostics.
             SqlServerOnlyDiagnostics: new EquatableArray<DiagnosticInfo>(sqlServerOnlyDiagnostics.ToImmutable()),
             ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()),
-            HasNpgsql: hasNpgsql);
+            HasNpgsql: hasNpgsql,
+            LinqSourceComment: linq?.SourceComment);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1383,6 +1453,34 @@ public sealed class OrmGenerator : IIncrementalGenerator
             ContainingTypeChain: containingTypeChain,
             HintName: HintNames.ForRepository(containing),
             MethodSignature: method.ToDisplayString(MethodSignatureFormat));
+    }
+
+    // [LinqQuery] — set each translated parameter's DbType facet, the way
+    // `[Param(DbType = ...)]` sets it. ReportParamFacetDiagnostics then records the
+    // DbTypeCheck that ZAO015 runs, exactly as for a written `[Param]`. A DbType the
+    // adopter wrote on the parameter wins: the translation only derives a default
+    // from the CLR type. The other written members, such as Size, are kept.
+    internal static ImmutableArray<ParameterInfo> ApplyLinqFacets(
+        ImmutableArray<ParameterInfo> parameters,
+        EquatableArray<LinqParameterFacet> facets)
+    {
+        if (facets.Length == 0) return parameters;
+        var builder = parameters.ToBuilder();
+        for (var i = 0; i < builder.Count; i++)
+        {
+            var info = builder[i];
+            if (info.Facets?.DbTypeExpression is not null) continue;
+            foreach (var facet in facets)
+            {
+                if (!string.Equals(facet.ParameterName, info.Name, StringComparison.Ordinal)) continue;
+                var merged = info.Facets is null
+                    ? new ParamFacets(facet.DbTypeExpression, null, null, null, null, facet.DbTypeValue)
+                    : info.Facets with { DbTypeExpression = facet.DbTypeExpression, DbTypeValue = facet.DbTypeValue };
+                builder[i] = info with { Facets = merged };
+                break;
+            }
+        }
+        return builder.MoveToImmutable();
     }
 
     // #328 — identifies a method among its overloads: containing type, name, type
@@ -1780,6 +1878,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 method, inner, conventionContext, diagnostics, returnTypeLocation);
             if (scalarFactoryShape is { } sfs) return sfs;
         }
+
+        // Non-nullable bool / long: same ExecuteScalar shape as ScalarInt, with
+        // Convert.ToBoolean / Convert.ToInt64. Needed by LINQ Any / LongCount.
+        // Placed after factory resolution so [Materialize(Factory)] keeps winning.
+        if (inner.SpecialType == SpecialType.System_Boolean) return (EmitShape.ScalarBool, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+        if (inner.SpecialType == SpecialType.System_Int64) return (EmitShape.ScalarLong, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
         // `Money(decimal Amount, string Currency)` constructs the composite type
@@ -3985,7 +4089,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // matches an unprefixed ParameterName to it. An override written with a sigil,
     // `[Param(Name = "@orderId")]` as v1 required, is normalised to `orderId` so the
     // one rule holds for every parameter and existing overrides keep compiling.
-    private static string? ReadParamNameOverride(IParameterSymbol p)
+    internal static string? ReadParamNameOverride(IParameterSymbol p)
     {
         foreach (var attr in p.GetAttributes())
         {
@@ -4007,6 +4111,31 @@ public sealed class OrmGenerator : IIncrementalGenerator
             }
         }
         return null;
+    }
+
+    // [LinqQuery] — whether `[Param]` writes a DbType on the parameter, which then wins over
+    // the facet the translation derives.
+    internal static bool HasWrittenDbType(IParameterSymbol p)
+        => ReadParamFacets(p)?.DbTypeExpression is not null;
+
+    // [LinqQuery] — the reader of the primitive a value parameter binds as, the same one the
+    // parameter's ConventionInfo.UnderlyingReader or, for a bare primitive, its own reader
+    // gives: a value object binds as its factory's primitive, an enum as its underlying
+    // integral type or, with [StoreAsString], as a string. Null for anything else, such as
+    // an array or a composite.
+    internal static string? BoundReader(ITypeSymbol type, ConventionContext context)
+    {
+        var underlying = UnwrapNullableValueType(type);
+        var resolution = ConventionDiscovery.Resolve(underlying, context);
+        return resolution.Kind switch
+        {
+            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveUnderlyingReaderForFactory(resolution),
+            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+            ConventionKind.EnumAsString => "GetString",
+            _ => null,
+        };
     }
 
     // v2.0, #235 — read the type facets and direction written on
@@ -4360,7 +4489,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // or when Factory is unset / null / empty. The attribute itself is found
     // by fully-qualified display name so the lookup is robust against alias
     // / partial-namespace usage at the call site.
-    private static string? ReadMaterializeFactoryName(ImmutableArray<AttributeData> attrs)
+    internal static string? ReadMaterializeFactoryName(ImmutableArray<AttributeData> attrs)
     {
         foreach (var attr in attrs)
         {
@@ -4647,7 +4776,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
-    private static bool IsIAsyncDbTransaction(ITypeSymbol type)
+    internal static bool IsIAsyncDbTransaction(ITypeSymbol type)
     {
         // Mirror of IsIAsyncDbConnection — same two-tier match for the same reason.
         // Snapshot test compilations that don't transitively reference AdoNet.Async
@@ -4793,7 +4922,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     // FlatRow: the widest public instance ctor with parameters; the first one wins a
     // tie. Positional records synthesize one ctor matching the parameter list.
-    private static IMethodSymbol? FlatRowConstructor(INamedTypeSymbol record)
+    internal static IMethodSymbol? FlatRowConstructor(INamedTypeSymbol record)
         => record.InstanceConstructors
             .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
             .OrderByDescending(c => c.Parameters.Length)
@@ -4863,6 +4992,18 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
         "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
         "ZAO083" => DiagnosticDescriptors.ZAO083_JsonRequiresString,
+        "ZAO106" => DiagnosticDescriptors.ZAO106_InvalidEntityMap,
+        "ZAO100" => DiagnosticDescriptors.ZAO100_InvalidLinqCompanion,
+        "ZAO101" => DiagnosticDescriptors.ZAO101_LinqCompanionParameterMismatch,
+        "ZAO102" => DiagnosticDescriptors.ZAO102_UnsupportedLinqConstruct,
+        "ZAO103" => DiagnosticDescriptors.ZAO103_LinqCapture,
+        "ZAO104" => DiagnosticDescriptors.ZAO104_UnmappedLinqEntity,
+        "ZAO105" => DiagnosticDescriptors.ZAO105_UnmappedLinqMember,
+        "ZAO107" => DiagnosticDescriptors.ZAO107_UnsupportedLinqProjection,
+        "ZAO108" => DiagnosticDescriptors.ZAO108_LinqRequiresPostgreSql,
+        "ZAO110" => DiagnosticDescriptors.ZAO110_LinqPagingWithoutOrder,
+        "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
+        "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         _ => null,
     };
 
@@ -5021,6 +5162,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
     }
 
     private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo)
+        => context.AddSource(repo.HintName, SourceText.From(RenderRepository(repo), Encoding.UTF8));
+
+    // The generated source for one repository. Internal so emit tests can render a
+    // hand-built model, such as a [LinqQuery] one no pipeline produces yet.
+    internal static string RenderRepository(QueryRepositoryModel repo)
     {
         // Invariant: GroupBy never yields empty groups; repo.Methods is always non-empty.
 
@@ -5053,15 +5199,28 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("{");
         var first = true;
         var methodIndex = -1;
-        foreach (var m in repo.Methods)
+        foreach (var repoMethod in repo.Methods)
         {
             methodIndex++;
             if (!first) sb.AppendLine();
             first = false;
+            // [LinqQuery] — resolve the SQL constant's name once, with the method
+            // index so overloads get distinct constants, and carry it on the model
+            // so every BuildCommandTextAssignment call site sees it.
+            var m = repoMethod.LinqSourceComment is null
+                ? repoMethod
+                : repoMethod with { LinqSqlConstantName = LinqSqlConstantName(repoMethod, methodIndex) };
+            EmitLinqSqlConstant(sb, m);
             switch (m.Shape)
             {
                 case EmitShape.ScalarInt:
                     EmitScalarInt(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.ScalarBool:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToBoolean");
+                    break;
+                case EmitShape.ScalarLong:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToInt64");
                     break;
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m, repo.ConnectionAccess);
@@ -5218,8 +5377,33 @@ public sealed class OrmGenerator : IIncrementalGenerator
             sb.AppendLine("}");
         }
 
-        context.AddSource(repo.HintName, SourceText.From(sb.ToString(), Encoding.UTF8));
+        return sb.ToString();
     }
+
+    // [LinqQuery] — the generated SQL as a named constant above the method, under a
+    // comment naming the LINQ chain it came from, so the SQL reads as a unit in the
+    // generated file. BuildCommandTextAssignment uses the constant as CommandText.
+    // A no-op for every other method, which keeps their output byte-identical.
+    //
+    // The constant assumes a single-command shape, whose CommandText is set by
+    // BuildCommandTextAssignment. The BulkInsert and batch-split multi-result paths
+    // write CommandText themselves and would not use it; the [LinqQuery] translator
+    // produces neither shape.
+    private static void EmitLinqSqlConstant(StringBuilder sb, QueryMethodModel m)
+    {
+        if (m.LinqSourceComment is not { } comment || m.LinqSqlConstantName is not { } name) return;
+        // A line break in the comment would end the `//` comment early.
+        var oneLine = comment.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ');
+        sb.Append("    // ").AppendLine(oneLine);
+        sb.Append("    private const string ").Append(name)
+            .Append(" = ").Append(SymbolDisplay.FormatLiteral(m.Sql, quote: true)).AppendLine(";");
+        sb.AppendLine();
+    }
+
+    // Same index-plus-name convention as BulkInsertSqlCacheName and
+    // StreamingNullColumnFinderName: overloads share a name, never an index.
+    private static string LinqSqlConstantName(QueryMethodModel m, int methodIndex) =>
+        "__sql" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
 
     // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
     // Eight emit sites used to hand-write the identical open/try and finally/close blocks
@@ -5282,7 +5466,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     private static void BuildCommandTextAssignment(StringBuilder sb, QueryMethodModel m, string cmdLocal, string indent)
     {
         var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
-        var textLiteral = SymbolDisplay.FormatLiteral(textValue, quote: true);
+        // [LinqQuery] — EmitLinqSqlConstant already wrote the SQL as a constant.
+        var textLiteral = m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
         sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
         if (m.IsStoredProcedure)
         {
@@ -5296,6 +5481,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // of the consumer's `using` directives; `__`-prefixed locals avoid collision
     // with user parameter names; ConfigureAwait(false) consistently — library code.
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+        => EmitScalarConvert(sb, m, connectionAccess, "ToInt32");
+
+    // Shared body for ScalarInt / ScalarBool / ScalarLong: ExecuteScalarAsync then
+    // System.Convert.<convertMethod> with the invariant culture. A no-row result
+    // (null) converts to the default value; a DBNull throws InvalidCastException.
+    private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
     {
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -5308,7 +5499,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine($"            return global::System.Convert.{convertMethod}(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -5776,8 +5967,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // but reads off `row.<Property>` rather than `@<paramName>`:
     //
     //   * No convention                          -> row.PropertyName
-    //   * Enum (default integral storage)        -> ({castType})row.PropertyName
-    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString()
+    //   * Enum (default integral storage)        -> ({castType})row.PropertyName, `{castType}?` when nullable
+    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString(), `?.ToString()` when nullable
     //   * ValueObject / SingleArgCtor / StaticFactory
     //                                            -> row.PropertyName.<ValueProperty>
     //
@@ -5789,15 +5980,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var direct = $"{rowLocal}.{binding.PropertyName}";
         if (binding.Convention is not { } conv) return direct;
 
-        if (conv.Kind == (int)ConventionKind.Enum)
-        {
-            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-            return $"({castType}){direct}";
-        }
-        if (conv.Kind == (int)ConventionKind.EnumAsString)
-        {
-            return $"{direct}.ToString()";
-        }
+        if (BuildEnumBindExpression(direct, conv, binding.IsNullable) is { } enumExpr)
+            return enumExpr;
         if (conv.ValuePropertyName is { } propName)
         {
             return $"{direct}{NullConditionalAccess(binding.IsNullable)}{propName}";
@@ -7887,7 +8071,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -7925,7 +8109,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks, one per inner ctor argument. The sentinel comment pins
@@ -8131,7 +8315,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
@@ -8393,7 +8577,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks (see EmitCompositeParameterBinding). The sentinel comment
@@ -8449,22 +8633,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var valueExpr = "@" + p.Name;
         if (p.Convention is not { } conv) return valueExpr;
-        if (conv.Kind == (int)ConventionKind.Enum)
-        {
-            // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
-            // for an int-backed enum; for byte/short/long-backed enums the cast
-            // target derives from the GetXxx reader name. The provider then sees
-            // the integral value; SQL stores it as INTEGER.
-            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-            return $"({castType})@{p.Name}";
-        }
-        if (conv.Kind == (int)ConventionKind.EnumAsString)
-        {
-            // Round-trip as the enum member name. ToString() is allocating but
-            // [StoreAsString] is opt-in; a source-generated parse/format table
-            // is a v0.3+ optimization.
-            return $"@{p.Name}.ToString()";
-        }
+        // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
+        // for an int-backed enum; for byte/short/long-backed enums the cast
+        // target derives from the GetXxx reader name. The provider then sees
+        // the integral value; SQL stores it as INTEGER. [StoreAsString]
+        // round-trips as the member name. ToString() is allocating but
+        // [StoreAsString] is opt-in; a source-generated parse/format table is
+        // a v0.3+ optimization.
+        if (BuildEnumBindExpression(valueExpr, conv, p.IsNullable) is { } enumExpr)
+            return enumExpr;
         if (conv.ValuePropertyName is { } propName)
         {
             // A nullable value object binds its inner value, or null: `@p?.Value`.
@@ -8472,6 +8649,23 @@ public sealed class OrmGenerator : IIncrementalGenerator
             return $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
         }
         return valueExpr;
+    }
+
+    // The value an enum binds as: its underlying integer for the Enum convention, its
+    // member name for EnumAsString. Null for any other convention. A nullable enum casts
+    // to the nullable primitive and calls `?.ToString()`: `(int)x` on a null `Color?`
+    // throws and `x.ToString()` on one gives "", where null is what the caller's
+    // `?? DBNull.Value` needs.
+    private static string? BuildEnumBindExpression(string valueExpr, ConventionInfo conv, bool isNullable)
+    {
+        if (conv.Kind == (int)ConventionKind.Enum)
+        {
+            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            return $"({castType}{(isNullable ? "?" : string.Empty)}){valueExpr}";
+        }
+        if (conv.Kind == (int)ConventionKind.EnumAsString)
+            return $"{valueExpr}{NullConditionalAccess(isNullable)}ToString()";
+        return null;
     }
 
     // The value a DbParameter gets for `valueExpr`, the parameter, composite field or
@@ -8676,15 +8870,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var baseExpr = "@" + paramName + ".Value.@" + field.CtorArgName;
         if (field.Convention is { } conv)
         {
-            if (conv.Kind == (int)ConventionKind.Enum)
-            {
-                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                return $"({castType}){baseExpr}";
-            }
-            if (conv.Kind == (int)ConventionKind.EnumAsString)
-            {
-                return $"{baseExpr}.ToString()";
-            }
+            if (BuildEnumBindExpression(baseExpr, conv, field.IsNullable) is { } enumExpr)
+                return enumExpr;
             if (conv.ValuePropertyName is { } propName)
             {
                 return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";
@@ -8718,15 +8905,8 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var baseExpr = "@" + paramName + ".@" + field.CtorArgName;
         if (field.Convention is { } conv)
         {
-            if (conv.Kind == (int)ConventionKind.Enum)
-            {
-                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                return $"({castType}){baseExpr}";
-            }
-            if (conv.Kind == (int)ConventionKind.EnumAsString)
-            {
-                return $"{baseExpr}.ToString()";
-            }
+            if (BuildEnumBindExpression(baseExpr, conv, field.IsNullable) is { } enumExpr)
+                return enumExpr;
             if (conv.ValuePropertyName is { } propName)
             {
                 return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";

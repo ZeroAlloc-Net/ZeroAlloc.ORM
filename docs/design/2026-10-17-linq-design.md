@@ -169,9 +169,9 @@ jsonb in §3 depend on them.
 - **Order of work:** the §7 gaps first; then mapping plus filters, ordering, paging and projection; then aggregation
   and joins; then multi-result parent + children; then set-based writes, concurrency and locking.
 - **Releases:** each phase ships in the owner's normal batched release cycles, so Daedalus can migrate store by store.
-  `ZeroAlloc.ORM.Linq` starts at `0.x`, which leaves its API free to change until §3 is complete; `1.0` marks
-  "Daedalus-complete". Mapping additions to ZeroAlloc.ORM follow the additive `PublicAPI.Unshipped` rule from the
-  start.
+  `ZeroAlloc.ORM.Linq` ships on the repo's single release train, so its first release is the next ZeroAlloc.ORM
+  version, 2.5.0. Its API is tracked with PublicAPI files from the start and stays additive across the later plans,
+  the same rule as the mapping additions to ZeroAlloc.ORM.
 - **Definition of done:** the §3 shapes. When the Daedalus gap audit (`docs/plans/2026-10-17-zeroalloc-orm-gap-audit.md`)
   lands, any shape it lists that §3 doesn't cover is agreed with the Daedalus session: added to scope, or written as
   raw `[Query]`.
