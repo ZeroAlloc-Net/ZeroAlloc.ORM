@@ -23,7 +23,8 @@ public class LinqScalarAggregateTests
 
     // LINQ's Sum is 0 for no rows, nullable selectors included, so every Sum is COALESCEd. The
     // cast makes PostgreSQL's type the CLR one: sum(int) is bigint and sum(bigint) numeric. A
-    // widening cast in the selector picks the overload and the result cast, not a column cast.
+    // widening cast in the selector picks the overload and the result cast, not a column cast,
+    // except over real: sum(real) adds in float4, so the column is cast to add doubles as LINQ.
     [Fact]
     public void Sum_int_long_decimal_double_and_nullable()
     {
@@ -203,6 +204,9 @@ public class LinqScalarAggregateTests
                 [LinqQuery(nameof(SumPageQuery))]
                 public partial Task<int> SumPage(int take, CancellationToken ct);
 
+                [LinqQuery(nameof(SumWeightPageQuery))]
+                public partial Task<double> SumWeightPage(CancellationToken ct);
+
                 private static IQuery<long> SumOpenQuery(int min) =>
                     Sql.Table<TaskEntity>()
                         .Where(t => t.Status == WorkStatus.Open && t.Order >= min)
@@ -228,6 +232,13 @@ public class LinqScalarAggregateTests
                         .OrderBy(t => t.Order)
                         .Take(take)
                         .Sum(t => t.Order);
+
+                // The subquery selects the bare column; the double precision cast is outside.
+                private static IQuery<double> SumWeightPageQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .OrderBy(t => t.Order)
+                        .Take(5)
+                        .Sum(t => (double)t.Weight);
             }
             """);
     }
@@ -272,6 +283,8 @@ public class LinqScalarAggregateTests
     [Theory]
     [InlineData("IQuery<int>", ".Sum(t => t.Order + t.Order)", "Task<int>", "t.Order + t.Order")]
     [InlineData("IQuery<int>", ".Sum(t => (int)t.Size)", "Task<int>", "(int)t.Size")]
+    [InlineData("IQuery<int>", ".Sum(t => (int)t.Status)", "Task<int>", "(int)t.Status")]
+    [InlineData("IQuery<double>", ".Average(t => (double)t.Price)", "Task<double>", "(double)t.Price")]
     [InlineData("IQuery<int>", ".Sum(t => min)", "Task<int>", "min")]
     [InlineData("IQuery<int>", ".Sum(t => 1)", "Task<int>", "1")]
     [InlineData("IQuery<bool>", ".Max(t => t.IsActive)", "Task<bool>", "t.IsActive")]

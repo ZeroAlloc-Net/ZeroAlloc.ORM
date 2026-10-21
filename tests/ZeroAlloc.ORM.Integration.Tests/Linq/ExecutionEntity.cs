@@ -11,4 +11,7 @@ public sealed class ExecutionEntity
     public int OutputTokens { get; private set; }
     public DateTime ExecutedAt { get; private set; }
     public int? Sequence { get; private set; }
+    public long? TotalTokens { get; private set; }
+    public decimal? Cost { get; private set; }
+    public float? Weight { get; private set; }
 }

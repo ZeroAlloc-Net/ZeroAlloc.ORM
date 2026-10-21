@@ -36,7 +36,10 @@ internal static class LinqSchema
             "InputTokens" int NOT NULL,
             "OutputTokens" int NOT NULL,
             "ExecutedAt" timestamptz NOT NULL,
-            "Sequence" int NULL
+            "Sequence" int NULL,
+            "TotalTokens" bigint NULL,
+            "Cost" numeric NULL,
+            "Weight" real NULL
         );
         """;
 }

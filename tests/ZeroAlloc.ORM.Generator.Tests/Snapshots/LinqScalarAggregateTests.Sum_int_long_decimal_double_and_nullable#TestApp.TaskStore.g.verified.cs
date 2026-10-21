@@ -139,7 +139,7 @@ partial class TaskStore
     }
 
     // LINQ: TaskStore.SumWeightQuery
-    private const string __sql6_SumWeight = "SELECT COALESCE(sum(\"Weight\"), 0)::double precision FROM \"Tasks\"";
+    private const string __sql6_SumWeight = "SELECT COALESCE(sum(\"Weight\"::double precision), 0)::double precision FROM \"Tasks\"";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<double> SumWeight(global::System.Threading.CancellationToken @ct)

@@ -117,4 +117,26 @@ partial class TaskStore
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
         }
     }
+
+    // LINQ: TaskStore.SumWeightPageQuery
+    private const string __sql4_SumWeightPage = "SELECT COALESCE(sum(\"Weight\"::double precision), 0)::double precision FROM (SELECT \"Weight\" FROM \"Tasks\" ORDER BY \"Order\" LIMIT 5) AS q";
+
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
+    public partial async global::System.Threading.Tasks.Task<double> SumWeightPage(global::System.Threading.CancellationToken @ct)
+    {
+        var __conn = @connection;
+        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
+        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var __cmd = __conn.CreateCommand();
+            __cmd.CommandText = __sql4_SumWeightPage;
+            var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
+        }
+    }
 }

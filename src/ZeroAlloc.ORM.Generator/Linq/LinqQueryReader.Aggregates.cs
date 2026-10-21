@@ -13,7 +13,7 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 //
 // The selector is a mapped column, optionally cast to a wider or nullable type, such as
 // (long)e.InputTokens or (double?)e.OutputTokens. The cast picks the overload and so the
-// result cast; the column itself is never cast.
+// result cast. The column itself is cast only for a Sum over real, see SumArgument.
 internal static partial class LinqQueryReader
 {
     private static bool IsValueAggregate(string operatorName)
@@ -46,12 +46,26 @@ internal static partial class LinqQueryReader
         var result = ((INamedTypeSymbol)invocation.TargetMethod.ReturnType).TypeArguments[0];
         chain.Call = new SqlAggregateCallExpression(
             function,
-            argument,
+            SumArgument(function, argument, value, column),
             AggregateCast(function, value, column, result),
             CoalesceToZero: function == SqlAggregateFunction.Sum);
         chain.TerminalOperator = name;
         return true;
     }
+
+    // The one case where the column is cast: a Sum over a real column, widened to double.
+    // PostgreSQL's sum(real) adds in float4 and loses precision before any result cast, where
+    // LINQ adds the widened doubles; sum("X"::double precision) adds them as LINQ does.
+    private static SqlExpression SumArgument(
+        SqlAggregateFunction function,
+        SqlMemberExpression column,
+        ITypeSymbol value,
+        ITypeSymbol columnType)
+        => function == SqlAggregateFunction.Sum
+            && UnwrapNullable(columnType).SpecialType == SpecialType.System_Single
+            && UnwrapNullable(value).SpecialType == SpecialType.System_Double
+                ? new SqlCastExpression(column, "double precision")
+                : column;
 
     // The column the selector reads, through any cast PeelWidening and Unwrap peel. A
     // parameter, a literal or a computed value is ZAO102.

@@ -91,7 +91,10 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             return;
         }
         sb.Append(" FROM (SELECT ");
-        if (scalar.Call.Argument is { } argument)
+        // The subquery selects the bare column; a cast on the argument applies outside it.
+        if (scalar.Call.Argument is SqlCastExpression { Operand: var column })
+            RenderExpression(sb, column, names);
+        else if (scalar.Call.Argument is { } argument)
             RenderExpression(sb, argument, names);
         else
             sb.Append('1');

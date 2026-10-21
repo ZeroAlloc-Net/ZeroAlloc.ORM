@@ -37,8 +37,12 @@ public sealed class PostgresLinqAggregateTests
         int output,
         int? sequence = null,
         string? model = null,
-        DateTime? executedAt = null)
-        => repo.InsertAsync(Guid.NewGuid(), taskId, model, input, output, executedAt ?? Executed, sequence, CancellationToken.None);
+        DateTime? executedAt = null,
+        long? total = null,
+        decimal? cost = null,
+        float? weight = null)
+        => repo.InsertAsync(
+            Guid.NewGuid(), taskId, model, input, output, executedAt ?? Executed, sequence, total, cost, weight, CancellationToken.None);
 
     [Fact]
     public async Task Sum_of_no_rows_is_zero()
@@ -67,6 +71,10 @@ public sealed class PostgresLinqAggregateTests
         (await repo.SumInputAsync(task, ct).ConfigureAwait(false)).Should().Be(6);
         (await repo.SumInputWideAsync(task, ct).ConfigureAwait(false)).Should().Be(6L);
         (await repo.SumOutputDoubleAsync(task, ct).ConfigureAwait(false)).Should().Be(15d);
+
+        // Nullable sums of no values are 0 too, read with the strict reader of their type.
+        (await repo.SumWeightAsync(none, ct).ConfigureAwait(false)).Should().Be(0d);
+        (await repo.SumTotalAsync(none, ct).ConfigureAwait(false)).Should().Be(0L);
 
         // A paged sum reads the page the ORDER BY picks: the two smallest inputs, 1 and 2.
         (await repo.SumSmallestInputAsync(2, ct).ConfigureAwait(false)).Should().Be(3);
@@ -97,6 +105,10 @@ public sealed class PostgresLinqAggregateTests
         var last = await repo.LastExecutedAsync(task, ct).ConfigureAwait(false);
         last.Should().Be(Executed.AddHours(1));
         last!.Value.Kind.Should().Be(DateTimeKind.Utc);
+
+        // Widened to double? and decimal?, cast so the strict readers get exactly that type.
+        (await repo.MaxInputDoubleAsync(task, ct).ConfigureAwait(false)).Should().Be(2d);
+        (await repo.MinInputDecimalAsync(task, ct).ConfigureAwait(false)).Should().Be(1m);
 
         // Nullable forms of an empty set are null.
         var none = Guid.NewGuid();
@@ -135,6 +147,36 @@ public sealed class PostgresLinqAggregateTests
         await InsertAsync(repo, idle, 1, 0).ConfigureAwait(false);
         (await repo.AverageOutputAsync(idle, ct).ConfigureAwait(false)).Should().BeNull();
         (await repo.MaxSequenceAsync(idle, ct).ConfigureAwait(false)).Should().BeNull();
+    }
+
+    // sum(real) would add in float4. Ten 0.1f, widened to double and summed as LINQ sums them,
+    // differ from 1.0 and from the float4 sum; the SQL gives exactly LINQ's double.
+    [Fact]
+    public async Task Sum_over_real_adds_doubles_and_nullable_results_read_strictly()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqAggregateRepo(fx.Connection);
+        var task = Guid.NewGuid();
+        var weights = Enumerable.Repeat(0.1f, 10).ToArray();
+        for (var i = 0; i < weights.Length; i++)
+        {
+            await InsertAsync(repo, task, 1, 1, total: 3_000_000_000L + i, cost: 1.25m * i, weight: weights[i]).ConfigureAwait(false);
+        }
+        var ct = CancellationToken.None;
+
+        (await repo.SumWeightAsync(task, ct).ConfigureAwait(false)).Should().Be(weights.Sum(w => (double)w));
+        (await repo.MinWeightDoubleAsync(task, ct).ConfigureAwait(false)).Should().Be((double)0.1f);
+        (await repo.SumTotalAsync(task, ct).ConfigureAwait(false)).Should().Be(30_000_000_045L);
+        (await repo.MaxCostAsync(task, ct).ConfigureAwait(false)).Should().Be(11.25m);
+        (await repo.MaxCostAsync(Guid.NewGuid(), ct).ConfigureAwait(false)).Should().BeNull();
+
+        // DateTimeOffset? over timestamptz, from the Tasks table.
+        (await repo.LatestDueAsync(ct).ConfigureAwait(false)).Should().BeNull();
+        var created = new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero);
+        await repo.InsertTaskAsync(Guid.NewGuid(), Guid.NewGuid(), created, created.AddDays(2), ct).ConfigureAwait(false);
+        await repo.InsertTaskAsync(Guid.NewGuid(), Guid.NewGuid(), created.AddHours(-1), null, ct).ConfigureAwait(false);
+        (await repo.LatestDueAsync(ct).ConfigureAwait(false)).Should().Be(created.AddDays(2));
+        (await repo.EarliestCreatedAsync(ct).ConfigureAwait(false)).Should().Be(created.AddHours(-1));
     }
 
     // LINQ's non-nullable Average, Min and Max throw on no values. The SQL gives NULL, which the
