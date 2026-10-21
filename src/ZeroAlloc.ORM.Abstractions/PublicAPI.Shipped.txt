@@ -3,6 +3,13 @@ ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.BatchMode.Always = 1 -> ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.BatchMode.Auto = 0 -> ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.BatchMode.Never = 2 -> ZeroAlloc.ORM.BatchMode
+ZeroAlloc.ORM.ColumnMapAttribute
+ZeroAlloc.ORM.ColumnMapAttribute.Column.get -> string?
+ZeroAlloc.ORM.ColumnMapAttribute.Column.init -> void
+ZeroAlloc.ORM.ColumnMapAttribute.ColumnMapAttribute(string! property) -> void
+ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.get -> bool
+ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.init -> void
+ZeroAlloc.ORM.ColumnMapAttribute.Property.get -> string!
 ZeroAlloc.ORM.CommandAttribute
 ZeroAlloc.ORM.CommandAttribute.CommandAttribute(string! sql) -> void
 ZeroAlloc.ORM.CommandAttribute.FromResource.get -> bool
@@ -64,3 +71,9 @@ ZeroAlloc.ORM.StoredProcedureAttribute.Batch.get -> ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.StoredProcedureAttribute.Batch.init -> void
 ZeroAlloc.ORM.StoredProcedureAttribute.ProcedureName.get -> string!
 ZeroAlloc.ORM.StoredProcedureAttribute.StoredProcedureAttribute(string! procedureName) -> void
+ZeroAlloc.ORM.TableMapAttribute
+ZeroAlloc.ORM.TableMapAttribute.Entity.get -> System.Type!
+ZeroAlloc.ORM.TableMapAttribute.Schema.get -> string?
+ZeroAlloc.ORM.TableMapAttribute.Schema.init -> void
+ZeroAlloc.ORM.TableMapAttribute.Table.get -> string!
+ZeroAlloc.ORM.TableMapAttribute.TableMapAttribute(System.Type! entity, string! table) -> void

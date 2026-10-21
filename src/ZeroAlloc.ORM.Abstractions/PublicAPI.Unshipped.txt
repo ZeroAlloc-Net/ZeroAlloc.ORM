@@ -1,14 +1,1 @@
 #nullable enable
-ZeroAlloc.ORM.ColumnMapAttribute
-ZeroAlloc.ORM.ColumnMapAttribute.Column.get -> string?
-ZeroAlloc.ORM.ColumnMapAttribute.Column.init -> void
-ZeroAlloc.ORM.ColumnMapAttribute.ColumnMapAttribute(string! property) -> void
-ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.get -> bool
-ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.init -> void
-ZeroAlloc.ORM.ColumnMapAttribute.Property.get -> string!
-ZeroAlloc.ORM.TableMapAttribute
-ZeroAlloc.ORM.TableMapAttribute.Entity.get -> System.Type!
-ZeroAlloc.ORM.TableMapAttribute.Schema.get -> string?
-ZeroAlloc.ORM.TableMapAttribute.Schema.init -> void
-ZeroAlloc.ORM.TableMapAttribute.Table.get -> string!
-ZeroAlloc.ORM.TableMapAttribute.TableMapAttribute(System.Type! entity, string! table) -> void
