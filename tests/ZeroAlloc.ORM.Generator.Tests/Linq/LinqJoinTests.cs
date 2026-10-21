@@ -270,6 +270,50 @@ public class LinqJoinTests
         Assert.Equal("SELECT \"Id\", \"Value\" FROM \"Budgets\" WHERE \"Value\" > 1", method.Sql);
     }
 
+    // A reference-type value object annotated `?` can be null, so its `.Value` throws in C# where
+    // SQL drops or nulls the row: ZAO102 at the read, in a predicate, a join key, a projection, an
+    // ordering and a group key.
+    // With a non-null annotation the same `.Value` reads the column.
+    [Theory]
+    [InlineData(".Where(l => l.Parent!.Value == id).Select(l => new LinkRow(l.Id, l.Owner.Value))", "l.Parent!.Value")]
+    [InlineData(".Join(Sql.Table<ProjectEntity>(), l => l.Parent!.Value, p => p.Id, (l, p) => new { Link = l, Project = p }).Select(x => new LinkRow(x.Link.Id, x.Project.Id))", "l.Parent!.Value")]
+    [InlineData(".Select(l => new LinkRow(l.Id, l.Parent!.Value))", "l.Parent!.Value")]
+    [InlineData(".OrderBy(l => l.Parent!.Value).Select(l => new LinkRow(l.Id, l.Owner.Value))", "l.Parent!.Value")]
+    [InlineData(".GroupBy(l => l.Parent!.Value).Select(g => new LinkRow(g.Key, g.Key))", "l.Parent!.Value")]
+    public void Value_of_a_nullable_reference_value_object_reports_ZAO102(string chain, string located)
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<LinkRow>> Find(Guid id, CancellationToken ct);
+
+                private static IQuery<LinkRow> FindQuery(Guid id) =>
+                    Sql.Table<LinkEntity>()
+            """ + chain + """
+            ;
+            }
+
+            public sealed record ProjectRef(Guid Value);
+
+            public sealed class LinkEntity
+            {
+                public Guid Id { get; private set; }
+                public ProjectRef Owner { get; private set; } = new(Guid.Empty);
+                public ProjectRef? Parent { get; private set; }
+            }
+
+            [TableMap(typeof(LinkEntity), "Links")]
+            internal static class LinkMap;
+
+            public sealed record LinkRow(Guid Id, Guid Other);
+            """ + Entities);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("can be null", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // A joined source needs a map, as the FROM source does; a member it does not map names
     // its own entity.
     [Theory]

@@ -168,6 +168,20 @@ internal static partial class LinqQueryReader
             && ConventionDiscovery.Resolve(owner, context.Conventions).Kind
                 is ConventionKind.ValueObject or ConventionKind.StaticFactory or ConventionKind.SingleArgCtor;
 
+    // The `.Value` of a row member whose type is a value object of reference type annotated `?`,
+    // such as l.Parent!.Value for `ProjectRef? Parent`; null for any other operation. In code
+    // without nullable annotations the member counts as not null, as everywhere.
+    private static IOperation? NullableValueObjectValue(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => op is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } wrapped } valueOf
+            && IsValueObjectValue(valueOf.Property, context)
+            && TryReadRowMember(wrapped, row, context, out _, out var type, out _)
+            && IsNullableReference(type)
+                ? op
+                : null;
+
+    private static bool IsNullableReference(ITypeSymbol type)
+        => type.IsReferenceType && type.NullableAnnotation == NullableAnnotation.Annotated;
+
     // The result selector's row: a range variable or a member carried over, or an anonymous
     // type of those. A computed member, or a column, is ZAO102 at the member.
     private static RowShape? ReadJoinResult(
@@ -235,12 +249,14 @@ internal static partial class LinqQueryReader
         out ITypeSymbol type,
         out string? alias)
     {
-        // `t.ProjectId.Value` is the ProjectId column itself, when ProjectId is a row member.
+        // `t.ProjectId.Value` is the ProjectId column itself, when ProjectId is a row member that
+        // cannot be null. A reference type annotated `?` can, and its Value throws in C# where SQL
+        // drops or nulls the row; ReadOperand reports it, see NullableValueObjectValue.
         if (op is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } wrapped } valueOf
             && IsValueObjectValue(valueOf.Property, context)
             && TryReadRowMember(wrapped, row, context, out name, out type, out alias))
         {
-            return true;
+            return !IsNullableReference(type);
         }
 
         name = null!;

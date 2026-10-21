@@ -45,6 +45,16 @@ internal static partial class LinqQueryReader
             return OperandRead.Reported;
         }
 
+        if (NullableValueObjectValue(op, row, context) is { } valueOf)
+        {
+            expression = null;
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + valueOf.Syntax + "', the Value of a value object that can be null, which throws in C# "
+                    + "where SQL would drop or null the row,",
+                valueOf.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
+
         // A member of a companion parameter, such as `minOrder.Value`, is not a value the SQL can
         // bind. It is no capture either: the parameter already is one. `p.HasValue` is read as a
         // condition, by ReadPredicate.

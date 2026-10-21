@@ -444,7 +444,9 @@ The rules:
 - Each key is one mapped column, on either side. The outer key comes first in the `ON`.
 - `.Value` of a value-object column, such as a typed id, reads as the column, in a join key and
   anywhere else in a chain: `t.ProjectId.Value` is the `"ProjectId"` column. `.Value` of a
-  `Nullable<TValueObject>` is rejected.
+  `Nullable<TValueObject>` is rejected, and so is `.Value` of a reference-type value object
+  annotated `?`, such as `ProjectRef? Parent`: C# would throw on a null where SQL drops or nulls the
+  row. Code without nullable annotations cannot be checked, so there such a member counts as not null.
 - The result selector is an anonymous type of the two range variables, `new { Execution = e, Task = t }`,
   or members carried over from an earlier join, `new { et.Execution, et.Task, Project = p }`. A
   chain may join more than once. A computed member reports ZAO102.
