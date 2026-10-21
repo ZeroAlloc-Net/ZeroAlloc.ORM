@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.4.1...v2.5.0) (2026-10-21)
+
+
+### Features
+
+* add compile-time LINQ queries with the ZeroAlloc.ORM.Linq package ([a32eac9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a32eac968b5bfedef564c606e345ef0ffaf6568b))
+* support Task&lt;bool&gt; and Task&lt;long&gt; scalar results for Query methods ([a32eac9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a32eac968b5bfedef564c606e345ef0ffaf6568b))
+
+
+### Bug Fixes
+
+* bind null nullable enums as NULL instead of throwing or writing an empty string ([a32eac9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/a32eac968b5bfedef564c606e345ef0ffaf6568b))
+
 ## [2.4.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.4.0...v2.4.1) (2026-10-21)
 
 
