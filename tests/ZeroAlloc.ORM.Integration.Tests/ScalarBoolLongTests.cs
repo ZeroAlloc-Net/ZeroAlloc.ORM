@@ -34,4 +34,18 @@ public class ScalarBoolLongTests
             Assert.Equal(2L, await repo.CountAsync(CancellationToken.None).ConfigureAwait(false));
         }
     }
+
+    [Fact]
+    public async Task No_row_returns_false_and_zero()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            var repo = new ScalarBoolLongRepo(fx.Connection);
+
+            Assert.False(await repo.NoRowBoolAsync(CancellationToken.None).ConfigureAwait(false));
+            Assert.Equal(0L, await repo.NoRowLongAsync(CancellationToken.None).ConfigureAwait(false));
+        }
+    }
 }

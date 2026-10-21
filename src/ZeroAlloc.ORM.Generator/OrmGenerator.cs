@@ -1766,11 +1766,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
         if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
-        // Non-nullable bool / long: same ExecuteScalar shape as ScalarInt, with
-        // Convert.ToBoolean / Convert.ToInt64. Needed by LINQ Any / LongCount.
-        if (inner.SpecialType == SpecialType.System_Boolean) return (EmitShape.ScalarBool, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
-        if (inner.SpecialType == SpecialType.System_Int64) return (EmitShape.ScalarLong, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
-
         // v0.5 Phase D — `[Materialize(Factory = "X")]` resolution. Per design
         // Section 3, line 260 (discovery-order rule #1), an explicit factory
         // annotation ALWAYS wins over convention discovery. Extracted into
@@ -1785,6 +1780,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 method, inner, conventionContext, diagnostics, returnTypeLocation);
             if (scalarFactoryShape is { } sfs) return sfs;
         }
+
+        // Non-nullable bool / long: same ExecuteScalar shape as ScalarInt, with
+        // Convert.ToBoolean / Convert.ToInt64. Needed by LINQ Any / LongCount.
+        // Placed after factory resolution so [Materialize(Factory)] keeps winning.
+        if (inner.SpecialType == SpecialType.System_Boolean) return (EmitShape.ScalarBool, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+        if (inner.SpecialType == SpecialType.System_Int64) return (EmitShape.ScalarLong, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
         // `Money(decimal Amount, string Currency)` constructs the composite type
