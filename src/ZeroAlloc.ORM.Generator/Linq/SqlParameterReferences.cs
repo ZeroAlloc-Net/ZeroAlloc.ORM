@@ -62,6 +62,9 @@ internal static class SqlParameterReferences
             case SqlIsNullExpression isNull:
                 Add(isNull.Operand, names);
                 break;
+            case SqlCastExpression cast:
+                Add(cast.Operand, names);
+                break;
             case SqlLikeExpression like:
                 Add(like.Operand, names);
                 Add(like.Value, names);

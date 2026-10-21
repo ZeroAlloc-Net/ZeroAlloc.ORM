@@ -151,6 +151,15 @@ internal sealed record SqlIsNotTrueExpression(SqlExpression Operand) : SqlExpres
 internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated, string? Cast) : SqlExpression;
 
 /// <summary>
+/// <c>operand::type</c>: a parameter without a DbType facet in the SELECT list, so a null still has
+/// a type. PostgreSQL reads the SELECT list first and types a bare null parameter there as text,
+/// which clashes with a later use such as a comparison with a <c>timestamptz</c> column.
+/// </summary>
+/// <param name="Operand">The parameter.</param>
+/// <param name="Type">The PostgreSQL type, such as <c>timestamptz</c>.</param>
+internal sealed record SqlCastExpression(SqlExpression Operand, string Type) : SqlExpression;
+
+/// <summary>
 /// <c>string.Contains</c>, <c>StartsWith</c> or <c>EndsWith</c>: a <c>LIKE</c> whose pattern is the
 /// value with its wildcards escaped, and <c>%</c> on the open sides.
 /// </summary>

@@ -109,5 +109,17 @@ public sealed class PostgresLinqProjectionTests
         var rows = await repo.LiteralsAsync("from a parameter", CancellationToken.None).ConfigureAwait(false);
 
         rows.Should().ContainSingle().Which.Should().Be(new LiteralRow(id, "from a parameter", 42L, 0.5, null, Origin.Imported));
+
+        // A projected parameter without a facet is cast, so a null still has a type.
+        var at = new DateTime(2026, 10, 21, 9, 30, 0, DateTimeKind.Utc);
+        await new LinqWhereRepo(fx.Connection).StartAsync(id, Created.UtcDateTime, CancellationToken.None).ConfigureAwait(false);
+        (await repo.StampedAsync(null, CancellationToken.None).ConfigureAwait(false))
+            .Should().ContainSingle().Which.Should().Be(new StampRow(id, null));
+        (await repo.StampedAsync(at, CancellationToken.None).ConfigureAwait(false))
+            .Should().ContainSingle().Which.Should().Be(new StampRow(id, at));
+        (await repo.StampedBeforeAsync(null, CancellationToken.None).ConfigureAwait(false))
+            .Should().ContainSingle().Which.Should().Be(new StampRow(id, null));
+        (await repo.StampedBeforeAsync(at, CancellationToken.None).ConfigureAwait(false))
+            .Should().ContainSingle().Which.Should().Be(new StampRow(id, at));
     }
 }

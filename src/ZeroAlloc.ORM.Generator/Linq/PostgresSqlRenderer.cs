@@ -177,13 +177,12 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             case SqlIsNullExpression isNull:
                 RenderExpression(sb, isNull.Operand, names);
-                // A name-bound enum gets the String facet when bound, so it needs no cast.
-                if (isNull.Cast is { } cast
-                    && !(isNull.Operand is SqlParameterExpression bound && names.NameBoundParameters.Contains(bound.Name)))
-                {
-                    sb.Append("::").Append(cast);
-                }
+                AppendCast(sb, isNull.Operand, isNull.Cast, names);
                 sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
+                break;
+            case SqlCastExpression cast:
+                RenderExpression(sb, cast.Operand, names);
+                AppendCast(sb, cast.Operand, cast.Type, names);
                 break;
             case SqlLikeExpression like:
                 RenderLike(sb, like, names);
@@ -210,6 +209,17 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + expression.GetType().Name + ".");
+        }
+    }
+
+    // `::type` after a parameter without a DbType facet. A name-bound enum gets the String facet
+    // when bound, so it needs no cast.
+    private static void AppendCast(StringBuilder sb, SqlExpression operand, string? cast, SqlNameScope names)
+    {
+        if (cast is not null
+            && !(operand is SqlParameterExpression bound && names.NameBoundParameters.Contains(bound.Name)))
+        {
+            sb.Append("::").Append(cast);
         }
     }
 

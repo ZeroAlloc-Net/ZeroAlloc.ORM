@@ -237,6 +237,70 @@ public class LinqProjectionTests
             """);
     }
 
+    // A parameter without a DbType facet that can be null is cast in the SELECT list. PostgreSQL
+    // reads the SELECT list first and would type a null untyped parameter as text there, which
+    // then clashes with a later use, such as a comparison with a timestamptz column.
+    private const string StampStore = """
+        public sealed record Stamp(Guid Id, DateTime? At, DateOnly? On, Level? Level, DateTime Fixed);
+
+        public enum Level : byte { Low, High }
+
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class TaskStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(StampsQuery))]
+            public partial Task<List<Stamp>> Stamps(DateTime? at, DateOnly? on, Level? level, DateTime fixedAt, CancellationToken ct);
+
+            private static IQuery<Stamp> StampsQuery(DateTime? at, DateOnly? on, Level? level, DateTime fixedAt) =>
+                Sql.Table<TaskEntity>().Select(t => new Stamp(t.Id, at, on, level, fixedAt));
+        }
+        """;
+
+    [Fact]
+    public void Projected_parameter_without_a_facet_is_cast()
+    {
+        var result = GeneratorHarness.RunGenerator(Prelude + StampStore);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString()));
+        Assert.Contains(
+            "SELECT \\\"Id\\\", @at::timestamptz, @on::date, @level::smallint, @fixedAt FROM \\\"Tasks\\\"",
+            generated,
+            System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Projected_parameters_cast_where_a_null_needs_a_type()
+    {
+        VerifyCompiled(Prelude + StampStore);
+    }
+
+    // A parameter that can be null, has no facet and no PostgreSQL type to cast to would fail
+    // at run time when null, so it is rejected.
+    [Fact]
+    public void Projected_parameter_without_a_type_reports_ZAO102()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + """
+            public sealed record Blob(Guid Id, byte[]? Data);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(BlobsQuery))]
+                public partial Task<List<Blob>> Blobs(byte[]? data, CancellationToken ct);
+
+                private static IQuery<Blob> BlobsQuery(byte[]? data) =>
+                    Sql.Table<TaskEntity>().Select(t => new Blob(t.Id, data));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("data", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("'byte[]'", diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
+    }
+
     internal static void VerifyCompiled(
         string source,
         [CallerFilePath] string testFilePath = "",

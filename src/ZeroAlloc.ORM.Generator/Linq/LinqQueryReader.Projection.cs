@@ -54,10 +54,16 @@ internal static partial class LinqQueryReader
         return true;
     }
 
+    // A parameter that can be null and has no DbType facet is cast, so that a null still has a
+    // type: PostgreSQL reads the SELECT list first and would type it as text there.
     private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol row, ReaderContext context)
     {
         switch (ReadOperand(value, row, context, out var expression))
         {
+            case OperandRead.Read when Unwrap(value) is IParameterReferenceOperation { Parameter: var parameter }
+                && CanBeNull(parameter.Type):
+                if (!TryCastUntyped(parameter, "projecting", value, context, out var cast)) return null;
+                return cast is null ? expression : new SqlCastExpression(expression!, cast);
             case OperandRead.Read:
                 return expression;
             case OperandRead.Unsupported:

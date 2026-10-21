@@ -64,6 +64,7 @@ internal static class LinqQueryBinder
             {
                 SqlMemberExpression member => names.IsEnumAsString(member),
                 SqlParameterExpression parameter => nameBoundParameters.Contains(parameter.Name, StringComparer.Ordinal),
+                SqlCastExpression { Operand: SqlParameterExpression parameter } => nameBoundParameters.Contains(parameter.Name, StringComparer.Ordinal),
                 _ => false,
             };
             if (byName) ordinals.Add(i);

@@ -271,8 +271,10 @@ private static IQuery<TaskSummary> FindQuery(WorkStatus? status, Guid? projectId
 PostgreSQL has to know a parameter's type even where it only meets `IS NULL`. So each value parameter
 gets a `DbType` derived from its type, such as `String`, `Int32`, `Int64` or `Guid`. A parameter
 without one, such as an array, `DateTime`, `DateOnly` or `TimeSpan`, gets a cast on its null test
-instead: `@ids::uuid[] IS NULL`. A `[Param(DbType = ...)]` you write on the method's parameter wins
-over the generated type, and ZAO015 checks it against the dialect as for `[Query]`.
+instead: `@ids::uuid[] IS NULL`. A nullable one projected by `Select` is cast there too:
+`SELECT "Id", @at::timestamptz`. A nullable parameter of a type with no such cast, such as `byte[]?`,
+reports ZAO102 in a null test or a projection. A `[Param(DbType = ...)]` you write on the method's
+parameter wins over the generated type, and ZAO015 checks it against the dialect as for `[Query]`.
 
 A parameter the rendered SQL does not use, for example one that only a projection dropped by `Count()`
 read, stays in the signature but is not bound.

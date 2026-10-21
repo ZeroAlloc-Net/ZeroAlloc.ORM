@@ -160,20 +160,28 @@ internal static partial class LinqQueryReader
 
         string? cast = null;
         if (Unwrap(testedOperation) is IParameterReferenceOperation { Parameter: var parameter }
-            && !context.TypedParameters.Contains(parameter.Name))
+            && !TryCastUntyped(parameter, "'" + at.Syntax + "', a null test on", at, context, out cast))
         {
-            cast = NullTestCast(parameter.Type, context.Conventions);
-            if (cast is null)
-            {
-                context.Report(LinqDiagnostics.Unsupported(
-                    "'" + at.Syntax + "', a null test on '" + parameter.Name + "', whose type '"
-                        + parameter.Type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString()
-                        + "' binds without a PostgreSQL type,",
-                    at.Syntax.GetLocation()));
-                return null;
-            }
+            return null;
         }
         return new SqlIsNullExpression(tested, negated, cast);
+    }
+
+    // The cast a parameter without a DbType facet needs where a null must have a type: null for
+    // a typed parameter, else its NullTestCast. A type with no cast reports ZAO102 at `at`,
+    // describing the use as `use '<name>'`, and returns false.
+    private static bool TryCastUntyped(IParameterSymbol parameter, string use, IOperation at, ReaderContext context, out string? cast)
+    {
+        cast = null;
+        if (context.TypedParameters.Contains(parameter.Name)) return true;
+        cast = NullTestCast(parameter.Type, context.Conventions);
+        if (cast is not null) return true;
+        context.Report(LinqDiagnostics.Unsupported(
+            use + " '" + parameter.Name + "', whose type '"
+                + parameter.Type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString()
+                + "' binds without a PostgreSQL type,",
+            at.Syntax.GetLocation()));
+        return false;
     }
 
     // The PostgreSQL type Npgsql infers for a parameter that has no DbType facet, for the casts

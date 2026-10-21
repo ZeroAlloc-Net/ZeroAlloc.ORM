@@ -45,6 +45,12 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(LiteralsQuery))]
     public partial Task<List<LiteralRow>> LiteralsAsync(string label, CancellationToken ct);
 
+    [LinqQuery(nameof(StampedQuery))]
+    public partial Task<List<StampRow>> StampedAsync(DateTime? at, CancellationToken ct);
+
+    [LinqQuery(nameof(StampedBeforeQuery))]
+    public partial Task<List<StampRow>> StampedBeforeAsync(DateTime? at, CancellationToken ct);
+
     private static IQuery<TaskProjection> ProjectionsQuery() =>
         Sql.Table<TaskEntity>().Select(t => new TaskProjection(t.Id, t.ProjectId, t.Status, t.Kind, t.Tags, t.DueAt));
 
@@ -57,4 +63,12 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
 
     private static IQuery<LiteralRow> LiteralsQuery(string label) =>
         Sql.Table<TaskEntity>().Select(t => new LiteralRow(t.Id, label, 42, 0.5, null, Origin.Imported));
+
+    // DateTime binds without a DbType facet, so a null is typed by a cast in the SELECT list.
+    private static IQuery<StampRow> StampedQuery(DateTime? at) =>
+        Sql.Table<TaskEntity>().Select(t => new StampRow(t.Id, at));
+
+    // The SELECT list is read first, so the cast there also types the parameter for the WHERE.
+    private static IQuery<StampRow> StampedBeforeQuery(DateTime? at) =>
+        Sql.Table<TaskEntity>().Where(t => at == null || t.StartedAt < at).Select(t => new StampRow(t.Id, at));
 }

@@ -72,6 +72,8 @@ internal static partial class LinqQueryReader
                 return literal.Kind == SqlLiteralKind.Null;
             case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression:
                 return false;
+            case SqlCastExpression cast:
+                return MayBeNull(cast.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
             case SqlRowComparisonExpression rows:
