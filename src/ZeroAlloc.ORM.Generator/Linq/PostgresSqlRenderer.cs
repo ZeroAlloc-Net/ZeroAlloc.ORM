@@ -191,9 +191,11 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 sb.Append(')');
                 break;
             case SqlConditionalExpression conditional:
-                sb.Append("(NOT (");
+                // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,
+                // is false in C# and skips the filter, where NOT (NULL) would drop every row.
+                sb.Append("((");
                 RenderExpression(sb, conditional.Condition, names);
-                sb.Append(") OR (");
+                sb.Append(") IS NOT TRUE OR (");
                 RenderExpression(sb, conditional.Predicate, names);
                 sb.Append("))");
                 break;

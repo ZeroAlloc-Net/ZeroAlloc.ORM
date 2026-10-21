@@ -178,7 +178,7 @@ The chain filters, orders, pages, then projects, in that order:
 | Operator | SQL |
 |---|---|
 | `Where(t => a && b)` | `WHERE a AND b`; several `Where` calls join with `AND` |
-| `WhereIf(cond, t => p)` | `(NOT (cond) OR (p))` |
+| `WhereIf(cond, t => p)` | `((cond) IS NOT TRUE OR (p))`: a null `cond`, as `n > 0` is for a null `n`, skips the filter, as in C# |
 | `OrderBy(t => t.A)`, `OrderByDescending` | `ORDER BY "A"`, `ORDER BY "A" DESC` |
 | `ThenBy(t => t.B)`, `ThenByDescending` | `, "B"`, `, "B" DESC` |
 | `Skip(skip)` | `OFFSET GREATEST(@skip, 0)`, or `OFFSET 5` for a literal |
@@ -240,7 +240,7 @@ every row:
 private static IQuery<TaskSummary> FindQuery(WorkStatus? status, Guid? projectId, bool activeOnly) =>
     Sql.Table<TaskEntity>()
         .Where(t => status == null || t.Status == status)          // (@status IS NULL OR "Status" = @status)
-        .WhereIf(projectId != null, t => t.ProjectId == projectId) // (NOT (@projectId IS NOT NULL) OR ("ProjectId" = @projectId))
+        .WhereIf(projectId != null, t => t.ProjectId == projectId) // ((@projectId IS NOT NULL) IS NOT TRUE OR ("ProjectId" = @projectId))
         .WhereIf(activeOnly, t => t.Status == WorkStatus.Open)
         .Select(t => new TaskSummary(t.Id, t.Title));
 ```

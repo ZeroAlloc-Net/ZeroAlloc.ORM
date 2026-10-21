@@ -311,6 +311,25 @@ public class LinqWhereTests
             """);
     }
 
+    // C# skips the filter when the condition is null, as `minOrder > 0` is for a null minOrder:
+    // NOT (NULL) would be NULL and drop every row, so the condition reads IS NOT TRUE.
+    [Fact]
+    public void WhereIf_condition_that_is_null_skips_the_filter()
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(int? minOrder, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(int? minOrder) =>
+                    Sql.Table<TaskEntity>().WhereIf(minOrder > 0, t => t.Order >= minOrder).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal(
+            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@minOrder > 0) IS NOT TRUE OR (\"Order\" >= @minOrder))",
+            method.Sql);
+    }
+
     [Fact]
     public void Several_Wheres_join_with_AND()
     {

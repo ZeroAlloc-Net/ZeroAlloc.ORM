@@ -24,8 +24,8 @@ internal static partial class LinqQueryReader
         return true;
     }
 
-    // WhereIf(condition, t => predicate) — (NOT (condition) OR (predicate)). The condition is
-    // read without a row parameter: it tests companion parameters and constants only.
+    // WhereIf(condition, t => predicate) — ((condition) IS NOT TRUE OR (predicate)). The condition
+    // is read without a row parameter: it tests companion parameters and constants only.
     private static bool ReadWhereIf(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         if (invocation.Arguments.Length != 3

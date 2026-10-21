@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.FindQuery
-    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (NOT (@kind <> 'Bug') OR (\"Kind\" = @kind)) AND (NOT (@other = @kind) OR (\"IsActive\"))";
+    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@kind <> 'Bug') IS NOT TRUE OR (\"Kind\" = @kind)) AND ((@other = @kind) IS NOT TRUE OR (\"IsActive\"))";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::TestApp.WorkKind @kind, global::TestApp.WorkKind @other, global::System.Threading.CancellationToken @ct)

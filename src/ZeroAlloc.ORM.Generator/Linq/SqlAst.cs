@@ -162,7 +162,10 @@ internal sealed record SqlILikeExpression(SqlExpression Operand, SqlExpression P
 /// <summary><c>array.Contains(operand)</c>: <c>operand = ANY(array)</c>, for an array parameter.</summary>
 internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Array) : SqlExpression;
 
-/// <summary><c>WhereIf(condition, predicate)</c>: <c>(NOT (condition) OR (predicate))</c>.</summary>
+/// <summary>
+/// <c>WhereIf(condition, predicate)</c>: <c>((condition) IS NOT TRUE OR (predicate))</c>. A NULL
+/// condition counts as false, as in C#, so it skips the filter.
+/// </summary>
 internal sealed record SqlConditionalExpression(SqlExpression Condition, SqlExpression Predicate) : SqlExpression;
 
 internal enum SqlLiteralKind
