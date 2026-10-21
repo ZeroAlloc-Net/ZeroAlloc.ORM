@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.4.0...v2.4.1) (2026-10-21)
+
+
+### Documentation
+
+* re-capture the 2.x benchmarks at 2.4.0 on an idle machine ([#382](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/382)) ([b61146a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/b61146a522e12fc1e991a0a18b436af6b4c7fb52))
+
 ## [2.4.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.3.4...v2.4.0) (2026-10-18)
 
 
