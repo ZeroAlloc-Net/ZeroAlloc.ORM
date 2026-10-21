@@ -208,7 +208,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 |---|---|
 | `t.Order == n`, `!=`, `<`, `<=`, `>`, `>=` | `"Order" = @n`, `<>`, `<`, `<=`, `>`, `>=` |
 | `t.Note == null`, `t.Note != null` | `"Note" IS NULL`, `"Note" IS NOT NULL` |
-| `a && b`, `a \|\| b`, `!a` | `a AND b`, `(a OR b)`, `NOT (a)` |
+| `a && b`, `a \|\| b`, `!a` | `a AND b`, `(a OR b)`, `NOT (a)`, or `(a) IS NOT TRUE` when `a` can be null |
 | `t.IsActive` | `"IsActive"` |
 | `t.Status == WorkStatus.Done` | `"Status" = 1`, or `'Done'` when stored by name |
 | `string.Equals(t.Title, title)`, with or without `StringComparison.Ordinal` | `"Title" = @title` |
@@ -230,6 +230,27 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
   columns stored both ways it reports [ZAO111](../diagnostics/ZAO111.md).
 - Typed ids and value objects compare by their underlying value.
 - Arithmetic, other methods, and `<`/`>` on an enum stored by name report ZAO102.
+
+#### Nulls compare as in C#
+
+Comparisons mean what they mean in C#, not SQL's three-valued logic: `null == null` is true,
+`null == 5` and `null > 5` are false, so `!(null > 5)` is true. The translator knows which operands
+can be null from the entity property's or the companion parameter's declared type, nullable reference
+annotations included, and adds the `IS NULL` terms EF adds:
+
+| C# | SQL |
+|---|---|
+| `t.DueAt == due`, both nullable | `("DueAt" = @due OR ("DueAt" IS NULL AND @due IS NULL))` |
+| `t.DueAt != due`, both nullable | `(("DueAt" <> @due OR ("DueAt" IS NULL AND @due IS NOT NULL)) OR ("DueAt" IS NOT NULL AND @due IS NULL))` |
+| `t.Priority != n`, only the column nullable | `("Priority" <> @n OR "Priority" IS NULL)` |
+| `t.Priority == n`, one side nullable | `"Priority" = @n`: a NULL is dropped, as C#'s false is |
+| `!(t.Priority > n)`, `t.Priority` nullable | `("Priority" > @n) IS NOT TRUE`, which keeps the null rows |
+| `WhereIf(n > 0, ...)`, `n` nullable | a null `n` skips the filter |
+
+So `Where(t => t.DueAt == due)` with a null `due` returns the rows without a due date, and
+`t.Kind != WorkKind.Feature` on a nullable column keeps the rows where it is null. In code without
+nullable annotations a reference type counts as not null. A `Sql.Row` item that can be null reports
+ZAO102: a NULL makes the whole row comparison NULL.
 
 ### Optional filters
 
@@ -290,8 +311,9 @@ ORDER BY "created_at", "Id" LIMIT GREATEST(@take, 0)
 
 Order by the same columns, in the same direction, and end with a unique key such as the primary key,
 so that rows with equal timestamps are neither skipped nor repeated. Each pair is a column and a
-parameter or a non-null constant, in either order. An enum stored by name cannot be part of a row,
-because it would compare by name.
+parameter or a non-null constant, in either order. An item whose type can be null cannot be part of
+a row, because a NULL makes the whole comparison NULL; nor can an enum stored by name, because it would
+compare by name.
 
 ## Diagnostics
 

@@ -69,6 +69,8 @@ public class LinqWhereTests
             public DateOnly DueOn { get; private set; }
             public TimeSpan Spent { get; private set; }
             public TimeOnly StartsAt { get; private set; }
+            public int? Priority { get; private set; }
+            public WorkKind? Category { get; private set; }
         }
 
         [TableMap(typeof(TaskEntity), "Tasks")]
@@ -328,6 +330,87 @@ public class LinqWhereTests
         Assert.Equal(
             "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@minOrder > 0) IS NOT TRUE OR (\"Order\" >= @minOrder))",
             method.Sql);
+    }
+
+    // Comparisons follow C#: null equals null only, and a comparison with a null operand is
+    // false, so its negation is true. EF-style compensation adds the IS NULL terms where an
+    // operand can be null; `!` over something that can be NULL reads IS NOT TRUE.
+    [Theory]
+    [InlineData("t => t.DueAt == due", "(\"DueAt\" = @due OR (\"DueAt\" IS NULL AND @due IS NULL))")]
+    [InlineData("t => t.DueAt != due", "((\"DueAt\" <> @due OR (\"DueAt\" IS NULL AND @due IS NOT NULL)) OR (\"DueAt\" IS NOT NULL AND @due IS NULL))")]
+    [InlineData("t => t.Note != title", "(\"Note\" <> @title OR \"Note\" IS NULL)")]
+    [InlineData("t => title != t.Note", "(@title <> \"Note\" OR \"Note\" IS NULL)")]
+    [InlineData("t => t.Order != maybe", "(\"Order\" <> @maybe OR @maybe IS NULL)")]
+    [InlineData("t => t.Note == title", "\"Note\" = @title")]
+    [InlineData("t => t.Order == maybe", "\"Order\" = @maybe")]
+    [InlineData("t => t.Note == note", "(\"Note\" = @note OR (\"Note\" IS NULL AND @note IS NULL))")]
+    [InlineData("t => string.Equals(t.Note, note)", "(\"Note\" = @note OR (\"Note\" IS NULL AND @note IS NULL))")]
+    [InlineData("t => !string.Equals(t.Note, title)", "(\"Note\" = @title) IS NOT TRUE")]
+    [InlineData("t => t.Category != WorkKind.Feature", "(\"Category\" <> 1 OR \"Category\" IS NULL)")]
+    [InlineData("t => t.Kind != kind", "(\"Kind\" <> @kind OR @kind IS NULL)")]
+    [InlineData("t => !(t.Priority > order)", "(\"Priority\" > @order) IS NOT TRUE")]
+    [InlineData("t => !(t.Order > maybe)", "(\"Order\" > @maybe) IS NOT TRUE")]
+    [InlineData("t => !(t.IsActive && t.Priority > order)", "(\"IsActive\" AND \"Priority\" > @order) IS NOT TRUE")]
+    [InlineData("t => !(t.Order > order)", "NOT (\"Order\" > @order)")]
+    [InlineData("t => !(t.DueAt == null)", "NOT (\"DueAt\" IS NULL)")]
+    [InlineData("t => t.Priority > order", "\"Priority\" > @order")]
+    public void Comparisons_follow_CSharp_null_semantics(string predicate, string where)
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(DateTimeOffset? due, string? note, string title, int order, int? maybe, WorkKind? kind, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(DateTimeOffset? due, string? note, string title, int order, int? maybe, WorkKind? kind) =>
+                    Sql.Table<TaskEntity>().Where(
+            """ + predicate + """
+            ).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal("SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE " + where, method.Sql);
+    }
+
+    // The same rules inside a WhereIf condition, which tests parameters only.
+    [Fact]
+    public void WhereIf_condition_compares_nullable_parameters_as_CSharp_does()
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(int? a, int? b, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(int? a, int? b) =>
+                    Sql.Table<TaskEntity>().WhereIf(a == b, t => t.IsActive).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal(
+            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (((@a = @b OR (@a IS NULL AND @b IS NULL))) IS NOT TRUE OR (\"IsActive\"))",
+            method.Sql);
+    }
+
+    // A NULL item makes a row comparison NULL, and keyset paging over a nullable key would skip
+    // or repeat rows, so a Sql.Row item that can be null is rejected rather than compensated.
+    [Theory]
+    [InlineData("t => Sql.Row(t.DueAt, t.Id) > Sql.Row(due, id)", "t.DueAt")]
+    [InlineData("t => Sql.Row<DateTimeOffset?, Guid>(t.CreatedAt, t.Id) > Sql.Row(due, id)", "due")]
+    public void Sql_Row_item_that_can_be_null_reports_ZAO102(string predicate, string located)
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(DateTimeOffset? due, Guid id, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(DateTimeOffset? due, Guid id) =>
+                    Sql.Table<TaskEntity>().Where(
+            """ + predicate + """
+            ).OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("can be null", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     [Fact]

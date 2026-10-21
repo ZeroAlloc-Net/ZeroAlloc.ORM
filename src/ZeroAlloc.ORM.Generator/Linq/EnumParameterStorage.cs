@@ -95,6 +95,9 @@ internal static class EnumParameterStorage
                 case SqlNotExpression not:
                     Visit(not.Operand);
                     break;
+                case SqlIsNotTrueExpression isNotTrue:
+                    Visit(isNotTrue.Operand);
+                    break;
                 case SqlConditionalExpression conditional:
                     Visit(conditional.Condition);
                     Visit(conditional.Predicate);

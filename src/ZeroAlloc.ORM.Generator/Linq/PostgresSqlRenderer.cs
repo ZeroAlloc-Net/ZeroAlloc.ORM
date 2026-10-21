@@ -166,6 +166,15 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 RenderExpression(sb, not.Operand, names);
                 sb.Append(')');
                 break;
+            case SqlIsNotTrueExpression { Operand: SqlBinaryExpression { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or } grouped }:
+                RenderExpression(sb, grouped, names);
+                sb.Append(" IS NOT TRUE");
+                break;
+            case SqlIsNotTrueExpression isNotTrue:
+                sb.Append('(');
+                RenderExpression(sb, isNotTrue.Operand, names);
+                sb.Append(") IS NOT TRUE");
+                break;
             case SqlIsNullExpression isNull:
                 RenderExpression(sb, isNull.Operand, names);
                 // A name-bound enum gets the String facet when bound, so it needs no cast.

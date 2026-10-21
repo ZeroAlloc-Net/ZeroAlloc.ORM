@@ -64,7 +64,7 @@ internal static partial class LinqQueryReader
                 return ReadBinary(binary, row, context);
             case IUnaryOperation { OperatorKind: UnaryOperatorKind.Not, OperatorMethod: null } not:
                 var operand = ReadPredicate(not.Operand, row, context);
-                return operand is null ? null : new SqlNotExpression(operand);
+                return operand is null ? null : Negate(operand, context);
             case IInvocationOperation invocation:
                 return ReadPredicateCall(invocation, row, context);
         }
@@ -102,7 +102,8 @@ internal static partial class LinqQueryReader
         return ReadComparison(binary, compare, row, context);
     }
 
-    // A comparison. `x == null` and `x != null` become IS [NOT] NULL. A user-defined operator,
+    // A comparison, with C#'s null semantics; see LinqQueryReader.Nulls.cs. `x == null` and
+    // `x != null` become IS [NOT] NULL. A user-defined operator,
     // as on string, Guid, DateTimeOffset or a typed id, is accepted when it compares its own
     // type: the column and the value then compare by the primitive both are stored as.
     private static SqlExpression? ReadComparison(
@@ -136,7 +137,7 @@ internal static partial class LinqQueryReader
         if (left is null) return null;
         var right = ReadComparand(binary.RightOperand, row, context);
         if (right is null) return null;
-        return new SqlBinaryExpression(compare, left, right);
+        return Compare(compare, left, right, context);
     }
 
     // `x == null`, `null != x` or `string.Equals(x, null)`: IS [NOT] NULL. Exactly one side must be
@@ -248,7 +249,7 @@ internal static partial class LinqQueryReader
             var left = ReadComparand(ArgumentFor(invocation, 0), row, context);
             if (left is null) return null;
             var right = ReadComparand(ArgumentFor(invocation, 1), row, context);
-            return right is null ? null : new SqlBinaryExpression(SqlBinaryOperator.Equal, left, right);
+            return right is null ? null : Compare(SqlBinaryOperator.Equal, left, right, context);
         }
 
         if (LikeMatch(invocation) is { } match && invocation.Instance is { } instance)

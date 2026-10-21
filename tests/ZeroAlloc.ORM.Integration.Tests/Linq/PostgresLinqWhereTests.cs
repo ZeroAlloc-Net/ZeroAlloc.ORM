@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using AwesomeAssertions.Execution;
 using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests.Linq;
@@ -215,5 +216,38 @@ public sealed class PostgresLinqWhereTests
         Titles(await repo.ReusedAsync(2, null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("alphabet", "beta");
         Titles(await repo.ReusedAsync(null, "alpha", CancellationToken.None).ConfigureAwait(false)).Should().Equal("alpha", "alphabet");
         Titles(await repo.ReusedAsync(2, "alpha", CancellationToken.None).ConfigureAwait(false)).Should().Equal("alphabet");
+    }
+
+    // Comparisons follow C#: a null compares equal to null only, and `null > p` is false, so
+    // its negation is true. A WhereIf whose condition is null skips its filter.
+    [Fact]
+    public async Task Null_comparisons_follow_CSharp()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var due = Created.AddDays(1);
+        var none = Row("none", 1);
+        var low = Row("low", 2, dueAt: due);
+        var high = Row("high", 3, dueAt: Created.AddDays(2));
+        await SeedAsync(fx, none, low, high).ConfigureAwait(false);
+        var repo = new LinqWhereRepo(fx.Connection);
+        await repo.GradeAsync(low.Id, 1, 0.1f, WorkKind.Bug, CancellationToken.None).ConfigureAwait(false);
+        await repo.GradeAsync(high.Id, 5, 0.2f, WorkKind.Feature, CancellationToken.None).ConfigureAwait(false);
+
+        // Every case is checked, so a failure names each comparison that went wrong.
+        using var scope = new AssertionScope();
+        Titles(await repo.MinOrderIfAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low", "none");
+        Titles(await repo.MinOrderIfAsync(0, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low", "none");
+        Titles(await repo.MinOrderIfAsync(2, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low");
+
+        Titles(await repo.DueAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("none");
+        Titles(await repo.DueAsync(due, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low");
+        Titles(await repo.NotDueAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low");
+        Titles(await repo.NotDueAsync(due, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "none");
+
+        Titles(await repo.NotFeatureAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
+        Titles(await repo.OtherCategoryAsync(WorkKind.Feature, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
+        Titles(await repo.OtherCategoryAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("high", "low");
+        Titles(await repo.OtherPriorityAsync(5, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
+        Titles(await repo.NotAboveAsync(3, CancellationToken.None).ConfigureAwait(false)).Should().Equal("low", "none");
     }
 }

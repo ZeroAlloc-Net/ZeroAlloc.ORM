@@ -174,6 +174,9 @@ internal static partial class LinqQueryReader
         // The companion's parameters carry the method's names, which ZAO101 guarantees.
         public HashSet<string> TypedParameters { get; } = new(StringComparer.Ordinal);
 
+        // The columns and parameters read so far whose declared type can be null.
+        public HashSet<SqlExpression> NullableValues { get; } = new();
+
         public List<DiagnosticInfo> Diagnostics { get; } = new();
 
         public void Report(DiagnosticInfo diagnostic) => Diagnostics.Add(diagnostic);

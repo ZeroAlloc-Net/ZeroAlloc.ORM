@@ -130,8 +130,15 @@ internal sealed record SqlRowComparisonExpression(
     EquatableArray<SqlExpression> Left,
     EquatableArray<SqlExpression> Right) : SqlExpression;
 
-/// <summary><c>NOT (operand)</c>.</summary>
+/// <summary><c>NOT (operand)</c>, for an operand that is never NULL.</summary>
 internal sealed record SqlNotExpression(SqlExpression Operand) : SqlExpression;
+
+/// <summary>
+/// <c>(operand) IS NOT TRUE</c>: C#'s <c>!</c> over a condition that can be NULL in SQL, such as a
+/// comparison with a nullable column. C# reads <c>null &gt; 0</c> as false, so its negation is
+/// true; <c>NOT (NULL)</c> would be NULL and drop the row, where IS NOT TRUE is true.
+/// </summary>
+internal sealed record SqlIsNotTrueExpression(SqlExpression Operand) : SqlExpression;
 
 /// <summary><c>operand IS NULL</c>, or <c>IS NOT NULL</c> when <paramref name="Negated"/>.</summary>
 /// <param name="Operand">The tested value.</param>

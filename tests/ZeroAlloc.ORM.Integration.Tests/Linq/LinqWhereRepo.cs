@@ -10,6 +10,30 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
     [Command("""UPDATE "Tasks" SET "StartedAt" = @at WHERE "Id" = @id""")]
     public partial Task<int> StartAsync(Guid id, DateTime at, CancellationToken ct);
 
+    [Command("""UPDATE "Tasks" SET "Priority" = @priority, "Rating" = @rating, "Category" = @category WHERE "Id" = @id""")]
+    public partial Task<int> GradeAsync(Guid id, int? priority, float? rating, WorkKind? category, CancellationToken ct);
+
+    [LinqQuery(nameof(MinOrderIfQuery))]
+    public partial Task<List<TaskLine>> MinOrderIfAsync(int? minOrder, CancellationToken ct);
+
+    [LinqQuery(nameof(DueQuery))]
+    public partial Task<List<TaskLine>> DueAsync(DateTimeOffset? due, CancellationToken ct);
+
+    [LinqQuery(nameof(NotDueQuery))]
+    public partial Task<List<TaskLine>> NotDueAsync(DateTimeOffset? due, CancellationToken ct);
+
+    [LinqQuery(nameof(NotFeatureQuery))]
+    public partial Task<List<TaskLine>> NotFeatureAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(OtherCategoryQuery))]
+    public partial Task<List<TaskLine>> OtherCategoryAsync(WorkKind? category, CancellationToken ct);
+
+    [LinqQuery(nameof(OtherPriorityQuery))]
+    public partial Task<List<TaskLine>> OtherPriorityAsync(int priority, CancellationToken ct);
+
+    [LinqQuery(nameof(NotAboveQuery))]
+    public partial Task<List<TaskLine>> NotAboveAsync(int priority, CancellationToken ct);
+
     [LinqQuery(nameof(KindUnlessBugQuery))]
     public partial Task<List<TaskLine>> KindUnlessBugAsync(WorkKind kind, CancellationToken ct);
 
@@ -80,6 +104,31 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
 
     [LinqQuery(nameof(ReusedQuery))]
     public partial Task<List<TaskLine>> ReusedAsync(int? minOrder, string? title, CancellationToken ct);
+
+    // A null minOrder makes the condition null, which C# reads as false: the filter is skipped.
+    private static IQuery<TaskLine> MinOrderIfQuery(int? minOrder) =>
+        Sql.Table<TaskEntity>().WhereIf(minOrder > 0, t => t.Order >= minOrder).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // Both sides can be null, so a null due matches the rows without one, as in C#.
+    private static IQuery<TaskLine> DueQuery(DateTimeOffset? due) =>
+        Sql.Table<TaskEntity>().Where(t => t.DueAt == due).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> NotDueQuery(DateTimeOffset? due) =>
+        Sql.Table<TaskEntity>().Where(t => t.DueAt != due).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // A null category is not Feature, so its rows are kept.
+    private static IQuery<TaskLine> NotFeatureQuery() =>
+        Sql.Table<TaskEntity>().Where(t => t.Category != WorkKind.Feature).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> OtherCategoryQuery(WorkKind? category) =>
+        Sql.Table<TaskEntity>().Where(t => t.Category != category).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> OtherPriorityQuery(int priority) =>
+        Sql.Table<TaskEntity>().Where(t => t.Priority != priority).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // C# reads `null > p` as false, so its negation keeps the rows without a priority.
+    private static IQuery<TaskLine> NotAboveQuery(int priority) =>
+        Sql.Table<TaskEntity>().Where(t => !(t.Priority > priority)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     // The constant is compared with a parameter that binds by name, so it is written by name.
     private static IQuery<TaskLine> KindUnlessBugQuery(WorkKind kind) =>

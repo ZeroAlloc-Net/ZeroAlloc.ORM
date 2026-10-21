@@ -1,8 +1,9 @@
 namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 
 // A schema shaped like Daedalus' EF-created one: quoted PascalCase names, a reserved word
-// ("Order") as a column, a typed id, an enum stored as int and one stored as text, a text[]
-// and a nullable timestamptz. "Projects" lives in its own schema so the map's Schema is used.
+// ("Order") as a column, a typed id, an enum stored as int and one stored as text, a text[],
+// a nullable timestamptz, and nullable int, real and int-enum columns for the null semantics.
+// "Projects" lives in its own schema so the map's Schema is used.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -22,7 +23,10 @@ internal static class LinqSchema
             "DueAt" timestamptz NULL,
             "Tags" text[] NOT NULL,
             "Order" int NOT NULL,
-            "StartedAt" timestamptz NULL
+            "StartedAt" timestamptz NULL,
+            "Priority" int NULL,
+            "Rating" real NULL,
+            "Category" int NULL
         );
         """;
 }

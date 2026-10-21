@@ -19,7 +19,8 @@ internal static partial class LinqQueryReader
     // Sql.Row(t.A, t.B) > Sql.Row(p, q): ("A", "B") > (@p, @q). Both sides are Sql.Row calls;
     // SqlRow's operators take two rows of the same type, so they have the same arity. Each pair
     // is a column and a parameter or a non-null literal, in either order. Anything else is
-    // ZAO102 at the comparison. A column stored by name is checked when the query is bound.
+    // ZAO102 at the comparison, and an item that can be null is ZAO102 at the item. A column
+    // stored by name is checked when the query is bound.
     private static SqlExpression? ReadRowComparison(
         IBinaryOperation binary,
         SqlBinaryOperator compare,
@@ -48,6 +49,11 @@ internal static partial class LinqQueryReader
             if (leftItem is null) return null;
             var rightItem = ReadComparand(rightItems[i], row, context);
             if (rightItem is null) return null;
+
+            // An item that can be null is rejected, not compensated: a NULL makes the whole row
+            // comparison NULL, and the keyset ordering of NULLs is a choice C# does not make.
+            if (MayBeNull(leftItem, context.NullableValues)) return RejectNullableRowItem(leftItems[i], context);
+            if (MayBeNull(rightItem, context.NullableValues)) return RejectNullableRowItem(rightItems[i], context);
             if (!(leftItem is SqlMemberExpression && IsKeyValue(rightItem))
                 && !(rightItem is SqlMemberExpression && IsKeyValue(leftItem)))
             {
@@ -61,6 +67,13 @@ internal static partial class LinqQueryReader
             compare,
             new EquatableArray<SqlExpression>(left.MoveToImmutable()),
             new EquatableArray<SqlExpression>(right.MoveToImmutable()));
+    }
+
+    private static SqlExpression? RejectNullableRowItem(IOperation item, ReaderContext context)
+    {
+        var at = Unwrap(item).Syntax;
+        context.Report(LinqDiagnostics.Unsupported("'" + at + "', a Sql.Row item that can be null,", at.GetLocation()));
+        return null;
     }
 
     // The arguments of a Sql.Row call, by parameter position; null for any other row value.

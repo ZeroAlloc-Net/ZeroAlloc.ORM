@@ -14,4 +14,7 @@ public sealed class TaskEntity
     public string[] Tags { get; private set; } = [];
     public int Order { get; private set; }
     public DateTime? StartedAt { get; private set; }
+    public int? Priority { get; private set; }
+    public float? Rating { get; private set; }
+    public WorkKind? Category { get; private set; }
 }

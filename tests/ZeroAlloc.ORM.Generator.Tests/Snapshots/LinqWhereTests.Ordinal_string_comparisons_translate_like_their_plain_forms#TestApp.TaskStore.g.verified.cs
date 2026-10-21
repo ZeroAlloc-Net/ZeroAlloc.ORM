@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.FindQuery
-    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (\"Title\" = @title OR NOT (\"Note\" = @title)) AND ((\"Title\" LIKE replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') || '%' ESCAPE '\\' OR \"Title\" LIKE '%' || replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') ESCAPE '\\') OR \"Title\" LIKE '%' || replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') || '%' ESCAPE '\\')";
+    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (\"Title\" = @title OR (\"Note\" = @title) IS NOT TRUE) AND ((\"Title\" LIKE replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') || '%' ESCAPE '\\' OR \"Title\" LIKE '%' || replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') ESCAPE '\\') OR \"Title\" LIKE '%' || replace(replace(replace(@part,'\\','\\\\'),'%','\\%'),'_','\\_') || '%' ESCAPE '\\')";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(string @title, string @part, global::System.Threading.CancellationToken @ct)

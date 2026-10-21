@@ -56,6 +56,9 @@ internal static class SqlParameterReferences
             case SqlNotExpression not:
                 Add(not.Operand, names);
                 break;
+            case SqlIsNotTrueExpression isNotTrue:
+                Add(isNotTrue.Operand, names);
+                break;
             case SqlIsNullExpression isNull:
                 Add(isNull.Operand, names);
                 break;

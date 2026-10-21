@@ -43,22 +43,39 @@ internal static partial class LinqQueryReader
         return OperandRead.Reported;
     }
 
+    // A column or a parameter, recorded in NullableValues when its declared type can be null.
     private static SqlExpression? ReadReference(IOperation op, IParameterSymbol? row, ReaderContext context)
-        => op switch
+    {
+        ITypeSymbol type;
+        SqlExpression expression;
+        switch (op)
         {
-            IPropertyReferenceOperation { Instance: IParameterReferenceOperation p, Arguments.Length: 0 } property
-                when IsParameter(p, row) => Member(property.Property.Name, op, property.Property.Type),
+            case IPropertyReferenceOperation { Instance: IParameterReferenceOperation p, Arguments.Length: 0 } property
+                when IsParameter(p, row):
+                type = property.Property.Type;
+                expression = Member(property.Property.Name, op, type);
+                break;
             // A field is never a mapped column; the binder reports it as ZAO105.
-            IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field
-                when IsParameter(p, row) => Member(field.Field.Name, op, field.Field.Type),
-            IParameterReferenceOperation p when context.SqlNames.TryGetValue(p.Parameter, out var sqlName)
-                => new SqlParameterExpression(
+            case IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field
+                when IsParameter(p, row):
+                type = field.Field.Type;
+                expression = Member(field.Field.Name, op, type);
+                break;
+            case IParameterReferenceOperation p when context.SqlNames.TryGetValue(p.Parameter, out var sqlName):
+                type = p.Parameter.Type;
+                expression = new SqlParameterExpression(
                     sqlName,
                     p.Parameter.Name,
-                    ColumnPicksEnumStorage(p.Parameter.Type),
-                    LocationInfo.From(op.Syntax.GetLocation())),
-            _ => null,
-        };
+                    ColumnPicksEnumStorage(type),
+                    LocationInfo.From(op.Syntax.GetLocation()));
+                break;
+            default:
+                return null;
+        }
+
+        if (CanBeNull(type)) context.NullableValues.Add(expression);
+        return expression;
+    }
 
     private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type)
         => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type));
