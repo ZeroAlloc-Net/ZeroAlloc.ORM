@@ -1766,6 +1766,11 @@ public sealed class OrmGenerator : IIncrementalGenerator
         // ExecuteScalarAsync emit + snapshot stays unchanged in v0.1.
         if (inner.SpecialType == SpecialType.System_Int32) return (EmitShape.ScalarInt, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
+        // Non-nullable bool / long: same ExecuteScalar shape as ScalarInt, with
+        // Convert.ToBoolean / Convert.ToInt64. Needed by LINQ Any / LongCount.
+        if (inner.SpecialType == SpecialType.System_Boolean) return (EmitShape.ScalarBool, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+        if (inner.SpecialType == SpecialType.System_Int64) return (EmitShape.ScalarLong, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+
         // v0.5 Phase D — `[Materialize(Factory = "X")]` resolution. Per design
         // Section 3, line 260 (discovery-order rule #1), an explicit factory
         // annotation ALWAYS wins over convention discovery. Extracted into
@@ -5063,6 +5068,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 case EmitShape.ScalarInt:
                     EmitScalarInt(sb, m, repo.ConnectionAccess);
                     break;
+                case EmitShape.ScalarBool:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToBoolean");
+                    break;
+                case EmitShape.ScalarLong:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToInt64");
+                    break;
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m, repo.ConnectionAccess);
                     break;
@@ -5296,6 +5307,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // of the consumer's `using` directives; `__`-prefixed locals avoid collision
     // with user parameter names; ConfigureAwait(false) consistently — library code.
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+        => EmitScalarConvert(sb, m, connectionAccess, "ToInt32");
+
+    // Shared body for ScalarInt / ScalarBool / ScalarLong: ExecuteScalarAsync then
+    // System.Convert.<convertMethod> with the invariant culture. A no-row result
+    // (null) converts to the default value; a DBNull throws InvalidCastException.
+    private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
     {
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -5308,7 +5325,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine("            return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
+        sb.AppendLine($"            return global::System.Convert.{convertMethod}(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }

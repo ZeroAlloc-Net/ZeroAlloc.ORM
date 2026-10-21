@@ -10,6 +10,9 @@ internal enum EmitShape
 {
     Unknown,
     ScalarInt,
+    // Task<bool> / Task<long> [Query] results; same ExecuteScalar shape as ScalarInt.
+    ScalarBool,
+    ScalarLong,
     NullableScalar,
     FlatRow,
     // Multi-arg class with column-name-keyed reads. Detected when the return-type
