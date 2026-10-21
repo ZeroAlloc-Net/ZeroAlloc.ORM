@@ -179,8 +179,8 @@ public sealed class PostgresLinqAggregateTests
         (await repo.EarliestCreatedAsync(ct).ConfigureAwait(false)).Should().Be(created.AddHours(-1));
     }
 
-    // LINQ's non-nullable Average, Min and Max throw on no values. The SQL gives NULL, which the
-    // non-null scalar shape cannot convert.
+    // LINQ's non-nullable Average, Min and Max throw InvalidOperationException on no values. The
+    // SQL gives NULL, and the LINQ scalar emit throws the same exception, with LINQ's message.
     [Fact]
     public async Task Non_nullable_average_of_no_rows_throws()
     {
@@ -189,12 +189,12 @@ public sealed class PostgresLinqAggregateTests
         var none = Guid.NewGuid();
 
         var average = () => repo.AverageInputAsync(none, CancellationToken.None);
-        await average.Should().ThrowAsync<InvalidCastException>().ConfigureAwait(false);
+        await average.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
 
         var averageDecimal = () => repo.AverageInputDecimalAsync(none, CancellationToken.None);
-        await averageDecimal.Should().ThrowAsync<InvalidCastException>().ConfigureAwait(false);
+        await averageDecimal.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
 
         var max = () => repo.MaxInputAsync(none, CancellationToken.None);
-        await max.Should().ThrowAsync<InvalidCastException>().ConfigureAwait(false);
+        await max.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
     }
 }

@@ -96,11 +96,17 @@ public sealed partial class OrmGenerator
         {
             Sql = bound.Sql,
             Materialization = ReadEnumsAsStrings(core.Method.Materialization, bound.EnumAsStringOrdinals),
+            LinqThrowsOnNoElements = HasNoValueForNoRows(statement),
         };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
         method = UnbindUnreferenced(method, SqlParameterReferences.Collect(statement));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
     }
+
+    // A scalar Average, Min or Max is NULL over no rows, where LINQ's non-nullable overload
+    // throws. Sum is COALESCEd to 0 and Count and Any always have a value.
+    private static bool HasNoValueForNoRows(SqlStatement statement)
+        => statement is SqlScalarAggregateStatement { Call.Function: not SqlAggregateFunction.Sum };
 
     // An int-convention enum parameter compared with EnumAsString columns binds the way a
     // [StoreAsString] one does: as its member name, through the EnumAsString convention. The

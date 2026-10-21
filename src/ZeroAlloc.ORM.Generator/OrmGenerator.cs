@@ -5537,7 +5537,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble /
     // ScalarDecimal: ExecuteScalarAsync then System.Convert.<convertMethod> with
     // the invariant culture. A no-row result (null) converts to the default
-    // value; a DBNull throws InvalidCastException.
+    // value; a DBNull throws InvalidCastException. A [LinqQuery] Average, Min or Max
+    // throws InvalidOperationException on either instead, as LINQ's non-nullable
+    // overload does on no values; see QueryMethodModel.LinqThrowsOnNoElements.
     private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
     {
         var paramList = BuildParameterList(m.MethodParameters);
@@ -5551,6 +5553,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
+        if (m.LinqThrowsOnNoElements)
+        {
+            sb.AppendLine("            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException(\"Sequence contains no elements\");");
+        }
         sb.AppendLine($"            return global::System.Convert.{convertMethod}(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");

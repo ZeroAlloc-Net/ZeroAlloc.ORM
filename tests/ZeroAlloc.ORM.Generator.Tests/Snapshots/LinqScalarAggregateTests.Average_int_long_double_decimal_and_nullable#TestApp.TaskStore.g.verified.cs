@@ -20,6 +20,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql0_AverageOrder;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -42,6 +43,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql1_AverageSize;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -64,6 +66,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql2_AverageRatio;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -86,6 +89,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql3_AveragePrice;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

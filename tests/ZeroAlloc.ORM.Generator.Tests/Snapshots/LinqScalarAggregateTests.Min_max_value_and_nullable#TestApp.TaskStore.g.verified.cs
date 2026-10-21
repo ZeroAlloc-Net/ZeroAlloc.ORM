@@ -20,6 +20,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql0_MinOrder;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -42,6 +43,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql1_MaxOrderWide;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToInt64(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -64,6 +66,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql2_MaxPrice;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException("Sequence contains no elements");
             return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

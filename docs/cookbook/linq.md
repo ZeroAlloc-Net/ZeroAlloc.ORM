@@ -349,9 +349,9 @@ The result follows LINQ to Objects, with these rules:
   fraction. A `decimal` average agrees with LINQ only to about 16 significant digits, because
   PostgreSQL's `avg(numeric)` has its own scale. This is a known difference.
 - `Average`, `Min` and `Max` over no rows return `null` for a nullable result: `Task<double?>`,
-  `Task<DateTime?>`. For a non-null result such as `Task<double>` they throw `InvalidCastException`
-  when no row matches. LINQ throws `InvalidOperationException` there. Ask for the nullable result, or
-  check with `Any()`, when the set can be empty.
+  `Task<DateTime?>`. For a non-null result such as `Task<double>` they throw
+  `InvalidOperationException` with LINQ's message, "Sequence contains no elements", when no row
+  matches, as LINQ does. Ask for the nullable result, or check with `Any()`, when the set can be empty.
 - `Min` and `Max` over a `bool`, a `Guid` or an enum stored by name report ZAO102, because
   PostgreSQL has no such aggregate or would compare names. A method that returns an enum from a
   terminal reports [ZAO112](../diagnostics/ZAO112.md).
