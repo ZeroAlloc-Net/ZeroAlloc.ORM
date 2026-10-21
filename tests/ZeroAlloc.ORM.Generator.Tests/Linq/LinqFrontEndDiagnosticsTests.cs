@@ -234,6 +234,34 @@ public class LinqFrontEndDiagnosticsTests
         Assert.Contains("Secret", Message(d), StringComparison.Ordinal);
     }
 
+    // A computed property has no column behind it, so it is not mapped.
+    [Fact]
+    public void Computed_property_reports_ZAO105_at_the_member()
+    {
+        var (d, located) = Single("""
+            public sealed class Note
+            {
+                public Guid Id { get; private set; }
+                public string Title { get; private set; } = "";
+                public string Label => Title + "!";
+            }
+
+            [TableMap(typeof(Note), "Notes")]
+            internal static class NoteMap;
+
+            """ + Repo + """
+                [LinqQuery(nameof(SummariesQuery))]
+                public partial Task<List<TaskSummary>> Summaries(CancellationToken ct);
+
+                private static IQuery<TaskSummary> SummariesQuery() =>
+                    Sql.Table<Note>().Select(n => new TaskSummary(n.Id, n.Label));
+            }
+            """);
+
+        Assert.Equal("ZAO105", d.Id);
+        Assert.Equal("n.Label", located);
+    }
+
     [Fact]
     public void Scalar_projection_reports_ZAO107_at_the_projection()
     {

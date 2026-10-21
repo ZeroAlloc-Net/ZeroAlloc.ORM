@@ -1,12 +1,11 @@
 using System;
 using System.Linq;
-using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
+using Xunit;
 using ZeroAlloc.ORM.Generator.Linq;
 using ZeroAlloc.ORM.Generator.Model;
-using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Linq;
 
@@ -192,6 +191,101 @@ public class EntityMapTests
         Assert.Equal(
             ExpectedOrder,
             map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    // Only properties a column can stand behind are mapped: one with a setter of any
+    // accessibility, init included, or a get-only auto-property, which has a backing field.
+    // A computed get-only property is skipped. An override counts its base's setter.
+    [Fact]
+    public void Computed_get_only_properties_are_not_columns()
+    {
+        var map = MapsOfSingle("""
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public abstract class Base
+            {
+                public virtual string Name { get; set; } = "";
+            }
+
+            public sealed class Computed : Base
+            {
+                public int Id { get; private set; }
+                public string First { get; init; } = "";
+                public string Created { get; } = "";
+                public string Label => First + "!";
+                public string Upper { get { return First.ToUpperInvariant(); } }
+                public string Proxy { get => First; set { } }
+                public override string Name => "fixed";
+            }
+
+            [TableMap(typeof(Computed), "C")]
+            internal static class CMap;
+            """);
+
+        Assert.Equal(
+            ["Name", "Id", "First", "Created", "Proxy"],
+            map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    // An entity from a referenced assembly keeps every readable property: metadata does not
+    // import a private setter, so Note, which has one, looks exactly like the computed Label.
+    // Skipping both would make Note unusable with no way around it.
+    [Fact]
+    public void Every_readable_property_of_a_referenced_entity_is_a_column()
+    {
+        var library = GeneratorHarness.CreateCompilation(new[]
+        {
+            CSharpSyntaxTree.ParseText("""
+                namespace Lib;
+
+                public sealed class Remote
+                {
+                    private string _note = "";
+                    public int Id { get; private set; }
+                    public string Created { get; } = "";
+                    public string Note { get => _note; private set => _note = value; }
+                    public string Label => Created + "!";
+                }
+                """),
+        }).WithAssemblyName("Lib");
+        using var image = new System.IO.MemoryStream();
+        Assert.True(library.Emit(image).Success);
+
+        var compilation = GeneratorHarness.CreateCompilation(new[]
+        {
+            CSharpSyntaxTree.ParseText("""
+                using ZeroAlloc.ORM;
+
+                namespace TestApp;
+
+                [TableMap(typeof(Lib.Remote), "R")]
+                internal static class RMap;
+                """),
+        }).AddReferences(MetadataReference.CreateFromImage(image.ToArray()));
+        var map = Assert.Single(Maps(CreateDriver().RunGenerators(compilation).GetRunResult()));
+
+        Assert.Equal(["Id", "Created", "Note", "Label"], map.Columns.Select(c => c.Property).ToArray());
+    }
+
+    [Fact]
+    public void Column_map_on_a_computed_property_reports_ZAO106()
+    {
+        var diagnostics = Zao106(Entity + """
+            public sealed class WithLabel
+            {
+                public int Id { get; private set; }
+                public string Label => "x";
+            }
+
+            [TableMap(typeof(WithLabel), "L")]
+            [ColumnMap(nameof(WithLabel.Label), Column = "label")]
+            internal static class LabelMap;
+            """);
+
+        var d = Assert.Single(diagnostics);
+        Assert.Contains("Label", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     [Fact]

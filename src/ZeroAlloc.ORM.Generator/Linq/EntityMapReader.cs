@@ -54,7 +54,7 @@ internal static class EntityMapReader
             if (!properties.TryGetValue(propertyName, out var property))
             {
                 diagnostics.Add(Invalid(
-                    $"[ColumnMap] names '{propertyName}', which is not a public readable property of {entityName}",
+                    $"[ColumnMap] names '{propertyName}', which is not a public readable property of {entityName} with a setter or a backing field",
                     location));
                 continue;
             }
@@ -198,10 +198,12 @@ internal static class EntityMapReader
         || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
             && nullable.TypeArguments[0].TypeKind == TypeKind.Enum;
 
-    // Public instance properties with a public getter, from the base types first and then the
-    // entity, each in declaration order; `order` receives the names in that order. The setter may
-    // have any accessibility: entities with private setters are mapped too. A property that hides
-    // or overrides a base one of the same name replaces it and keeps the base position.
+    // Public instance properties with a public getter that a column can stand behind, from the
+    // base types first and then the entity, each in declaration order; `order` receives the names
+    // in that order. The setter may have any accessibility, init included: entities with private
+    // setters are mapped too. A get-only auto-property counts, since it has a backing field; a
+    // computed one declared in source, such as `Label => First + "!"`, does not. A property that
+    // hides or overrides a base one of the same name replaces it and keeps the base position.
     private static Dictionary<string, IPropertySymbol> ReadableProperties(INamedTypeSymbol entity, List<string> order)
     {
         var chain = new List<INamedTypeSymbol>();
@@ -219,7 +221,8 @@ internal static class EntityMapReader
                         IsIndexer: false,
                         DeclaredAccessibility: Accessibility.Public,
                         GetMethod.DeclaredAccessibility: Accessibility.Public,
-                    } property)
+                    } property
+                    && IsStored(property))
                 {
                     if (!result.ContainsKey(property.Name))
                         order.Add(property.Name);
@@ -229,5 +232,31 @@ internal static class EntityMapReader
         }
 
         return result;
+    }
+
+    // Whether the property holds a value: it, or a property it overrides, has a setter or a
+    // backing field, the implicitly declared field of an auto-property. A property from a
+    // referenced assembly always counts: a private setter is not imported from metadata, so a
+    // computed property cannot be told from one with a private setter there.
+    private static bool IsStored(IPropertySymbol property)
+    {
+        for (var p = property; p is not null; p = p.OverriddenProperty)
+        {
+            if (p.SetMethod is not null || p.DeclaringSyntaxReferences.IsEmpty || HasBackingField(p)) return true;
+        }
+        return false;
+    }
+
+    private static bool HasBackingField(IPropertySymbol property)
+    {
+        foreach (var member in property.ContainingType.GetMembers())
+        {
+            if (member is IFieldSymbol { IsImplicitlyDeclared: true } field
+                && SymbolEqualityComparer.Default.Equals(field.AssociatedSymbol, property))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }

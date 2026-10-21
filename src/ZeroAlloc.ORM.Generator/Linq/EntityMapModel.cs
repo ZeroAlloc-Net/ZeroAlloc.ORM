@@ -13,7 +13,8 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 /// <param name="Table">The table name.</param>
 /// <param name="Schema">The schema, or null for the connection default.</param>
 /// <param name="Columns">
-/// Every public readable instance property of the entity: base type first, then declaration order.
+/// Every public readable instance property of the entity with a setter or a backing field: base
+/// type first, then declaration order.
 /// </param>
 internal sealed record EntityMapModel(
     string EntityTypeFullName,

@@ -56,7 +56,11 @@ internal static class TaskMap;
 - EF Core's naming conventions are the default: a column has its property's name, so a map lists only
   the overrides. That reads a schema EF Core created as it is.
 - `[ColumnMap(nameof(E.P), Column = ...)]` renames one column.
-- Every public readable instance property is a column, whatever its setter's accessibility.
+- Every public readable instance property that holds a value is a column, whatever its setter's
+  accessibility: one with a setter, `init` included, or a get-only auto-property. A computed
+  property such as `public string Label => First + Last;` is not a column, and a query that uses it
+  reports ZAO105. An entity from another assembly keeps all its readable properties, because a
+  private setter is not visible there.
 - Every identifier is quoted, so `"Order"`, `"Tasks"` and mixed-case names are safe.
 - An enum type marked `[StoreAsString]` is stored by its member name everywhere. For an enum
   without the attribute, `[ColumnMap(nameof(E.P), EnumAsString = true)]` stores this one column by
