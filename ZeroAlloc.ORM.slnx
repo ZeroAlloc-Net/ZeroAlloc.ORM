@@ -1,12 +1,14 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ZeroAlloc.ORM.Abstractions/ZeroAlloc.ORM.Abstractions.csproj" />
+    <Project Path="src/ZeroAlloc.ORM.Linq/ZeroAlloc.ORM.Linq.csproj" />
     <Project Path="src/ZeroAlloc.ORM/ZeroAlloc.ORM.csproj" />
     <Project Path="src/ZeroAlloc.ORM.Generator/ZeroAlloc.ORM.Generator.csproj" />
     <Project Path="src/ZeroAlloc.TypeConversions/ZeroAlloc.TypeConversions.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ZeroAlloc.ORM.Abstractions.Tests/ZeroAlloc.ORM.Abstractions.Tests.csproj" />
+    <Project Path="tests/ZeroAlloc.ORM.Linq.Tests/ZeroAlloc.ORM.Linq.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Tests/ZeroAlloc.ORM.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Generator.Tests/ZeroAlloc.ORM.Generator.Tests.csproj" />
     <Project Path="tests/ZeroAlloc.ORM.Integration.Tests/ZeroAlloc.ORM.Integration.Tests.csproj" />
