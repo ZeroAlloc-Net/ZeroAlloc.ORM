@@ -31,4 +31,17 @@ public sealed class PostgresScalarDoubleDecimalTests
         Assert.Equal(0d, await repo.NoRowDoubleAsync(CancellationToken.None).ConfigureAwait(false));
         Assert.Equal(0m, await repo.NoRowDecimalAsync(CancellationToken.None).ConfigureAwait(false));
     }
+
+    [Fact]
+    public async Task Null_aggregate_throws_like_task_int()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(Schema).ConfigureAwait(false);
+        var repo = new ScalarDoubleDecimalRepo(fx.Connection);
+
+        await Assert.ThrowsAsync<InvalidCastException>(
+            () => repo.NullDoubleAsync(CancellationToken.None)).ConfigureAwait(false);
+        await Assert.ThrowsAsync<InvalidCastException>(
+            () => repo.NullDecimalAsync(CancellationToken.None)).ConfigureAwait(false);
+    }
 }

@@ -94,7 +94,7 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 
 **Return shapes**
 
-- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<T?>`; as with `Task<int>`, no row gives `false` or `0` and a NULL value throws), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form.
+- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>`, `Task<decimal>`, `Task<T?>`; as with `Task<int>`, no row gives `false` or `0` and a NULL value throws), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form.
 - Multi-result-set tuples, such as `Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?>`, map one tuple element to each `;`-separated statement. `[Query(Batch = BatchMode.Auto)]`, the default, uses `IAsyncDbBatch` when the provider supports it and falls back to one command with `NextResultAsync`. Tuple/statement arity mismatches are build errors (ZAO032, ZAO033).
 
 **Parameters and columns**

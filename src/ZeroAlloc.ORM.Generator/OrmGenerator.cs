@@ -5534,9 +5534,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
         => EmitScalarConvert(sb, m, connectionAccess, "ToInt32");
 
-    // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble / ScalarDecimal: ExecuteScalarAsync then
-    // System.Convert.<convertMethod> with the invariant culture. A no-row result
-    // (null) converts to the default value; a DBNull throws InvalidCastException.
+    // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble /
+    // ScalarDecimal: ExecuteScalarAsync then System.Convert.<convertMethod> with
+    // the invariant culture. A no-row result (null) converts to the default
+    // value; a DBNull throws InvalidCastException.
     private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
     {
         var paramList = BuildParameterList(m.MethodParameters);

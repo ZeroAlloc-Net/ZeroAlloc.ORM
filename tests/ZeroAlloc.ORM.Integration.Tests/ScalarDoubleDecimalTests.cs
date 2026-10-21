@@ -40,4 +40,21 @@ public class ScalarDoubleDecimalTests
             Assert.Equal(0m, await repo.NoRowDecimalAsync(CancellationToken.None).ConfigureAwait(false));
         }
     }
+
+    [Fact]
+    public async Task Null_aggregate_throws_like_task_int()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await fx.ExecuteDdlAsync(Schema).ConfigureAwait(false);
+            var repo = new ScalarDoubleDecimalRepo(fx.Connection);
+
+            await Assert.ThrowsAsync<InvalidCastException>(
+                () => repo.NullDoubleAsync(CancellationToken.None)).ConfigureAwait(false);
+            await Assert.ThrowsAsync<InvalidCastException>(
+                () => repo.NullDecimalAsync(CancellationToken.None)).ConfigureAwait(false);
+        }
+    }
 }
