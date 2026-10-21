@@ -751,6 +751,19 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO108"));
 
+    // ZAO110 — a [LinqQuery] list or stream pages with Skip or Take but has no OrderBy, so which
+    // rows a page holds is up to PostgreSQL. A warning: the query runs as written. The single-row
+    // shape's implicit LIMIT 1 and the Count, LongCount and Any terminals do not report it.
+    // Reported at the first Skip or Take.
+    public static readonly DiagnosticDescriptor ZAO110_LinqPagingWithoutOrder = new(
+        id: "ZAO110",
+        title: "LINQ paging without OrderBy",
+        messageFormat: "Skip or Take without OrderBy returns rows in no defined order",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO110"));
+
     // ZAO111 — an enum parameter without [StoreAsString] is compared with a column that stores
     // the enum by name (EnumAsString) and with one that stores its integer, so no single binding
     // fits both. Reported at the parameter reference in the comparison that disagrees.
@@ -776,7 +789,7 @@ internal static class DiagnosticDescriptors
     public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
         id: "ZAO112",
         title: "LINQ method return type does not fit the query",
-        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type",
+        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; after Count, LongCount or Any, return Task or ValueTask of int, long or bool",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,

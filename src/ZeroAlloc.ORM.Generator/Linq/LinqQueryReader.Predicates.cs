@@ -118,6 +118,9 @@ internal static partial class LinqQueryReader
             return ReadNullTest(binary.LeftOperand, binary.RightOperand, compare == SqlBinaryOperator.NotEqual, binary, row, context);
         }
 
+        if (binary.OperatorMethod is { } rowOperator && IsRowOperator(rowOperator))
+            return ReadRowComparison(binary, compare, row, context);
+
         if (binary.OperatorMethod is { } method && !ComparesOwnType(method, binary))
             return ReportUnsupported(binary, context);
 

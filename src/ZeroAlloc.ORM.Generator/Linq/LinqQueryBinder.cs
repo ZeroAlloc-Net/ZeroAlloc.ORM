@@ -41,10 +41,11 @@ internal static class LinqQueryBinder
             default);
     }
 
-    // The statement's table. A wrapping statement a later task adds names its inner SELECT's.
+    // The statement's table; a terminal's is its inner SELECT's.
     private static SqlTableSource SourceOf(SqlStatement statement) => statement switch
     {
         SqlSelectStatement select => select.From,
+        SqlAggregateStatement aggregate => aggregate.Source.From,
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 

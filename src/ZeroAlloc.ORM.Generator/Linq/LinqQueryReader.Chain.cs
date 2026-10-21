@@ -29,13 +29,47 @@ internal static partial class LinqQueryReader
         public SqlExpression? Limit { get; set; }
 
         public SqlExpression? Offset { get; set; }
+
+        // The last Skip or Take read, for the message when an operator follows it.
+        public string? PagingOperator { get; set; }
+
+        // The first Skip or Take, where ZAO110 is reported.
+        public Location? PagingLocation { get; set; }
+
+        // Count, LongCount or Any, which end the chain.
+        public SqlAggregate? Terminal { get; set; }
+
+        public string? TerminalOperator { get; set; }
     }
 
-    private static SqlSelectStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
+    private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
     {
         var operation = context.Model.GetOperation(body, context.CancellationToken);
         var chain = new ChainBuilder();
         if (operation is null || !ReadChain(operation, chain, context)) return null;
+
+        // ZAO110: the implicit LIMIT 1 below is not a Take, and a scalar shape does not depend on
+        // the order, so only the row-list shapes warn.
+        if (shape is LinqResultShape.List or LinqResultShape.Stream
+            && chain.PagingLocation is { } paging
+            && chain.Ordering.Count == 0)
+        {
+            context.Report(LinqDiagnostics.UnorderedPaging(paging));
+        }
+
+        // A terminal reads the chain's rows, without the projection: Select(...).Count() counts
+        // the same rows as Count(). The ordering goes too; it changes neither a count nor an
+        // existence, and PostgreSQL rejects ORDER BY next to a bare count(*).
+        if (chain.Terminal is { } aggregate)
+        {
+            return new SqlAggregateStatement(aggregate, new SqlSelectStatement(
+                chain.From!,
+                default,
+                new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
+                default,
+                new SqlPaging(chain.Limit, chain.Offset)));
+        }
+
         if (chain.Projection is not { } projection)
         {
             context.Report(LinqDiagnostics.UnsupportedProjection(
@@ -81,20 +115,47 @@ internal static partial class LinqQueryReader
             return Unsupported(invocation, "'" + target.Name + "'", context);
 
         if (!ReadChain(invocation.Arguments[0].Value, chain, context)) return false;
-        if (chain.Projection is not null)
+        if (chain.TerminalOperator is { } terminal)
+            return Unsupported(invocation, "'" + target.Name + "' after '" + terminal + "'", context);
+        if (chain.Projection is not null && TerminalOf(target.Name) is null)
             return Unsupported(invocation, "'" + target.Name + "' after 'Select'", context);
         return ReadOperator(invocation, chain, context);
     }
 
     // One case per supported operator.
     private static bool ReadOperator(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
-        => invocation.TargetMethod.Name switch
+    {
+        var name = invocation.TargetMethod.Name;
+        if (TerminalOf(name) is { } terminal)
+        {
+            chain.Terminal = terminal;
+            chain.TerminalOperator = name;
+            return true;
+        }
+
+        // SQL filters and orders before it pages. Written after Skip or Take, a filter or an
+        // ordering would apply to the page alone, which one SELECT cannot express.
+        if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
+            return Unsupported(invocation, "'" + name + "' after '" + paging + "'", context);
+
+        return name switch
         {
             "Select" => ReadSelect(invocation, chain, context),
             "Where" => ReadWhere(invocation, chain, context),
             "WhereIf" => ReadWhereIf(invocation, chain, context),
-            var name => Unsupported(invocation, "'" + name + "'", context),
+            "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => ReadOrdering(invocation, chain, context),
+            "Skip" or "Take" => ReadPaging(invocation, chain, context),
+            _ => Unsupported(invocation, "'" + name + "'", context),
         };
+    }
+
+    private static SqlAggregate? TerminalOf(string operatorName) => operatorName switch
+    {
+        "Count" => SqlAggregate.Count,
+        "LongCount" => SqlAggregate.LongCount,
+        "Any" => SqlAggregate.Any,
+        _ => null,
+    };
 
     private static bool Unsupported(IInvocationOperation invocation, string construct, ReaderContext context)
     {

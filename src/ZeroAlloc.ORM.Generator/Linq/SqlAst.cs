@@ -28,6 +28,29 @@ internal sealed record SqlSelectStatement(
     EquatableArray<SqlOrdering> Ordering,
     SqlPaging Paging) : SqlStatement;
 
+/// <summary>
+/// A <c>Count()</c>, <c>LongCount()</c> or <c>Any()</c> terminal over a SELECT: one value, read
+/// through the <c>[Query]</c> scalar shapes.
+/// </summary>
+/// <param name="Aggregate">Which terminal.</param>
+/// <param name="Source">
+/// The rows the terminal reads: the chain's table, WHERE and paging. It has no projection and
+/// no ordering, since neither changes a count or an existence.
+/// </param>
+internal sealed record SqlAggregateStatement(SqlAggregate Aggregate, SqlSelectStatement Source) : SqlStatement;
+
+internal enum SqlAggregate
+{
+    /// <summary><c>Count()</c>: <c>count(*)::int</c>.</summary>
+    Count,
+
+    /// <summary><c>LongCount()</c>: <c>count(*)</c>, a bigint.</summary>
+    LongCount,
+
+    /// <summary><c>Any()</c>: <c>EXISTS (SELECT 1 ...)</c>.</summary>
+    Any,
+}
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
@@ -94,6 +117,18 @@ internal enum SqlBinaryOperator
     And,
     Or,
 }
+
+/// <summary>
+/// <c>Sql.Row(a, b) &gt; Sql.Row(x, y)</c>: a PostgreSQL row comparison, <c>(a, b) &gt; (x, y)</c>,
+/// for keyset paging. Both rows have the same arity, and each pair is a column and a value.
+/// </summary>
+/// <param name="Operator">One of the four orderings.</param>
+/// <param name="Left">The left row's items, in order.</param>
+/// <param name="Right">The right row's items, in order.</param>
+internal sealed record SqlRowComparisonExpression(
+    SqlBinaryOperator Operator,
+    EquatableArray<SqlExpression> Left,
+    EquatableArray<SqlExpression> Right) : SqlExpression;
 
 /// <summary><c>NOT (operand)</c>.</summary>
 internal sealed record SqlNotExpression(SqlExpression Operand) : SqlExpression;

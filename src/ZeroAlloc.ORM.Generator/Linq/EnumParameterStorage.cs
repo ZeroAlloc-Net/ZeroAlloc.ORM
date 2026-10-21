@@ -32,7 +32,13 @@ internal static class EnumParameterStorage
         var links = new List<(SqlParameterExpression Left, SqlParameterExpression Right)>();
         var conflicted = new HashSet<string>(StringComparer.Ordinal);
         var conflicts = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        if (statement is SqlSelectStatement select)
+        var select = statement switch
+        {
+            SqlSelectStatement own => own,
+            SqlAggregateStatement aggregate => aggregate.Source,
+            _ => null,
+        };
+        if (select is not null)
         {
             foreach (var predicate in select.Predicates)
                 Visit(predicate);
@@ -81,6 +87,10 @@ internal static class EnumParameterStorage
                     break;
                 case SqlBinaryExpression comparison:
                     Compare(comparison.Left, comparison.Right);
+                    break;
+                case SqlRowComparisonExpression rows:
+                    for (var i = 0; i < rows.Left.Length; i++)
+                        Compare(rows.Left[i], rows.Right[i]);
                     break;
                 case SqlNotExpression not:
                     Visit(not.Operand);

@@ -35,6 +35,9 @@ internal static class LinqDiagnostics
     public static DiagnosticInfo DialectNotPostgres(string method, string found, Location? location)
         => Create("ZAO108", location, method, found);
 
+    public static DiagnosticInfo UnorderedPaging(Location? location)
+        => Create("ZAO110", location);
+
     public static DiagnosticInfo EnumStorageConflict(string parameter, LocationInfo? location)
         => new("ZAO111", location, Args(parameter));
 

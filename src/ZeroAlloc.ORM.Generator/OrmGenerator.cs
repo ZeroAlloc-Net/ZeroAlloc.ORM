@@ -5001,6 +5001,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO105" => DiagnosticDescriptors.ZAO105_UnmappedLinqMember,
         "ZAO107" => DiagnosticDescriptors.ZAO107_UnsupportedLinqProjection,
         "ZAO108" => DiagnosticDescriptors.ZAO108_LinqRequiresPostgreSql,
+        "ZAO110" => DiagnosticDescriptors.ZAO110_LinqPagingWithoutOrder,
         "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         _ => null,

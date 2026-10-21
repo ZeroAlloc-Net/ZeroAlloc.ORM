@@ -24,6 +24,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlSelectStatement select:
                 RenderSelect(sb, select, names);
                 break;
+            case SqlAggregateStatement aggregate:
+                RenderAggregate(sb, aggregate, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -34,6 +37,44 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     {
         sb.Append("SELECT ");
         AppendList(sb, select.Projection, names);
+        RenderFromWhere(sb, select, names);
+        RenderOrdering(sb, select, names);
+        RenderPaging(sb, select.Paging, names);
+    }
+
+    // count(*) reads the whole WHERE result, and a LIMIT next to it would limit the one row
+    // the count returns. So a paged count counts a paged subquery:
+    //   SELECT count(*)::int FROM "T" WHERE ...
+    //   SELECT count(*)::int FROM (SELECT 1 FROM "T" WHERE ... LIMIT @take OFFSET @skip) AS q
+    // EXISTS reads its subquery's rows, so the paging stays inside it:
+    //   SELECT EXISTS (SELECT 1 FROM "T" WHERE ... LIMIT @take OFFSET @skip)
+    private static void RenderAggregate(StringBuilder sb, SqlAggregateStatement aggregate, SqlNameScope names)
+    {
+        var source = aggregate.Source;
+        if (aggregate.Aggregate == SqlAggregate.Any)
+        {
+            sb.Append("SELECT EXISTS (SELECT 1");
+            RenderFromWhere(sb, source, names);
+            RenderPaging(sb, source.Paging, names);
+            sb.Append(')');
+            return;
+        }
+
+        sb.Append(aggregate.Aggregate == SqlAggregate.Count ? "SELECT count(*)::int" : "SELECT count(*)");
+        if (source.Paging.Limit is null && source.Paging.Offset is null)
+        {
+            RenderFromWhere(sb, source, names);
+            return;
+        }
+        sb.Append(" FROM (SELECT 1");
+        RenderFromWhere(sb, source, names);
+        RenderPaging(sb, source.Paging, names);
+        sb.Append(") AS q");
+    }
+
+    // ` FROM "schema"."table" [WHERE a AND b]`.
+    private static void RenderFromWhere(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
+    {
         sb.Append(" FROM ");
         if (names.Schema is { } schema)
             AppendIdentifier(sb, schema).Append('.');
@@ -48,9 +89,6 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 RenderExpression(sb, select.Predicates[i], names);
             }
         }
-
-        RenderOrdering(sb, select, names);
-        RenderPaging(sb, select.Paging, names);
     }
 
     private static void RenderOrdering(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
@@ -107,6 +145,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             case SqlBinaryExpression binary:
                 RenderBinary(sb, binary, names);
+                break;
+            case SqlRowComparisonExpression rows:
+                RenderRowComparison(sb, rows, names);
                 break;
             case SqlNotExpression { Operand: SqlBinaryExpression { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or } grouped }:
                 // AND and OR bring their own parentheses.
@@ -173,16 +214,44 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
 
         RenderComparand(sb, binary.Left, binary.Right, names);
-        sb.Append(binary.Operator switch
-        {
-            SqlBinaryOperator.Equal => " = ",
-            SqlBinaryOperator.NotEqual => " <> ",
-            SqlBinaryOperator.LessThan => " < ",
-            SqlBinaryOperator.LessThanOrEqual => " <= ",
-            SqlBinaryOperator.GreaterThan => " > ",
-            _ => " >= ",
-        });
+        sb.Append(ComparisonText(binary.Operator));
         RenderComparand(sb, binary.Right, binary.Left, names);
+    }
+
+    private static string ComparisonText(SqlBinaryOperator comparison) => comparison switch
+    {
+        SqlBinaryOperator.Equal => " = ",
+        SqlBinaryOperator.NotEqual => " <> ",
+        SqlBinaryOperator.LessThan => " < ",
+        SqlBinaryOperator.LessThanOrEqual => " <= ",
+        SqlBinaryOperator.GreaterThan => " > ",
+        _ => " >= ",
+    };
+
+    // `("A", "B") > (@a, @b)`: PostgreSQL compares the rows item by item, left to right. Each
+    // pair renders as a comparison would, so an enum constant takes its column's storage, and
+    // a column stored by name is reported: the row orders by it.
+    private static void RenderRowComparison(StringBuilder sb, SqlRowComparisonExpression rows, SqlNameScope names)
+    {
+        for (var i = 0; i < rows.Left.Length; i++)
+        {
+            ReportOrderedNameColumn(rows.Left[i], names);
+            ReportOrderedNameColumn(rows.Right[i], names);
+        }
+        RenderRow(sb, rows.Left, rows.Right, names);
+        sb.Append(ComparisonText(rows.Operator));
+        RenderRow(sb, rows.Right, rows.Left, names);
+    }
+
+    private static void RenderRow(StringBuilder sb, Model.EquatableArray<SqlExpression> items, Model.EquatableArray<SqlExpression> others, SqlNameScope names)
+    {
+        sb.Append('(');
+        for (var i = 0; i < items.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            RenderComparand(sb, items[i], others[i], names);
+        }
+        sb.Append(')');
     }
 
     // <, >, <= and >= on a column that stores enum member names would order the names.

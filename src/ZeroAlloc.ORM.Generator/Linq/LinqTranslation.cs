@@ -13,6 +13,12 @@ internal enum LinqResultShape
 
     /// <summary><c>IAsyncEnumerable&lt;TRow&gt;</c>.</summary>
     Stream,
+
+    /// <summary>
+    /// <c>Task</c> or <c>ValueTask</c> of <c>int</c>, <c>long</c> or <c>bool</c>: the value a
+    /// <c>Count()</c>, <c>LongCount()</c> or <c>Any()</c> terminal produces.
+    /// </summary>
+    Scalar,
 }
 
 /// <summary>

@@ -67,7 +67,8 @@ internal static partial class LinqQueryReader
         var statement = ReadStatement(companion.Body!, shape.Value, context);
         if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
-        return new LinqTranslation(statement, shape.Value, facets, comment, default);
+        // What is left in the diagnostics are warnings, such as ZAO110.
+        return new LinqTranslation(statement, shape.Value, facets, comment, new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()));
     }
 
     private static LinqTranslation Failed(string comment, params DiagnosticInfo[] diagnostics)
