@@ -27,6 +27,7 @@ internal sealed class SqlNameScope
     private readonly Source _from;
     private readonly Dictionary<string, Source> _aliased = new(StringComparer.Ordinal);
     private readonly List<DiagnosticInfo> _diagnostics = new();
+    private readonly HashSet<DiagnosticInfo> _unmapped = new();
 
     public SqlNameScope(EntityMapModel map, string entityDisplay, string? alias = null)
     {
@@ -57,12 +58,17 @@ internal sealed class SqlNameScope
         return (map.Table, map.Schema);
     }
 
-    /// <summary>The member's column, or the member name after recording ZAO105.</summary>
+    /// <summary>
+    /// The member's column, or the member name after recording ZAO105. One member renders more
+    /// than once, such as a group key in SELECT, GROUP BY and ORDER BY, so ZAO105 is recorded
+    /// once per member and location.
+    /// </summary>
     public string Column(SqlMemberExpression member)
     {
         var source = SourceOf(member.SourceAlias);
         if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
-        _diagnostics.Add(LinqDiagnostics.UnmappedMember(member.Member, source.EntityDisplay, member.Location));
+        var unmapped = LinqDiagnostics.UnmappedMember(member.Member, source.EntityDisplay, member.Location);
+        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
         return member.Member;
     }
 

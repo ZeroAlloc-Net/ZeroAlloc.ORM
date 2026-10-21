@@ -215,6 +215,45 @@ public class LinqGroupByTests
         Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
     }
 
+    // An unmapped member renders more than once: a group key in SELECT, GROUP BY and ORDER BY,
+    // and a paged aggregate's column inside and outside its subquery. It is still one ZAO105.
+    [Theory]
+    [InlineData("IQuery<SecretCount>", "Task<List<SecretCount>>", ".GroupBy(n => n.Secret).OrderBy(g => g.Key).Select(g => new SecretCount(g.Key, g.Count()))")]
+    [InlineData("IQuery<long>", "Task<long>", ".OrderBy(n => n.Id).Take(5).Sum(n => n.Hidden)")]
+    public void Unmapped_member_rendered_several_times_reports_one_ZAO105(string queryType, string returnType, string chain)
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + """
+            public sealed class Note
+            {
+                public Guid Id { get; private set; }
+                internal string Secret { get; private set; } = "";
+                internal long Hidden { get; private set; }
+            }
+
+            [TableMap(typeof(Note), "Notes")]
+            internal static class NoteMap;
+
+            public sealed record SecretCount(string Secret, int Count);
+
+            """ + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial
+            """ + " " + returnType + """
+             Find(CancellationToken ct);
+
+                private static
+            """ + " " + queryType + """
+             FindQuery() =>
+                    Sql.Table<Note>()
+            """ + chain + """
+            ;
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO105", diagnostic.Id);
+    }
+
     // Groups are not rows a method can return: a GroupBy must end with a Select.
     [Fact]
     public void Group_by_without_select_reports_ZAO107()
