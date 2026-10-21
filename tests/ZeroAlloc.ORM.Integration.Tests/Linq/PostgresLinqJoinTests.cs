@@ -34,6 +34,7 @@ public sealed class PostgresLinqJoinTests
     //   Alpha: build, deploy.  Beta: review.  Gamma: no tasks.
     //   orphan: a task whose project does not exist.
     //   Executions of build, deploy, review and orphan, one before Day1, and one of no task.
+    //   Alpha and Beta each have an execution with no model.
     private sealed record Seed(Guid Alpha, Guid Beta, Guid Build, Guid Deploy, Guid Review);
 
     private static async Task<Seed> SeedAsync(PostgresFixture fx)
@@ -58,6 +59,7 @@ public sealed class PostgresLinqJoinTests
         await InsertExecutionAsync(executions, seed.Build, "sonnet", 500, 500, Day1.AddHours(-1)).ConfigureAwait(false);
         await InsertExecutionAsync(executions, seed.Deploy, "sonnet", 1, 1, Day1.AddHours(4)).ConfigureAwait(false);
         await InsertExecutionAsync(executions, seed.Review, null, 7, 7, Day1.AddHours(5)).ConfigureAwait(false);
+        await InsertExecutionAsync(executions, seed.Deploy, null, 2, 3, Day1.AddHours(8)).ConfigureAwait(false);
         await InsertExecutionAsync(executions, orphan, "sonnet", 1000, 1000, Day1.AddHours(6)).ConfigureAwait(false);
         await InsertExecutionAsync(executions, Guid.NewGuid(), "sonnet", 999, 999, Day1.AddHours(7)).ConfigureAwait(false);
         return seed;
@@ -90,6 +92,7 @@ public sealed class PostgresLinqJoinTests
         // and the last execution no task, so the joins drop both. Gamma has no executions. The
         // null model sorts first within its project, as in LINQ.
         rows.Should().Equal(
+            new ProjectModelCost(seed.Alpha, "Alpha", null, 2, 3, 1),
             new ProjectModelCost(seed.Alpha, "Alpha", "opus", 5, 50, 1),
             new ProjectModelCost(seed.Alpha, "Alpha", "sonnet", 31, 4, 3),
             new ProjectModelCost(seed.Beta, "Beta", null, 7, 7, 1));
@@ -109,7 +112,7 @@ public sealed class PostgresLinqJoinTests
 
         alpha.Should().Equal(
             new TaskCost(seed.Build, "build", 535, 4),
-            new TaskCost(seed.Deploy, "deploy", 1, 1));
+            new TaskCost(seed.Deploy, "deploy", 3, 2));
         beta.Should().Equal(new TaskCost(seed.Review, "review", 7, 1));
         none.Should().BeEmpty();
     }

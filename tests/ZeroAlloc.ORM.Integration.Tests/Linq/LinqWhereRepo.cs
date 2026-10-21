@@ -67,6 +67,9 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(TypedQuery))]
     public partial Task<List<TaskLine>> TypedAsync(ProjectId project, WorkStatus status, WorkKind kind, CancellationToken ct);
 
+    [LinqQuery(nameof(ProjectValueQuery))]
+    public partial Task<List<TaskLine>> ProjectValueAsync(Guid project, CancellationToken ct);
+
     [LinqQuery(nameof(FeaturesQuery))]
     public partial Task<List<TaskLine>> FeaturesAsync(CancellationToken ct);
 
@@ -170,6 +173,13 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
         Sql.Table<TaskEntity>()
             .Where(t => t.ProjectId == project)
             .Where(t => t.Status == status && t.Kind == kind)
+            .Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // A value object's .Value is its column, compared with a Guid.
+    private static IQuery<TaskLine> ProjectValueQuery(Guid project) =>
+        Sql.Table<TaskEntity>()
+            .Where(t => t.ProjectId.Value == project)
+            .OrderBy(t => t.Order)
             .Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     private static IQuery<TaskLine> FeaturesQuery() =>

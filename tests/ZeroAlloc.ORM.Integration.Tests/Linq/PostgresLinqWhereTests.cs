@@ -83,6 +83,8 @@ public sealed class PostgresLinqWhereTests
         Titles(await repo.TypedAsync(project, WorkStatus.Done, WorkKind.Bug, CancellationToken.None).ConfigureAwait(false))
             .Should().Equal("bug");
         Titles(await repo.FeaturesAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal("open");
+        Titles(await repo.ProjectValueAsync(project.Value, CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal("bug", "match", "open");
     }
 
     [Fact]

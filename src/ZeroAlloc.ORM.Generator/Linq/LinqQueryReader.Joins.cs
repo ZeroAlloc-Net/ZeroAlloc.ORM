@@ -14,7 +14,7 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 // source's alias. The forms translated:
 //
 //   inner      Sql.Table<T>(), optionally followed by Where(...), whose conditions go into the ON
-//   keys       one mapped column a side; a value object's .Value is its column
+//   keys       one mapped column a side; a value object's .Value is its column, as everywhere
 //   result     an anonymous type whose members are the two range variables, or members carried
 //              over from an earlier join's result: new { et.Execution, et.Task, Project = p }
 //
@@ -151,7 +151,7 @@ internal static partial class LinqQueryReader
             return null;
         }
 
-        var read = ReadOperand(PeelValueObject(op, context), row, context, out var key);
+        var read = ReadOperand(op, row, context, out var key);
         if (read == OperandRead.Reported) return null;
         if (read == OperandRead.Read && key is SqlMemberExpression column) return column;
         context.Report(LinqDiagnostics.Unsupported(
@@ -159,14 +159,14 @@ internal static partial class LinqQueryReader
         return null;
     }
 
-    // `t.ProjectId.Value` on a value object stored as one column: the column itself.
-    private static IOperation PeelValueObject(IOperation op, ReaderContext context)
-        => op is IPropertyReferenceOperation { Property.Name: "Value", Arguments.Length: 0, Instance: { } owner }
-            && owner.Type is { } type
-            && ConventionDiscovery.Resolve(UnwrapNullable(type), context.Conventions).Kind
-                is ConventionKind.ValueObject or ConventionKind.StaticFactory or ConventionKind.SingleArgCtor
-                ? owner
-                : op;
+    // Whether `property` is a value object's own Value, which reads its one column: declared on
+    // a type that binds as one value, not on Nullable<T>, whose Value throws on a null in C#.
+    private static bool IsValueObjectValue(IPropertySymbol property, ReaderContext context)
+        => property is { Name: "Value", IsStatic: false }
+            && property.ContainingType is { } owner
+            && owner.OriginalDefinition.SpecialType != SpecialType.System_Nullable_T
+            && ConventionDiscovery.Resolve(owner, context.Conventions).Kind
+                is ConventionKind.ValueObject or ConventionKind.StaticFactory or ConventionKind.SingleArgCtor;
 
     // The result selector's row: a range variable or a member carried over, or an anonymous
     // type of those. A computed member, or a column, is ZAO102 at the member.
@@ -235,6 +235,14 @@ internal static partial class LinqQueryReader
         out ITypeSymbol type,
         out string? alias)
     {
+        // `t.ProjectId.Value` is the ProjectId column itself, when ProjectId is a row member.
+        if (op is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } wrapped } valueOf
+            && IsValueObjectValue(valueOf.Property, context)
+            && TryReadRowMember(wrapped, row, context, out name, out type, out alias))
+        {
+            return true;
+        }
+
         name = null!;
         type = null!;
         alias = null;

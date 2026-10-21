@@ -445,6 +445,26 @@ public class LinqWhereTests
         Assert.Contains("can be null", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
+    // A value object column's .Value is the column itself, wherever a column is read: compared
+    // with a Guid parameter, ordered by and projected.
+    [Fact]
+    public void Value_of_a_value_object_column_is_the_column()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskProjectRow>> Find(Guid project, CancellationToken ct);
+
+                private static IQuery<TaskProjectRow> FindQuery(Guid project) =>
+                    Sql.Table<TaskEntity>()
+                        .Where(t => t.ProjectId.Value == project)
+                        .OrderBy(t => t.ProjectId.Value)
+                        .Select(t => new TaskProjectRow(t.Id, t.ProjectId.Value));
+            }
+
+            public sealed record TaskProjectRow(Guid Id, Guid Project);
+            """);
+    }
+
     // HasValue on a nullable companion parameter is its null test; a parameter without a DbType
     // facet gets the same cast as `p != null`.
     [Fact]

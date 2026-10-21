@@ -51,6 +51,8 @@ public class LinqJoinTests
             public ProjectId ProjectId { get; private set; }
             public decimal Amount { get; private set; }
             public decimal Doubled => Amount * 2;
+            public ProjectId? ParentProjectId { get; private set; }
+            public int Value { get; private set; }
         }
 
         [TableMap(typeof(BudgetEntity), "Budgets")]
@@ -65,6 +67,10 @@ public class LinqJoinTests
         public sealed record TaskProject(Guid TaskId, string ProjectName);
 
         public sealed record TaskBudget(Guid TaskId, decimal Amount);
+
+        public sealed record TaskSibling(Guid TaskId, Guid SiblingId, WorkKind SiblingKind);
+
+        public sealed record BudgetValue(Guid Id, int Value);
 
         """;
 
@@ -206,6 +212,9 @@ public class LinqJoinTests
     [InlineData(".Take(3).Join(Sql.Table<BudgetEntity>(), t => t.ProjectId, b => b.ProjectId, (t, b) => new { Task = t, Budget = b }).Select(x => new TaskBudget(x.Task.Id, x.Budget.Amount))", "Join")]
     [InlineData(".GroupBy(t => t.ProjectId).Join(Sql.Table<BudgetEntity>(), g => g.Key, b => b.ProjectId, (g, b) => new { Group = g, Budget = b }).Select(x => new TaskBudget(Guid.Empty, x.Budget.Amount))", "Join")]
     [InlineData(".Select(t => new TaskBudget(t.Id, t.Price)).Join(Sql.Table<BudgetEntity>(), r => r.TaskId, b => b.Id, (r, b) => new { Row = r, Budget = b }).Select(x => new TaskBudget(x.Row.TaskId, x.Budget.Amount))", "Join")]
+    [InlineData(".Join(Sql.Table<BudgetEntity>(), t => t.ProjectId.Value, b => b.ParentProjectId!.Value.Value, (t, b) => new { Task = t, Budget = b }).Select(x => new TaskBudget(x.Task.Id, x.Budget.Amount))", "b.ParentProjectId!.Value.Value")]
+    [InlineData(".Join(Sql.Table<BudgetEntity>(), t => t.ProjectId, b => b.ParentProjectId!.Value, (t, b) => new { Task = t, Budget = b }).Select(x => new TaskBudget(x.Task.Id, x.Budget.Amount))", "b.ParentProjectId!.Value")]
+    [InlineData(".Join(Sql.Table<BudgetEntity>(), t => t.ProjectId, b => b.ProjectId, (t, b) => new { Task = t, Budget = b }).Where(x => x.Budget.ParentProjectId!.Value == x.Task.ProjectId).Select(x => new TaskBudget(x.Task.Id, x.Budget.Amount))", "x.Budget.ParentProjectId!.Value")]
     public void Unsupported_join_forms_report_ZAO102(string chain, string located)
     {
         var (result, tree) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """
@@ -224,6 +233,41 @@ public class LinqJoinTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         var span = diagnostic.Location.SourceSpan;
         Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
+    }
+
+    // A self-join: the same table twice, each under its own alias and through the same map, so
+    // its EnumAsString Kind reads by name on the joined side too.
+    [Fact]
+    public void Self_join_aliases_each_side()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(SiblingsQuery))]
+                public partial Task<List<TaskSibling>> Siblings(CancellationToken ct);
+
+                private static IQuery<TaskSibling> SiblingsQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .Join(Sql.Table<TaskEntity>(), a => a.ProjectId, b => b.ProjectId, (a, b) => new { Task = a, Sibling = b })
+                        .Where(x => x.Task.Id != x.Sibling.Id)
+                        .OrderBy(x => x.Sibling.Order)
+                        .Select(x => new TaskSibling(x.Task.Id, x.Sibling.Id, x.Sibling.Kind));
+            }
+            """ + Entities);
+    }
+
+    // `.Value` is peeled only off a value object's own Value property: an entity column that is
+    // itself named Value is that column.
+    [Fact]
+    public void Column_named_Value_reads_as_the_column()
+    {
+        var method = BindOnly(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<BudgetValue>> Find(CancellationToken ct);
+
+                private static IQuery<BudgetValue> FindQuery() =>
+                    Sql.Table<BudgetEntity>().Where(b => b.Value > 1).Select(b => new BudgetValue(b.Id, b.Value));
+            }
+            """ + Entities);
+        Assert.Equal("SELECT \"Id\", \"Value\" FROM \"Budgets\" WHERE \"Value\" > 1", method.Sql);
     }
 
     // A joined source needs a map, as the FROM source does; a member it does not map names
