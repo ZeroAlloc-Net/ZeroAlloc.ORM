@@ -8,6 +8,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using ZeroAlloc.ORM.Generator.Diagnostics;
+using ZeroAlloc.ORM.Generator.Linq;
 using ZeroAlloc.ORM.Generator.Model;
 using ZeroAlloc.TypeConversions;
 
@@ -34,7 +35,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // computes a ToDisplayString on a parameter type for FlatRow / DomainEntity /
     // composite materialization. Hoisted to a static readonly so the
     // SymbolDisplayFormat builder isn't rebuilt per Resolve() / per ctor param.
-    private static readonly SymbolDisplayFormat TypeDisplayFormat =
+    internal static readonly SymbolDisplayFormat TypeDisplayFormat =
         SymbolDisplayFormat.FullyQualifiedFormat
             .WithMiscellaneousOptions(
                 SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions
@@ -234,6 +235,30 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .WithTrackingName("StoreAsStringDiagnostics");
 
         context.RegisterSourceOutput(storeAsStringDiagnostics, ReportStandaloneDiagnostic);
+
+        // Entity maps — `[TableMap]` on a map class, with `[ColumnMap]` overrides beside it. One read
+        // per map class, then a collect that orders them (file path, position), drops the second map
+        // of an entity and reports it as ZAO106. `entityMaps` is the provider the LINQ query pipeline
+        // combines with its methods; `entityMapSets` also carries the diagnostics.
+        var entityMapSets = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.TableMapAttribute",
+                predicate: static (node, _) => node is ClassDeclarationSyntax,
+                transform: static (ctx, ct) => EntityMapReader.Read(ctx, TypeDisplayFormat, ct))
+            .WithTrackingName("EntityMapReads")
+            .Collect()
+            .Select(static (results, _) => EntityMapReader.Resolve(results))
+            .WithTrackingName("EntityMapSets");
+
+        var entityMaps = entityMapSets
+            .Select(static (set, _) => set.Maps)
+            .WithTrackingName("EntityMaps");
+
+        context.RegisterSourceOutput(entityMapSets, static (sourceCtx, set) =>
+        {
+            foreach (var diagnostic in set.Diagnostics)
+                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
+        });
 
         // ZAO083 — [Json] is only legal on a string. Like ZAO042 it has its own
         // pipeline: the marker sits on a parameter or property, and a misapplied one
@@ -4931,6 +4956,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
         "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
         "ZAO083" => DiagnosticDescriptors.ZAO083_JsonRequiresString,
+        "ZAO106" => DiagnosticDescriptors.ZAO106_InvalidEntityMap,
         _ => null,
     };
 

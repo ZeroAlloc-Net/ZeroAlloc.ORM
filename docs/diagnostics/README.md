@@ -47,6 +47,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO081 | Error | Containing type must be partial (nested repository) | [ZAO081](ZAO081.md) |
 | ZAO082 | Error | Provider-specific type requires Npgsql | [ZAO082](ZAO082.md) |
 | ZAO083 | Error | `[Json]` requires a string | [ZAO083](ZAO083.md) |
+| ZAO106 | Error | Invalid entity map | [ZAO106](ZAO106.md) |
 
 ## Code-range conventions
 
@@ -57,6 +58,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 - `ZAO082`–`ZAO083` — provider-specific types and their markers: PostgreSQL arrays and `[Json]` strings need Npgsql, and `[Json]` needs a string.
+- `ZAO106` — an invalid `[TableMap]` / `[ColumnMap]` entity map for LINQ queries.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.
 

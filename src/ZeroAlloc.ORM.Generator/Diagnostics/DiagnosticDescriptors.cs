@@ -616,4 +616,19 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO083"));
+
+    // ZAO106 — an entity map the LINQ translator cannot rely on: a second [TableMap] for an entity,
+    // a [ColumnMap] for a property the entity lacks, a property mapped twice, or EnumAsString on a
+    // property that is not an enum. Reported at the offending attribute.
+    //
+    // MessageArgs:
+    //   {0} = what is wrong with the map
+    public static readonly DiagnosticDescriptor ZAO106_InvalidEntityMap = new(
+        id: "ZAO106",
+        title: "Invalid entity map",
+        messageFormat: "Invalid entity map: {0}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO106"));
 }
