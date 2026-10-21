@@ -7,10 +7,10 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.FindQuery
-    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (NOT (@ids::uuid[] IS NOT NULL) OR (\"Id\" = ANY(@ids))) AND (NOT (@titles::text[] IS NOT NULL) OR (\"Title\" = ANY(@titles))) AND (NOT (@orders::integer[] IS NOT NULL) OR (\"Order\" = ANY(@orders))) AND (NOT (@sizes::bigint[] IS NOT NULL) OR (\"Size\" = ANY(@sizes))) AND (@at::timestamptz IS NULL OR \"LocalAt\" < @at) AND (@dueOn::date IS NULL OR \"DueOn\" = @dueOn) AND (@spent::interval IS NULL OR \"Spent\" > @spent) AND (@tier::smallint IS NULL OR \"Tier\" = @tier) AND (@level IS NULL OR \"Level\" = @level)";
+    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (NOT (@ids::uuid[] IS NOT NULL) OR (\"Id\" = ANY(@ids))) AND (NOT (@titles::text[] IS NOT NULL) OR (\"Title\" = ANY(@titles))) AND (NOT (@orders::integer[] IS NOT NULL) OR (\"Order\" = ANY(@orders))) AND (NOT (@sizes::bigint[] IS NOT NULL) OR (\"Size\" = ANY(@sizes))) AND (@at::timestamptz IS NULL OR \"LocalAt\" < @at) AND (@dueOn::date IS NULL OR \"DueOn\" = @dueOn) AND (@spent::interval IS NULL OR \"Spent\" > @spent) AND (@tier::smallint IS NULL OR \"Tier\" = @tier) AND (@level IS NULL OR \"Level\" = @level) AND (@startsAt::time IS NULL OR \"StartsAt\" = @startsAt) AND (@rank IS NULL OR \"Rank\" = @rank)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[]? @ids, global::System.Collections.Generic.List<string>? @titles, global::System.Collections.Generic.IReadOnlyList<int>? @orders, long[]? @sizes, global::System.DateTime? @at, global::System.DateOnly? @dueOn, global::System.TimeSpan? @spent, global::TestApp.Tier? @tier, global::TestApp.Level? @level, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[]? @ids, global::System.Collections.Generic.List<string>? @titles, global::System.Collections.Generic.IReadOnlyList<int>? @orders, long[]? @sizes, global::System.DateTime? @at, global::System.DateOnly? @dueOn, global::System.TimeSpan? @spent, global::TestApp.Tier? @tier, global::TestApp.Level? @level, global::System.TimeOnly? @startsAt, short? @rank, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -56,6 +56,15 @@ partial class TaskStore
             __p_level.DbType = global::System.Data.DbType.String;
             __p_level.Value = (object?)@level?.ToString() ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_level);
+            var __p_startsAt = __cmd.CreateParameter();
+            __p_startsAt.ParameterName = "startsAt";
+            __p_startsAt.Value = (object?)@startsAt ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_startsAt);
+            var __p_rank = __cmd.CreateParameter();
+            __p_rank.ParameterName = "rank";
+            __p_rank.DbType = global::System.Data.DbType.Int16;
+            __p_rank.Value = (object?)@rank ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_rank);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>();
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))

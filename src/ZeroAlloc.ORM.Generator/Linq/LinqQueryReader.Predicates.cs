@@ -173,7 +173,8 @@ internal static partial class LinqQueryReader
     }
 
     // The PostgreSQL type Npgsql infers for a parameter that has no DbType facet, for the casts
-    // ReadNullTest writes. Null for a type outside this list.
+    // ReadNullTest writes. Null for a type outside this list. A short has the Int16 facet, so it
+    // reaches here only as a value object's underlying type; char has no binding at all, ZAO041.
     private static string? NullTestCast(ITypeSymbol type, ConventionContext conventions)
     {
         var underlying = UnwrapNullable(type);
@@ -194,7 +195,6 @@ internal static partial class LinqQueryReader
                 _ => null,
             };
         }
-        if (underlying.SpecialType == SpecialType.System_Char) return "text";
         return OrmGenerator.BoundReader(type, conventions) switch
         {
             "GetDateTime" => "timestamptz",

@@ -238,7 +238,7 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         if (literal.Name is null)
         {
             names.Report(LinqDiagnostics.UnsupportedAt(
-                "'" + literal.Number + "', which names no enum member, compared with a column that stores member names",
+                "'" + literal.Number + "', which names no enum member, compared with a value stored by member name,",
                 literal.Location));
             sb.Append(literal.Number);
             return;

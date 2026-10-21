@@ -68,6 +68,7 @@ public class LinqWhereTests
             public Tier Tier { get; private set; }
             public DateOnly DueOn { get; private set; }
             public TimeSpan Spent { get; private set; }
+            public TimeOnly StartsAt { get; private set; }
         }
 
         [TableMap(typeof(TaskEntity), "Tasks")]
@@ -482,6 +483,10 @@ public class LinqWhereTests
     [InlineData("t => kinds.Contains(t.Status)", "kinds.Contains(t.Status)")]
     [InlineData("t => t.Origin > Origin.Manual", "t.Origin > Origin.Manual")]
     [InlineData("t => Sql.ILike(t.Title, null)", "Sql.ILike(t.Title, null)")]
+    [InlineData("t => t.Title.Contains(null!)", "t.Title.Contains(null!)")]
+    [InlineData("t => t.Title.StartsWith(null!, StringComparison.Ordinal)", "t.Title.StartsWith(null!, StringComparison.Ordinal)")]
+    [InlineData("t => t.Title.EndsWith(null!, StringComparison.Ordinal)", "t.Title.EndsWith(null!, StringComparison.Ordinal)")]
+    [InlineData("t => t.Kind == (WorkKind)5", "(WorkKind)5")]
     [InlineData("t => string.Equals(null, null)", "string.Equals(null, null)")]
     public void Unsupported_predicate_reports_ZAO102(string predicate, string located)
     {
@@ -543,7 +548,9 @@ public class LinqWhereTests
     }
 
     // A parameter without a DbType facet gets a cast in a null test, so a null is typed.
-    // A name-bound byte enum gets the String facet when bound, and no cast.
+    // A name-bound byte enum gets the String facet when bound, and no cast; so does a short,
+    // whose Int16 facet types it already. A char parameter never gets this far: the core
+    // rejects it with ZAO041.
     [Fact]
     public void Null_test_on_a_parameter_without_a_facet_casts_it()
     {
@@ -552,11 +559,13 @@ public class LinqWhereTests
                 [LinqQuery(nameof(FindQuery))]
                 public partial Task<List<TaskSummary>> Find(
                     Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
-                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, CancellationToken ct);
+                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
+                    short? rank, CancellationToken ct);
 
                 private static IQuery<TaskSummary> FindQuery(
                     Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
-                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level) =>
+                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
+                    short? rank) =>
                     Sql.Table<TaskEntity>()
                         .WhereIf(ids != null, t => ids!.Contains(t.Id))
                         .WhereIf(titles != null, t => titles!.Contains(t.Title))
@@ -567,10 +576,35 @@ public class LinqWhereTests
                         .Where(t => spent == null || t.Spent > spent)
                         .Where(t => tier == null || t.Tier == tier)
                         .Where(t => level == null || t.Level == level)
+                        .Where(t => startsAt == null || t.StartsAt == startsAt)
+                        .Where(t => rank == null || t.Rank == rank)
                         .Select(t => new TaskSummary(t.Id, t.Title));
             }
             """,
             NpgsqlStub.Source);
+    }
+
+    // A value with no member name cannot be compared by name: here the parameter binds by name
+    // because it is compared with the EnumAsString column.
+    [Fact]
+    public void Nameless_enum_value_against_a_name_bound_parameter_reports_ZAO102()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(WorkKind kind, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(WorkKind kind) =>
+                    Sql.Table<TaskEntity>()
+                        .WhereIf(kind != (WorkKind)5, t => t.Kind == kind)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("(WorkKind)5", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("compared with a value stored by member name", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     [Fact]
