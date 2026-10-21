@@ -228,7 +228,9 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
   or `Guid`. Array parameters need Npgsql, and a slim data source needs `EnableArrays()`.
 - An enum parameter compared with a column stored by name binds by its member name. Compared with
   columns stored both ways it reports [ZAO111](../diagnostics/ZAO111.md).
-- Typed ids and value objects compare by their underlying value.
+- Typed ids and value objects compare by their underlying value. A composite such as
+  `Money(decimal Amount, string Currency)`, which spans several columns or parameters, reports ZAO102,
+  as a companion parameter or as an entity member.
 - A `float` constant is written `0.1::real`, so it compares with a `real` column at the column's
   precision; a bare `0.1` would compare as double precision and miss the stored value.
 - Arithmetic, other methods, and `<`/`>` on an enum stored by name report ZAO102.

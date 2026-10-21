@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using ZeroAlloc.ORM.Generator.Model;
+using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
@@ -35,6 +36,15 @@ internal static partial class LinqQueryReader
         out SqlExpression? expression)
     {
         var op = Unwrap(value);
+        if (CompositeMemberType(op, row, context) is { } composite)
+        {
+            expression = null;
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + op.Syntax + "', whose type '" + composite.ToDisplayString() + "' maps to several columns,",
+                op.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
+
         expression = op.ConstantValue.HasValue ? ReadConstant(op) : ReadReference(op, row, context);
         if (expression is not null) return OperandRead.Read;
         if (op.ConstantValue.HasValue || !IsCapture(op, row)) return OperandRead.Unsupported;
@@ -76,6 +86,25 @@ internal static partial class LinqQueryReader
         if (CanBeNull(type)) context.NullableValues.Add(expression);
         return expression;
     }
+
+    // The type of a row member that is a composite, such as Money(decimal Amount, string
+    // Currency): the [Query] path maps it to one column per constructor argument, so it is not
+    // one column the SQL can name. Null for any other value.
+    private static ITypeSymbol? CompositeMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
+    {
+        var type = op switch
+        {
+            IPropertyReferenceOperation { Instance: IParameterReferenceOperation p } property when IsParameter(p, row) => property.Property.Type,
+            IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field when IsParameter(p, row) => field.Field.Type,
+            _ => null,
+        };
+        return type is not null && IsComposite(type, context.Conventions) ? type : null;
+    }
+
+    // A multi-field composite: the [Query] path binds it as one DbParameter per constructor
+    // argument, @p_Amount and @p_Currency, and reads it from as many columns.
+    private static bool IsComposite(ITypeSymbol type, ConventionContext conventions)
+        => ConventionDiscovery.Resolve(UnwrapNullable(type), conventions).Kind == ConventionKind.MultiArgCtor;
 
     private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type)
         => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type));

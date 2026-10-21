@@ -43,6 +43,7 @@ internal static partial class LinqQueryReader
         var context = new ReaderContext(ctx.SemanticModel.Compilation, companion.Syntax!, ct);
         var parameterError = MatchParameters(method, companion.Symbol!, companion.Syntax!, context);
         if (parameterError is not null) return Failed(comment, parameterError);
+        if (!CheckParameterShapes(companion.Symbol!, context)) return Failed(comment, context.Diagnostics.ToArray());
 
         var shape = ClassifyShape(method.ReturnType, companion.RowType!);
         if (shape is null)
@@ -130,6 +131,25 @@ internal static partial class LinqQueryReader
             context.SqlNames[companion.Parameters[i]] = sqlName;
         }
         return null;
+    }
+
+    // ZAO102 for each companion parameter whose type is a multi-field composite. The [Query]
+    // path binds it as @p_Field DbParameters, one per constructor argument, while the SQL would
+    // name @p, so the query would fail at run time. Reported at the companion's parameter.
+    private static bool CheckParameterShapes(IMethodSymbol companion, ReaderContext context)
+    {
+        var valid = true;
+        foreach (var parameter in companion.Parameters)
+        {
+            if (!IsComposite(parameter.Type, context.Conventions)) continue;
+            var syntax = parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax(context.CancellationToken);
+            context.Report(LinqDiagnostics.Unsupported(
+                "Companion parameter '" + parameter.Name + "', whose type '"
+                    + parameter.Type.ToDisplayString() + "' binds as several values,",
+                syntax?.GetLocation() ?? parameter.Locations.FirstOrDefault()));
+            valid = false;
+        }
+        return valid;
     }
 
     // Every parameter but the CancellationToken and the transaction, which bind no value.

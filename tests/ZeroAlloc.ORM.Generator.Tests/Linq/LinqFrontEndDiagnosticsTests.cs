@@ -250,24 +250,80 @@ public class LinqFrontEndDiagnosticsTests
         Assert.Equal("t.Title", located);
     }
 
+    private const string Priced = """
+        public sealed record Money(decimal Amount, string Currency);
+
+        public readonly record struct Span(int From, int To);
+
+        public sealed class Priced
+        {
+            public Guid Id { get; private set; }
+            public Money Price { get; private set; } = new(0m, "EUR");
+            public Span Window { get; private set; }
+        }
+
+        [TableMap(typeof(Priced), "Priced")]
+        internal static class PricedMap;
+
+        public sealed record PricedRow(Guid Id, Money Price);
+
+        public sealed record PricedLine(Guid Id);
+
+        """;
+
+    // A row member whose type reads several columns gets one column from the projection.
     [Fact]
     public void Row_member_reading_several_columns_reports_ZAO107_at_the_return_type()
     {
-        var (d, located) = Single("""
-            public sealed record Money(decimal Amount, string Currency);
+        var (d, located) = Single(Priced + Repo + """
+                [LinqQuery(nameof(PricesQuery))]
+                public partial Task<List<PricedRow>> Prices(CancellationToken ct);
 
-            public sealed class Priced
-            {
-                public Guid Id { get; private set; }
-                public Money Price { get; private set; } = new(0m, "EUR");
+                private static IQuery<PricedRow> PricesQuery() =>
+                    Sql.Table<Priced>().Select(p => new PricedRow(p.Id, null!));
             }
+            """);
 
-            [TableMap(typeof(Priced), "Priced")]
-            internal static class PricedMap;
+        Assert.Equal("ZAO107", d.Id);
+        Assert.Equal("Task<List<PricedRow>>", located);
+        Assert.Contains("Price", Message(d), StringComparison.Ordinal);
+    }
 
-            public sealed record PricedRow(Guid Id, Money Price);
+    // A composite member maps to several columns and a composite parameter binds as several
+    // values, @total_Amount and @total_Currency, while the SQL would name one: ZAO102, before
+    // the query could fail at run time.
+    [Theory]
+    [InlineData("p => p.Price == null", "int order", "p.Price")]
+    [InlineData("p => p.Window == window", "Span window", "Span window")]
+    [InlineData("p => p.Price == total", "Money total", "Money total")]
+    [InlineData("p => total == null", "Money? total", "Money? total")]
+    [InlineData("p => window == null", "Span? window", "Span? window")]
+    public void Composite_member_or_parameter_reports_ZAO102(string predicate, string parameter, string expected)
+    {
+        var (d, located) = Single(Priced + Repo + """
+                [LinqQuery(nameof(PricesQuery))]
+                public partial Task<List<PricedLine>> Prices(
+            """ + parameter + """
+            , CancellationToken ct);
 
-            """ + Repo + """
+                private static IQuery<PricedLine> PricesQuery(
+            """ + parameter + """
+            ) =>
+                    Sql.Table<Priced>().Where(
+            """ + predicate + """
+            ).Select(p => new PricedLine(p.Id));
+            }
+            """);
+
+        Assert.Equal("ZAO102", d.Id);
+        Assert.Equal(expected, located);
+        Assert.Contains("several", Message(d), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Composite_member_in_a_projection_reports_ZAO102_at_the_member()
+    {
+        var (d, located) = Single(Priced + Repo + """
                 [LinqQuery(nameof(PricesQuery))]
                 public partial Task<List<PricedRow>> Prices(CancellationToken ct);
 
@@ -276,9 +332,8 @@ public class LinqFrontEndDiagnosticsTests
             }
             """);
 
-        Assert.Equal("ZAO107", d.Id);
-        Assert.Equal("Task<List<PricedRow>>", located);
-        Assert.Contains("Price", Message(d), StringComparison.Ordinal);
+        Assert.Equal("ZAO102", d.Id);
+        Assert.Equal("p.Price", located);
     }
 
     [Fact]
