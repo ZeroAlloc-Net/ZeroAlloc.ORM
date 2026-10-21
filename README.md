@@ -13,9 +13,9 @@ with no runtime reflection and NativeAOT-ready.
 ## Why ZeroAlloc.ORM
 
 - **Close to hand-written ADO.NET.** A 1,000-row read allocates 88,592 B, 0.4% more than hand-written
-  ADO.NET's 88,200 B, where Dapper.AOT allocates 130,000 B in the same run.
-- **Ahead of Dapper.AOT on most SQLite workloads.** A single-row read takes 1.10× the time of
-  hand-written ADO.NET; Dapper.AOT takes 1.26× in the same run.
+  ADO.NET's 88,200 B, where Dapper.AOT allocates 130,001 B in the same run.
+- **Ahead of Dapper.AOT on single-row reads and multi-result sets.** A single-row read on SQLite
+  takes 1.06× the time of hand-written ADO.NET; Dapper.AOT takes 1.21× in the same run.
 - **Works under NativeAOT and trimming.** CI publishes and runs AOT consumers on every PR, including
   ones that share the build with other source generators, where EF Core's precompiled queries collide.
 - **Compile-time diagnostics instead of runtime surprises.** A non-partial method, a tuple that does not
@@ -84,14 +84,14 @@ Every shape, option and diagnostic is in the [reference](https://github.com/Zero
 
 ## Performance
 
-SQLite, BenchmarkDotNet, captured at 2.3.1. Time is the same-run ratio against hand-written ADO.NET;
+SQLite, BenchmarkDotNet, captured at 2.4.0. Time is the same-run ratio against hand-written ADO.NET;
 allocations are exact bytes per call.
 
 | Workload | ZA.ORM time | Dapper.AOT time | ZA.ORM alloc | Dapper.AOT alloc | Hand-written alloc |
 |---|---:|---:|---:|---:|---:|
-| Single-row read | 1.10× | 1.26× | 1,568 B | 1,800 B | 1,232 B |
-| 1,000-row read | 0.99× | 0.90× | 88,592 B | 130,000 B | 88,200 B |
-| Head + 10 lines | 1.04× | 1.24× | 3,400 B | 4,072 B | 2,680 B |
+| Single-row read | 1.06× | 1.21× | 1,568 B | 1,800 B | 1,232 B |
+| 1,000-row read | 1.06× | 0.94× | 88,592 B | 130,001 B | 88,200 B |
+| Head + 10 lines | 1.09× | 1.27× | 3,400 B | 4,072 B | 2,680 B |
 
 Full tables, the insert workload, PostgreSQL and methodology: [SQLite](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-sqlite-results.md)
 and [PostgreSQL](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-postgres-results.md).
