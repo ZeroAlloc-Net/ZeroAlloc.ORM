@@ -199,6 +199,9 @@ internal static partial class LinqQueryReader
         // The companion's parameters carry the method's names, which ZAO101 guarantees.
         public HashSet<string> TypedParameters { get; } = new(StringComparer.Ordinal);
 
+        // What the current lambdas' row is: the FROM entity, or after a join its result.
+        public RowShape Row { get; set; } = RowShape.Entity(alias: null);
+
         // The columns and parameters read so far whose declared type can be null.
         public HashSet<SqlExpression> NullableValues { get; } = new();
 

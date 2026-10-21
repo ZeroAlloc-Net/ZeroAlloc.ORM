@@ -14,16 +14,11 @@ internal static class LinqQueryBinder
 {
     public static LinqBoundQuery Bind(SqlStatement statement, EquatableArray<EntityMapModel> maps)
     {
-        var from = SourceOf(statement);
-        var map = FindMap(maps, from.EntityTypeFullName);
-        if (map is null)
-        {
-            return Failed(LinqDiagnostics.UnmappedEntity(DisplayName(from.EntityTypeFullName), from.Location));
-        }
+        var names = Scope(SelectOf(statement), maps, out var unmapped);
+        if (names is null) return Failed(unmapped!);
 
         // Enum storage first: the render writes an enum constant by name next to a name-bound
         // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
-        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName));
         var storage = EnumParameterStorage.Decide(statement, names);
         names.NameBoundParameters = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
         var sql = PostgresSqlRenderer.Instance.Render(statement, names);
@@ -41,14 +36,40 @@ internal static class LinqQueryBinder
             default);
     }
 
-    // The statement's table; a terminal's is its inner SELECT's.
-    private static SqlTableSource SourceOf(SqlStatement statement) => statement switch
+    // The statement's SELECT; a terminal's is its inner one.
+    private static SqlSelectStatement SelectOf(SqlStatement statement) => statement switch
     {
-        SqlSelectStatement select => select.From,
-        SqlAggregateStatement aggregate => aggregate.Source.From,
-        SqlScalarAggregateStatement scalar => scalar.Source.From,
+        SqlSelectStatement select => select,
+        SqlAggregateStatement aggregate => aggregate.Source,
+        SqlScalarAggregateStatement scalar => scalar.Source,
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
+
+    // One name scope over every source: the FROM entity, under its alias when there is a join,
+    // and each joined entity under its own. Null with ZAO104 for the first source without a map.
+    private static SqlNameScope? Scope(SqlSelectStatement select, EquatableArray<EntityMapModel> maps, out DiagnosticInfo? unmapped)
+    {
+        unmapped = null;
+        var from = select.From;
+        if (FindMap(maps, from.EntityTypeFullName) is not { } map)
+        {
+            unmapped = LinqDiagnostics.UnmappedEntity(DisplayName(from.EntityTypeFullName), from.Location);
+            return null;
+        }
+
+        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias);
+        foreach (var join in select.Joins)
+        {
+            var joined = join.Source.EntityTypeFullName;
+            if (FindMap(maps, joined) is not { } joinedMap)
+            {
+                unmapped = LinqDiagnostics.UnmappedEntity(DisplayName(joined), join.Source.Location);
+                return null;
+            }
+            names.AddSource(join.Alias, joinedMap, DisplayName(joined));
+        }
+        return names;
+    }
 
     // SELECT positions that read a member name: an EnumAsString column, or an enum parameter
     // that binds by name, which the database hands back as the text it was sent.

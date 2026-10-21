@@ -39,6 +39,12 @@ internal static class EnumParameterStorage
             SqlScalarAggregateStatement scalar => scalar.Source,
             _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
         };
+        foreach (var join in select.Joins)
+        {
+            Visit(join.On);
+            foreach (var predicate in join.SourcePredicates)
+                Visit(predicate);
+        }
         foreach (var predicate in select.Predicates)
             Visit(predicate);
 

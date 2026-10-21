@@ -89,8 +89,13 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     {
         var source = scalar.Source;
         sb.Append("SELECT ");
+        var paged = source.Paging.Limit is not null || source.Paging.Offset is not null;
+        // Outside the subquery, the call reads its one column by name, without the alias of the
+        // source inside it.
+        names.QualifyColumns = !paged;
         RenderExpression(sb, scalar.Call, names);
-        if (source.Paging.Limit is null && source.Paging.Offset is null)
+        names.QualifyColumns = true;
+        if (!paged)
         {
             RenderFromWhere(sb, source, names);
             return;
@@ -151,13 +156,25 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
-    // ` FROM "schema"."table" [WHERE a AND b]`.
+    // ` FROM "schema"."table" [WHERE a AND b]`, or with joins
+    // ` FROM "a" AS t0 INNER JOIN "schema"."b" AS t1 ON t0."BId" = t1."Id" [AND c] [WHERE a AND b]`.
     private static void RenderFromWhere(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
     {
         sb.Append(" FROM ");
-        if (names.Schema is { } schema)
-            AppendIdentifier(sb, schema).Append('.');
-        AppendIdentifier(sb, names.Table);
+        AppendTable(sb, names.Table, names.Schema, select.Alias);
+        foreach (var join in select.Joins)
+        {
+            var (table, schema) = names.TableOf(join.Alias);
+            sb.Append(" INNER JOIN ");
+            AppendTable(sb, table, schema, join.Alias);
+            sb.Append(" ON ");
+            RenderExpression(sb, join.On, names);
+            foreach (var predicate in join.SourcePredicates)
+            {
+                sb.Append(" AND ");
+                RenderExpression(sb, predicate, names);
+            }
+        }
 
         if (select.Predicates.Length > 0)
         {
@@ -168,6 +185,15 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 RenderExpression(sb, select.Predicates[i], names);
             }
         }
+    }
+
+    // `"schema"."table" [AS t0]`. An alias is generated, t0, t1, ..., so it needs no quotes.
+    private static void AppendTable(StringBuilder sb, string table, string? schema, string? alias)
+    {
+        if (schema is not null)
+            AppendIdentifier(sb, schema).Append('.');
+        AppendIdentifier(sb, table);
+        if (alias is not null) sb.Append(" AS ").Append(alias);
     }
 
     private static void RenderOrdering(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
@@ -213,6 +239,7 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         switch (expression)
         {
             case SqlMemberExpression member:
+                if (member.SourceAlias is { } alias && names.QualifyColumns) sb.Append(alias).Append('.');
                 AppendIdentifier(sb, names.Column(member));
                 break;
             case SqlParameterExpression parameter:

@@ -14,7 +14,7 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal abstract record SqlStatement;
 
 /// <summary>
-/// <c>SELECT projection FROM table [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
+/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
 /// </summary>
 /// <param name="From">The queried entity.</param>
 /// <param name="Projection">The SELECT list, in the order the row type's constructor reads it.</param>
@@ -25,13 +25,35 @@ internal abstract record SqlStatement;
 /// GROUP BY keys, in the order the key selector names them. Empty for no GROUP BY clause. A
 /// grouped projection and ordering read only these keys and aggregate calls.
 /// </param>
+/// <param name="Joins">The inner joins, in join order. Empty for a query without a join.</param>
+/// <param name="Alias">
+/// The alias of <paramref name="From"/>, <c>t0</c>, set exactly when the query has a join. Then
+/// every member names its source's alias; without a join neither is aliased, as in 2.5.0.
+/// </param>
 internal sealed record SqlSelectStatement(
     SqlTableSource From,
     EquatableArray<SqlExpression> Projection,
     EquatableArray<SqlExpression> Predicates,
     EquatableArray<SqlOrdering> Ordering,
     SqlPaging Paging,
-    EquatableArray<SqlExpression> GroupBy = default) : SqlStatement;
+    EquatableArray<SqlExpression> GroupBy = default,
+    EquatableArray<SqlJoin> Joins = default,
+    string? Alias = null) : SqlStatement;
+
+/// <summary>
+/// <c>INNER JOIN table AS alias ON on [AND sourcePredicates]</c>: a <c>Join</c> operator. The
+/// inner source's own <c>Where</c> conditions are scoped to it in the ON clause, which for an
+/// inner join keeps the same rows as a WHERE would.
+/// </summary>
+/// <param name="Source">The joined entity.</param>
+/// <param name="Alias">Its alias: <c>t1</c>, <c>t2</c>, ... in join order.</param>
+/// <param name="On">The key equality, outer key first.</param>
+/// <param name="SourcePredicates">The inner source's Where conditions, joined with AND.</param>
+internal sealed record SqlJoin(
+    SqlTableSource Source,
+    string Alias,
+    SqlExpression On,
+    EquatableArray<SqlExpression> SourcePredicates);
 
 /// <summary>
 /// A <c>Count()</c>, <c>LongCount()</c> or <c>Any()</c> terminal over a SELECT: one value, read
@@ -85,7 +107,12 @@ internal abstract record SqlExpression;
 /// The member is an enum without <c>[StoreAsString]</c>, so its map decides whether the column
 /// holds the integer or the member name.
 /// </param>
-internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage) : SqlExpression;
+/// <param name="SourceAlias">
+/// The alias of the source the member belongs to, <c>t0</c>, <c>t1</c>, ..., in a query with a
+/// join; it renders as <c>t1."Col"</c> and resolves through that source's map. Null without a
+/// join, which renders the bare column as in 2.5.0.
+/// </param>
+internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage, string? SourceAlias = null) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>

@@ -66,15 +66,24 @@ public class SqlAstExhaustivenessTests
 
     private static void Walk(SqlStatement statement)
     {
-        var names = new SqlNameScope(Map, "TestApp.TaskEntity");
+        var select = statement switch
+        {
+            SqlAggregateStatement aggregate => aggregate.Source,
+            SqlScalarAggregateStatement scalar => scalar.Source,
+            _ => (SqlSelectStatement)statement,
+        };
+        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias);
+        foreach (var join in select.Joins)
+            names.AddSource(join.Alias, Map, "TestApp.TaskEntity");
         _ = EnumParameterStorage.Decide(statement, names);
         _ = PostgresSqlRenderer.Instance.Render(statement, names);
         _ = SqlParameterReferences.Collect(statement);
         _ = LinqQueryBinder.Bind(statement, new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map)));
     }
 
-    // The expression in every position a statement has: the projection, the WHERE, the GROUP BY,
-    // the ORDER BY and the paging.
+    // The expression in every position a statement has: the projection, a join's ON and its
+    // source's conditions, the WHERE, the GROUP BY, the ORDER BY and the paging. The FROM's alias
+    // is "x", the placeholder a member's source alias gets.
     private static SqlSelectStatement Select(SqlExpression expression)
         => new(
             From,
@@ -82,7 +91,16 @@ public class SqlAstExhaustivenessTests
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(expression, Descending: false))),
             new SqlPaging(expression, expression),
-            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)));
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
+            Joins(expression),
+            Alias: "x");
+
+    private static EquatableArray<SqlJoin> Joins(SqlExpression expression)
+        => new(ImmutableArray.Create(new SqlJoin(
+            From,
+            "t1",
+            expression,
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)))));
 
     // The expression as an aggregate's argument, the position a scalar aggregate adds.
     private static SqlAggregateCallExpression Call(SqlExpression argument)
@@ -126,6 +144,7 @@ public class SqlAstExhaustivenessTests
         if (type == typeof(EquatableArray<SqlExpression>)) return new EquatableArray<SqlExpression>(ImmutableArray.Create<SqlExpression>(Column));
         if (type == typeof(EquatableArray<SqlOrdering>)) return new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(Column, Descending: false)));
         if (type == typeof(SqlTableSource)) return From;
+        if (type == typeof(EquatableArray<SqlJoin>)) return Joins(Column);
         if (type == typeof(SqlPaging)) return SqlPaging.None;
         if (type == typeof(SqlSelectStatement)) return Select(Column);
         if (type == typeof(SqlAggregateCallExpression)) return Call(Column);

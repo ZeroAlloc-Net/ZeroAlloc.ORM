@@ -33,6 +33,11 @@ internal static class SqlParameterReferences
     private static void AddSelect(SqlSelectStatement select, HashSet<string> names)
     {
         foreach (var item in select.Projection) Add(item, names);
+        foreach (var join in select.Joins)
+        {
+            Add(join.On, names);
+            foreach (var predicate in join.SourcePredicates) Add(predicate, names);
+        }
         foreach (var predicate in select.Predicates) Add(predicate, names);
         foreach (var key in select.GroupBy) Add(key, names);
         foreach (var ordering in select.Ordering) Add(ordering.Expression, names);
