@@ -111,14 +111,11 @@ internal static partial class LinqQueryReader
         IParameterSymbol? row,
         ReaderContext context)
     {
-        var leftNull = IsNullConstant(binary.LeftOperand);
-        var rightNull = IsNullConstant(binary.RightOperand);
-        if (leftNull || rightNull)
+        if (IsNullConstant(binary.LeftOperand) || IsNullConstant(binary.RightOperand))
         {
-            if ((leftNull && rightNull) || compare is not (SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual))
+            if (compare is not (SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual))
                 return ReportUnsupported(binary, context);
-            var tested = ReadComparand(leftNull ? binary.RightOperand : binary.LeftOperand, row, context);
-            return tested is null ? null : new SqlIsNullExpression(tested, Negated: compare == SqlBinaryOperator.NotEqual);
+            return ReadNullTest(binary.LeftOperand, binary.RightOperand, compare == SqlBinaryOperator.NotEqual, binary, row, context);
         }
 
         if (binary.OperatorMethod is { } method && !ComparesOwnType(method, binary))
@@ -137,6 +134,76 @@ internal static partial class LinqQueryReader
         var right = ReadComparand(binary.RightOperand, row, context);
         if (right is null) return null;
         return new SqlBinaryExpression(compare, left, right);
+    }
+
+    // `x == null`, `null != x` or `string.Equals(x, null)`: IS [NOT] NULL. Exactly one side must be
+    // the null constant. A parameter without a DbType facet gets a cast here, since PostgreSQL
+    // types a parameter at its first use and `@p IS NULL` gives it none; a type with no cast is
+    // ZAO102 rather than a 42P08 at run time.
+    private static SqlExpression? ReadNullTest(
+        IOperation left,
+        IOperation right,
+        bool negated,
+        IOperation at,
+        IParameterSymbol? row,
+        ReaderContext context)
+    {
+        var leftNull = IsNullConstant(left);
+        if (leftNull && IsNullConstant(right)) return ReportUnsupported(at, context);
+        var testedOperation = leftNull ? right : left;
+        var tested = ReadComparand(testedOperation, row, context);
+        if (tested is null) return null;
+
+        string? cast = null;
+        if (Unwrap(testedOperation) is IParameterReferenceOperation { Parameter: var parameter }
+            && !context.TypedParameters.Contains(parameter.Name))
+        {
+            cast = NullTestCast(parameter.Type, context.Conventions);
+            if (cast is null)
+            {
+                context.Report(LinqDiagnostics.Unsupported(
+                    "'" + at.Syntax + "', a null test on '" + parameter.Name + "', whose type '"
+                        + parameter.Type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString()
+                        + "' binds without a PostgreSQL type,",
+                    at.Syntax.GetLocation()));
+                return null;
+            }
+        }
+        return new SqlIsNullExpression(tested, negated, cast);
+    }
+
+    // The PostgreSQL type Npgsql infers for a parameter that has no DbType facet, for the casts
+    // ReadNullTest writes. Null for a type outside this list.
+    private static string? NullTestCast(ITypeSymbol type, ConventionContext conventions)
+    {
+        var underlying = UnwrapNullable(type);
+        if (ConventionDiscovery.Resolve(underlying, conventions).Kind == ConventionKind.PrimitiveArray)
+        {
+            var element = underlying switch
+            {
+                IArrayTypeSymbol array => array.ElementType,
+                INamedTypeSymbol { TypeArguments.Length: 1 } named => named.TypeArguments[0],
+                _ => null,
+            };
+            return element switch
+            {
+                { SpecialType: SpecialType.System_String } => "text[]",
+                { SpecialType: SpecialType.System_Int32 } => "integer[]",
+                { SpecialType: SpecialType.System_Int64 } => "bigint[]",
+                { MetadataName: "Guid" } => "uuid[]",
+                _ => null,
+            };
+        }
+        if (underlying.SpecialType == SpecialType.System_Char) return "text";
+        return OrmGenerator.BoundReader(type, conventions) switch
+        {
+            "GetDateTime" => "timestamptz",
+            "GetFieldValue<global::System.DateOnly>" => "date",
+            "GetFieldValue<global::System.TimeOnly>" => "time",
+            "GetFieldValue<global::System.TimeSpan>" => "interval",
+            "GetByte" or "GetInt16" => "smallint",
+            _ => null,
+        };
     }
 
     private static bool ComparesOwnType(IMethodSymbol method, IBinaryOperation binary)
@@ -163,6 +230,8 @@ internal static partial class LinqQueryReader
         var method = invocation.TargetMethod;
         if (IsLinqMember(method, SqlTypeName, "ILike") && invocation.Arguments.Length == 2)
         {
+            if (IsNullConstant(ArgumentFor(invocation, 0)) || IsNullConstant(ArgumentFor(invocation, 1)))
+                return ReportUnsupported(invocation, context);
             var operand = ReadComparand(ArgumentFor(invocation, 0), row, context);
             if (operand is null) return null;
             var pattern = ReadComparand(ArgumentFor(invocation, 1), row, context);
@@ -171,6 +240,8 @@ internal static partial class LinqQueryReader
 
         if (IsStringEquals(invocation))
         {
+            if (IsNullConstant(ArgumentFor(invocation, 0)) || IsNullConstant(ArgumentFor(invocation, 1)))
+                return ReadNullTest(ArgumentFor(invocation, 0), ArgumentFor(invocation, 1), negated: false, invocation, row, context);
             var left = ReadComparand(ArgumentFor(invocation, 0), row, context);
             if (left is null) return null;
             var right = ReadComparand(ArgumentFor(invocation, 1), row, context);
@@ -179,6 +250,8 @@ internal static partial class LinqQueryReader
 
         if (LikeMatch(invocation) is { } match && invocation.Instance is { } instance)
         {
+            // A null pattern matches nothing in SQL, and throws in C#: never what was meant.
+            if (IsNullConstant(invocation.Arguments[0].Value)) return ReportUnsupported(invocation, context);
             var operand = ReadComparand(instance, row, context);
             if (operand is null) return null;
             var value = ReadComparand(invocation.Arguments[0].Value, row, context);

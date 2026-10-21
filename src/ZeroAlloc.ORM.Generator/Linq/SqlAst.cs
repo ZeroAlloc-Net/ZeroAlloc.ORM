@@ -39,16 +39,21 @@ internal abstract record SqlExpression;
 /// <summary>An entity member, such as <c>t.Title</c>; bound to its mapped column at render time.</summary>
 /// <param name="Member">The C# member name.</param>
 /// <param name="Location">The member access, where ZAO105 is reported.</param>
-internal sealed record SqlMemberExpression(string Member, LocationInfo? Location) : SqlExpression;
+/// <param name="ColumnPicksEnumStorage">
+/// The member is an enum without <c>[StoreAsString]</c>, so its map decides whether the column
+/// holds the integer or the member name.
+/// </param>
+internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
+/// <param name="ClrName">The C# parameter name, as diagnostics show it.</param>
 /// <param name="ColumnPicksEnumStorage">
 /// The parameter is an enum without <c>[StoreAsString]</c>, so the columns it is compared with
 /// decide whether it binds as its integer or as its member name; see ZAO111.
 /// </param>
 /// <param name="Location">The parameter reference, where ZAO111 is reported.</param>
-internal sealed record SqlParameterExpression(string Name, bool ColumnPicksEnumStorage, LocationInfo? Location) : SqlExpression;
+internal sealed record SqlParameterExpression(string Name, string ClrName, bool ColumnPicksEnumStorage, LocationInfo? Location) : SqlExpression;
 
 /// <summary>A compile-time constant, inlined as a SQL literal.</summary>
 /// <param name="Kind">How the renderer writes the value.</param>
@@ -94,7 +99,14 @@ internal enum SqlBinaryOperator
 internal sealed record SqlNotExpression(SqlExpression Operand) : SqlExpression;
 
 /// <summary><c>operand IS NULL</c>, or <c>IS NOT NULL</c> when <paramref name="Negated"/>.</summary>
-internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated) : SqlExpression;
+/// <param name="Operand">The tested value.</param>
+/// <param name="Negated">Whether the test is IS NOT NULL.</param>
+/// <param name="Cast">
+/// The PostgreSQL type a parameter without a DbType facet is cast to here, such as <c>uuid[]</c>,
+/// so a null still has a type. PostgreSQL types a parameter at its first use, and a bare
+/// <c>@p IS NULL</c> gives it none. Null when the operand is typed already.
+/// </param>
+internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated, string? Cast) : SqlExpression;
 
 /// <summary>
 /// <c>string.Contains</c>, <c>StartsWith</c> or <c>EndsWith</c>: a <c>LIKE</c> whose pattern is the

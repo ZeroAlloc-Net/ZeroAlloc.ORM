@@ -21,13 +21,16 @@ internal static class LinqQueryBinder
             return Failed(LinqDiagnostics.UnmappedEntity(DisplayName(from.EntityTypeFullName), from.Location));
         }
 
+        // Enum storage first: the render writes an enum constant by name next to a name-bound
+        // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
         var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName));
+        var storage = EnumParameterStorage.Decide(statement, names);
+        names.NameBoundParameters = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
         var sql = PostgresSqlRenderer.Instance.Render(statement, names);
         var diagnostics = names.Diagnostics;
         if (!diagnostics.IsEmpty)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics));
 
-        var storage = EnumParameterStorage.Decide(statement, names);
         if (!storage.Conflicts.IsEmpty)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(storage.Conflicts));
 

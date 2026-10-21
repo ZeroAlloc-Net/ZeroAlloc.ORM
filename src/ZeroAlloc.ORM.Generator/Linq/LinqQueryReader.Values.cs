@@ -47,20 +47,21 @@ internal static partial class LinqQueryReader
         => op switch
         {
             IPropertyReferenceOperation { Instance: IParameterReferenceOperation p, Arguments.Length: 0 } property
-                when IsParameter(p, row) => Member(property.Property.Name, op),
+                when IsParameter(p, row) => Member(property.Property.Name, op, property.Property.Type),
             // A field is never a mapped column; the binder reports it as ZAO105.
             IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field
-                when IsParameter(p, row) => Member(field.Field.Name, op),
+                when IsParameter(p, row) => Member(field.Field.Name, op, field.Field.Type),
             IParameterReferenceOperation p when context.SqlNames.TryGetValue(p.Parameter, out var sqlName)
                 => new SqlParameterExpression(
                     sqlName,
+                    p.Parameter.Name,
                     ColumnPicksEnumStorage(p.Parameter.Type),
                     LocationInfo.From(op.Syntax.GetLocation())),
             _ => null,
         };
 
-    private static SqlMemberExpression Member(string name, IOperation op)
-        => new(name, LocationInfo.From(op.Syntax.GetLocation()));
+    private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type)
+        => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type));
 
     private static bool IsParameter(IParameterReferenceOperation reference, IParameterSymbol? parameter)
         => parameter is not null && SymbolEqualityComparer.Default.Equals(reference.Parameter, parameter);

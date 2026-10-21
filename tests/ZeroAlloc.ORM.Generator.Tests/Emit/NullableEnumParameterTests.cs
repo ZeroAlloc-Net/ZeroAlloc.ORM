@@ -45,6 +45,21 @@ public class NullableEnumParameterTests
     }
 
     [Fact]
+    public void Nullable_enum_query_parameters_bind_null()
+    {
+        AssertEmits(
+            Types + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT count(*) FROM T WHERE (@color IS NULL OR Color = @color) AND (@shape IS NULL OR Shape = @shape)")]
+                public partial Task<int> CountAsync(Color? color, Shape? shape, CancellationToken ct);
+            }
+            """,
+            "__p_color.Value = (object?)(int?)@color ?? global::System.DBNull.Value;",
+            "__p_shape.Value = (object?)@shape?.ToString() ?? global::System.DBNull.Value;");
+    }
+
+    [Fact]
     public void Nullable_enum_composite_fields_bind_null()
     {
         AssertEmits(

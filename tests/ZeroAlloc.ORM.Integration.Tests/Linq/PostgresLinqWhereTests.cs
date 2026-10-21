@@ -155,6 +155,56 @@ public sealed class PostgresLinqWhereTests
     }
 
     [Fact]
+    public async Task Enum_constant_against_a_name_bound_parameter()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        await SeedAsync(fx, Row("bug", 1, kind: WorkKind.Bug), Row("feature", 2, kind: WorkKind.Feature)).ConfigureAwait(false);
+        var repo = new LinqWhereRepo(fx.Connection);
+
+        Titles(await repo.KindUnlessBugAsync(WorkKind.Bug, CancellationToken.None).ConfigureAwait(false)).Should().Equal("bug", "feature");
+        Titles(await repo.KindUnlessBugAsync(WorkKind.Feature, CancellationToken.None).ConfigureAwait(false)).Should().Equal("feature");
+    }
+
+    // Guid[] and DateTime bind without a DbType facet; the cast in the null test types a null.
+    [Fact]
+    public async Task Null_array_and_DateTime_filters_without_a_facet()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var early = Row("early", 1);
+        var late = Row("late", 2);
+        var never = Row("never", 3);
+        await SeedAsync(fx, early, late, never).ConfigureAwait(false);
+        var repo = new LinqWhereRepo(fx.Connection);
+        var start = new DateTime(2026, 10, 21, 8, 0, 0, DateTimeKind.Utc);
+        await repo.StartAsync(early.Id, start, CancellationToken.None).ConfigureAwait(false);
+        await repo.StartAsync(late.Id, start.AddDays(2), CancellationToken.None).ConfigureAwait(false);
+
+        foreach (var among in new Func<Guid[]?, Task<List<TaskLine>>>[]
+        {
+            ids => repo.AmongOptionalAsync(ids, CancellationToken.None),
+            ids => repo.AmongOptionalOrAsync(ids, CancellationToken.None),
+        })
+        {
+            Titles(await among(null).ConfigureAwait(false)).Should().Equal("early", "late", "never");
+            Titles(await among([late.Id]).ConfigureAwait(false)).Should().Equal("late");
+        }
+
+        foreach (var startedBefore in new Func<DateTime?, Task<List<TaskLine>>>[]
+        {
+            at => repo.StartedBeforeAsync(at, CancellationToken.None),
+            at => repo.StartedBeforeOrAsync(at, CancellationToken.None),
+        })
+        {
+            Titles(await startedBefore(null).ConfigureAwait(false)).Should().Equal("early", "late", "never");
+            Titles(await startedBefore(start.AddDays(1)).ConfigureAwait(false)).Should().Equal("early");
+            // Unspecified goes down as timestamp: the cast only feeds the null test, and the
+            // comparison converts as PostgreSQL always does, in the session time zone, UTC here.
+            Titles(await startedBefore(DateTime.SpecifyKind(start.AddDays(1), DateTimeKind.Unspecified)).ConfigureAwait(false))
+                .Should().Equal("early");
+        }
+    }
+
+    [Fact]
     public async Task Parameter_reused_in_condition_and_predicate()
     {
         await using var fx = await CreateAsync().ConfigureAwait(false);

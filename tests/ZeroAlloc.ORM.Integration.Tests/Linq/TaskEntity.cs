@@ -13,4 +13,5 @@ public sealed class TaskEntity
     public DateTimeOffset? DueAt { get; private set; }
     public string[] Tags { get; private set; } = [];
     public int Order { get; private set; }
+    public DateTime? StartedAt { get; private set; }
 }

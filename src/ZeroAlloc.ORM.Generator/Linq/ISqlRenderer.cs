@@ -49,6 +49,12 @@ internal sealed class SqlNameScope
         return member.Member;
     }
 
+    /// <summary>
+    /// SQL names of the enum parameters that bind as their member name, decided by
+    /// <see cref="EnumParameterStorage"/> before the render.
+    /// </summary>
+    public ImmutableHashSet<string> NameBoundParameters { get; set; } = ImmutableHashSet<string>.Empty;
+
     /// <summary>Records a diagnostic the render found, such as an enum value with no name to compare by.</summary>
     public void Report(DiagnosticInfo diagnostic) => _diagnostics.Add(diagnostic);
 

@@ -7,6 +7,24 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 [Dialect(SqlDialect.PostgreSql)]
 internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
 {
+    [Command("""UPDATE "Tasks" SET "StartedAt" = @at WHERE "Id" = @id""")]
+    public partial Task<int> StartAsync(Guid id, DateTime at, CancellationToken ct);
+
+    [LinqQuery(nameof(KindUnlessBugQuery))]
+    public partial Task<List<TaskLine>> KindUnlessBugAsync(WorkKind kind, CancellationToken ct);
+
+    [LinqQuery(nameof(AmongOptionalQuery))]
+    public partial Task<List<TaskLine>> AmongOptionalAsync(Guid[]? ids, CancellationToken ct);
+
+    [LinqQuery(nameof(AmongOptionalOrQuery))]
+    public partial Task<List<TaskLine>> AmongOptionalOrAsync(Guid[]? ids, CancellationToken ct);
+
+    [LinqQuery(nameof(StartedBeforeQuery))]
+    public partial Task<List<TaskLine>> StartedBeforeAsync(DateTime? before, CancellationToken ct);
+
+    [LinqQuery(nameof(StartedBeforeOrQuery))]
+    public partial Task<List<TaskLine>> StartedBeforeOrAsync(DateTime? before, CancellationToken ct);
+
     [LinqQuery(nameof(RangeQuery))]
     public partial Task<List<TaskLine>> RangeAsync(int min, int max, CancellationToken ct);
 
@@ -62,6 +80,23 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
 
     [LinqQuery(nameof(ReusedQuery))]
     public partial Task<List<TaskLine>> ReusedAsync(int? minOrder, string? title, CancellationToken ct);
+
+    // The constant is compared with a parameter that binds by name, so it is written by name.
+    private static IQuery<TaskLine> KindUnlessBugQuery(WorkKind kind) =>
+        Sql.Table<TaskEntity>().WhereIf(kind != WorkKind.Bug, t => t.Kind == kind).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // Arrays and DateTime have no DbType facet: their null tests carry a cast.
+    private static IQuery<TaskLine> AmongOptionalQuery(Guid[]? ids) =>
+        Sql.Table<TaskEntity>().WhereIf(ids != null, t => ids!.Contains(t.Id)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> AmongOptionalOrQuery(Guid[]? ids) =>
+        Sql.Table<TaskEntity>().Where(t => ids == null || ids.Contains(t.Id)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> StartedBeforeQuery(DateTime? before) =>
+        Sql.Table<TaskEntity>().WhereIf(before != null, t => t.StartedAt < before).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    private static IQuery<TaskLine> StartedBeforeOrQuery(DateTime? before) =>
+        Sql.Table<TaskEntity>().Where(t => before == null || t.StartedAt < before).Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     private static IQuery<TaskLine> RangeQuery(int min, int max) =>
         Sql.Table<TaskEntity>().Where(t => t.Order >= min && t.Order < max).Select(t => new TaskLine(t.Id, t.Title, t.Order));

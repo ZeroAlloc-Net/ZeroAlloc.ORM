@@ -21,7 +21,8 @@ internal static class LinqSchema
             "CreatedAt" timestamptz NOT NULL,
             "DueAt" timestamptz NULL,
             "Tags" text[] NOT NULL,
-            "Order" int NOT NULL
+            "Order" int NOT NULL,
+            "StartedAt" timestamptz NULL
         );
         """;
 }

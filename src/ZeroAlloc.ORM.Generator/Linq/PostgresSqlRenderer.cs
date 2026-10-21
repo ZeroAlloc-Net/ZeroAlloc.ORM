@@ -120,6 +120,12 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             case SqlIsNullExpression isNull:
                 RenderExpression(sb, isNull.Operand, names);
+                // A name-bound enum gets the String facet when bound, so it needs no cast.
+                if (isNull.Cast is { } cast
+                    && !(isNull.Operand is SqlParameterExpression bound && names.NameBoundParameters.Contains(bound.Name)))
+                {
+                    sb.Append("::").Append(cast);
+                }
                 sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
                 break;
             case SqlLikeExpression like:
@@ -190,12 +196,18 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
-    // An enum constant compared with a column the map stores by name renders as the name.
+    // An enum constant compared with a column the map stores by name, or with a parameter that
+    // binds by name, renders as the name.
     private static void RenderComparand(StringBuilder sb, SqlExpression side, SqlExpression other, SqlNameScope names)
     {
         if (side is SqlEnumLiteralExpression enumLiteral)
         {
-            var byName = enumLiteral.StoresName || (other is SqlMemberExpression member && names.IsEnumAsString(member));
+            var byName = enumLiteral.StoresName || other switch
+            {
+                SqlMemberExpression member => names.IsEnumAsString(member),
+                SqlParameterExpression parameter => names.NameBoundParameters.Contains(parameter.Name),
+                _ => false,
+            };
             AppendEnumLiteral(sb, enumLiteral, byName, names);
             return;
         }

@@ -54,10 +54,19 @@ internal static partial class LinqQueryReader
                 methodSyntax.ReturnType.GetLocation()));
         }
 
+        // Facets first: a null test casts a parameter only when it has none.
+        var valueParameters = ValueParameters(method);
+        var facets = ReadFacets(valueParameters, context.Conventions);
+        foreach (var facet in facets)
+            context.TypedParameters.Add(facet.ParameterName);
+        foreach (var parameter in valueParameters)
+        {
+            if (OrmGenerator.HasWrittenDbType(parameter)) context.TypedParameters.Add(parameter.Name);
+        }
+
         var statement = ReadStatement(companion.Body!, shape.Value, context);
         if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
-        var facets = ReadFacets(ValueParameters(method), context.Conventions);
         return new LinqTranslation(statement, shape.Value, facets, comment, default);
     }
 
@@ -159,6 +168,10 @@ internal static partial class LinqQueryReader
 
         // Companion parameter -> the SQL name its method parameter binds with.
         public Dictionary<IParameterSymbol, string> SqlNames { get; } = new(SymbolEqualityComparer.Default);
+
+        // Value parameters, by name, that bind with a DbType: a derived facet or a written one.
+        // The companion's parameters carry the method's names, which ZAO101 guarantees.
+        public HashSet<string> TypedParameters { get; } = new(StringComparer.Ordinal);
 
         public List<DiagnosticInfo> Diagnostics { get; } = new();
 

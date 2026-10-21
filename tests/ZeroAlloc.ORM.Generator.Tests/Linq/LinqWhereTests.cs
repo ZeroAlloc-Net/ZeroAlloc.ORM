@@ -37,6 +37,8 @@ public class LinqWhereTests
 
         public enum Level : byte { Low, High }
 
+        public enum Tier : byte { Free, Paid }
+
         public readonly record struct ProjectId(Guid Value)
         {
             public static ProjectId From(Guid value) => new(value);
@@ -63,6 +65,9 @@ public class LinqWhereTests
             public float Weight { get; private set; }
             public DateTime LocalAt { get; private set; }
             public Level Level { get; private set; }
+            public Tier Tier { get; private set; }
+            public DateOnly DueOn { get; private set; }
+            public TimeSpan Spent { get; private set; }
         }
 
         [TableMap(typeof(TaskEntity), "Tasks")]
@@ -476,6 +481,8 @@ public class LinqWhereTests
     [InlineData("t => t.DueAt > null", "t.DueAt > null")]
     [InlineData("t => kinds.Contains(t.Status)", "kinds.Contains(t.Status)")]
     [InlineData("t => t.Origin > Origin.Manual", "t.Origin > Origin.Manual")]
+    [InlineData("t => Sql.ILike(t.Title, null)", "Sql.ILike(t.Title, null)")]
+    [InlineData("t => string.Equals(null, null)", "string.Equals(null, null)")]
     public void Unsupported_predicate_reports_ZAO102(string predicate, string located)
     {
         var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
@@ -515,6 +522,136 @@ public class LinqWhereTests
         var span = diagnostic.Location.SourceSpan;
         Assert.Equal("t.Kind", tree.ToString().Substring(span.Start, span.Length));
         Assert.Contains("stores enum member names", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    // An enum constant compared with a parameter that binds by name is written by name too, and
+    // a parameter compared with a name-bound one binds by name as well.
+    [Fact]
+    public void Enum_literal_and_parameter_against_a_name_bound_parameter_bind_by_name()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(WorkKind kind, WorkKind other, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(WorkKind kind, WorkKind other) =>
+                    Sql.Table<TaskEntity>()
+                        .WhereIf(kind != WorkKind.Bug, t => t.Kind == kind)
+                        .WhereIf(other == kind, t => t.IsActive)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
+    // A parameter without a DbType facet gets a cast in a null test, so a null is typed.
+    // A name-bound byte enum gets the String facet when bound, and no cast.
+    [Fact]
+    public void Null_test_on_a_parameter_without_a_facet_casts_it()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(
+                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
+                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(
+                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
+                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level) =>
+                    Sql.Table<TaskEntity>()
+                        .WhereIf(ids != null, t => ids!.Contains(t.Id))
+                        .WhereIf(titles != null, t => titles!.Contains(t.Title))
+                        .WhereIf(orders != null, t => orders!.Contains(t.Order))
+                        .WhereIf(sizes != null, t => sizes!.Contains(t.Size))
+                        .Where(t => at == null || t.LocalAt < at)
+                        .Where(t => dueOn == null || t.DueOn == dueOn)
+                        .Where(t => spent == null || t.Spent > spent)
+                        .Where(t => tier == null || t.Tier == tier)
+                        .Where(t => level == null || t.Level == level)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """,
+            NpgsqlStub.Source);
+    }
+
+    [Fact]
+    public void Null_test_on_an_untyped_parameter_without_a_cast_reports_ZAO102()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(byte[]? blob, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(byte[]? blob) =>
+                    Sql.Table<TaskEntity>().WhereIf(blob != null, t => t.IsActive).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("blob != null", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("'byte[]'", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    // string.Equals with a null constant is a null test, like `== null`.
+    [Fact]
+    public void String_Equals_null_is_a_null_test()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .Where(t => string.Equals(t.Note, null) || !string.Equals(null, t.Note, StringComparison.Ordinal))
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
+    // Kind stores names and PreviousKind integers: comparing them would compare text with a number.
+    [Fact]
+    public void Comparing_enum_columns_stored_differently_reports_ZAO102()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery() =>
+                    Sql.Table<TaskEntity>().Where(t => t.Kind == t.PreviousKind).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("t.Kind", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("store the enum differently", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    // Two parameters compared with each other bind alike; decided differently, that is ZAO111.
+    // The message names the C# parameter, not its [Param(Name)].
+    [Fact]
+    public void Enum_parameters_compared_with_each_other_and_stored_differently_report_ZAO111()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<TaskSummary>> Find(WorkKind kind, [Param(Name = "@o")] WorkKind other, CancellationToken ct);
+
+                private static IQuery<TaskSummary> FindQuery(WorkKind kind, WorkKind other) =>
+                    Sql.Table<TaskEntity>()
+                        .Where(t => t.Kind == kind && t.PreviousKind == other && kind == other)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO111", diagnostic.Id);
+        Assert.Equal(
+            "Parameter 'other' is compared with columns that store its enum differently",
+            diagnostic.GetMessage(CultureInfo.InvariantCulture));
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("other", tree.ToString().Substring(span.Start, span.Length));
+        Assert.EndsWith("kind == ", tree.ToString().Substring(0, span.Start), StringComparison.Ordinal);
     }
 
     [Fact]
