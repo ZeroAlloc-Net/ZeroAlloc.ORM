@@ -281,7 +281,13 @@ internal sealed record QueryMethodModel(
     // Whether the compilation references Npgsql, by `Npgsql.NpgsqlParameter`.
     // PostgreSQL arrays report ZAO082 without it; the emit for Npgsql-only
     // shapes reads it. A bool, not the Compilation, keeps the model cache-safe.
-    bool HasNpgsql = false);
+    bool HasNpgsql = false,
+    // [LinqQuery] — the one-line description of the LINQ chain the SQL came from.
+    // Non-null only for a [LinqQuery] method: the emit then writes the SQL as a
+    // `private const string __sql_<Method>` above the method, preceded by this
+    // text as a `//` comment, and uses the constant as the CommandText. Null for
+    // [Query] / [Command] / [StoredProcedure], whose emit is unchanged.
+    string? LinqSourceComment = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
