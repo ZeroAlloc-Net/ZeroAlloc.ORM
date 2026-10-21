@@ -5126,11 +5126,17 @@ public sealed class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("{");
         var first = true;
         var methodIndex = -1;
-        foreach (var m in repo.Methods)
+        foreach (var repoMethod in repo.Methods)
         {
             methodIndex++;
             if (!first) sb.AppendLine();
             first = false;
+            // [LinqQuery] — resolve the SQL constant's name once, with the method
+            // index so overloads get distinct constants, and carry it on the model
+            // so every BuildCommandTextAssignment call site sees it.
+            var m = repoMethod.LinqSourceComment is null
+                ? repoMethod
+                : repoMethod with { LinqSqlConstantName = LinqSqlConstantName(repoMethod, methodIndex) };
             EmitLinqSqlConstant(sb, m);
             switch (m.Shape)
             {
@@ -5305,18 +5311,26 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // comment naming the LINQ chain it came from, so the SQL reads as a unit in the
     // generated file. BuildCommandTextAssignment uses the constant as CommandText.
     // A no-op for every other method, which keeps their output byte-identical.
+    //
+    // The constant assumes a single-command shape, whose CommandText is set by
+    // BuildCommandTextAssignment. The BulkInsert and batch-split multi-result paths
+    // write CommandText themselves and would not use it; the [LinqQuery] translator
+    // produces neither shape.
     private static void EmitLinqSqlConstant(StringBuilder sb, QueryMethodModel m)
     {
-        if (m.LinqSourceComment is not { } comment) return;
+        if (m.LinqSourceComment is not { } comment || m.LinqSqlConstantName is not { } name) return;
         // A line break in the comment would end the `//` comment early.
         var oneLine = comment.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ');
         sb.Append("    // ").AppendLine(oneLine);
-        sb.Append("    private const string ").Append(LinqSqlConstantName(m))
+        sb.Append("    private const string ").Append(name)
             .Append(" = ").Append(SymbolDisplay.FormatLiteral(m.Sql, quote: true)).AppendLine(";");
         sb.AppendLine();
     }
 
-    private static string LinqSqlConstantName(QueryMethodModel m) => "__sql_" + m.MethodName;
+    // Same index-plus-name convention as BulkInsertSqlCacheName and
+    // StreamingNullColumnFinderName: overloads share a name, never an index.
+    private static string LinqSqlConstantName(QueryMethodModel m, int methodIndex) =>
+        "__sql" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
 
     // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
     // Eight emit sites used to hand-write the identical open/try and finally/close blocks
@@ -5380,9 +5394,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     {
         var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
         // [LinqQuery] — EmitLinqSqlConstant already wrote the SQL as a constant.
-        var textLiteral = m.LinqSourceComment is not null
-            ? LinqSqlConstantName(m)
-            : SymbolDisplay.FormatLiteral(textValue, quote: true);
+        var textLiteral = m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
         sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
         if (m.IsStoredProcedure)
         {

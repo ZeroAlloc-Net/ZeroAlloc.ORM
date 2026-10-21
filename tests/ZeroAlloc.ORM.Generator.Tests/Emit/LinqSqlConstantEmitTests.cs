@@ -1,4 +1,7 @@
 using System.Collections.Immutable;
+using System.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 using ZeroAlloc.ORM.Generator.Model;
 
@@ -18,12 +21,12 @@ public class LinqSqlConstantEmitTests
 
         var expected = """
                 // orders.Where(o => o.Id == id).Count()
-                private const string __sql_CountAsync = "SELECT count(*) FROM \"orders\" WHERE \"id\" = @id";
+                private const string __sql0_CountAsync = "SELECT count(*) FROM \"orders\" WHERE \"id\" = @id";
 
                 [global::System.CodeDom.Compiler.GeneratedCode(
             """.Replace("\r\n", "\n", System.StringComparison.Ordinal);
         Assert.Contains(expected, source.Replace("\r\n", "\n", System.StringComparison.Ordinal), System.StringComparison.Ordinal);
-        Assert.Contains("__cmd.CommandText = __sql_CountAsync;", source, System.StringComparison.Ordinal);
+        Assert.Contains("__cmd.CommandText = __sql0_CountAsync;", source, System.StringComparison.Ordinal);
         Assert.DoesNotContain("CommandText = \"", source, System.StringComparison.Ordinal);
     }
 
@@ -40,8 +43,47 @@ public class LinqSqlConstantEmitTests
     {
         var source = OrmGenerator.RenderRepository(Repository(comment: null));
 
-        Assert.DoesNotContain("__sql_", source, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("__sql", source, System.StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = \"SELECT count(*)", source, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Linq_overloads_get_distinct_constants_and_compile()
+    {
+        var byId = Method("orders.Count(o => o.Id == id)", Sql,
+            new ParameterInfo("id", "int", IsCancellationToken: false, IsTransaction: false));
+        var byName = Method("orders.Count(o => o.Name == name)", "SELECT count(*) FROM \"orders\" WHERE \"name\" = @name",
+            new ParameterInfo("name", "string", IsCancellationToken: false, IsTransaction: false));
+        var source = OrmGenerator.RenderRepository(Repository(byId, byName));
+
+        Assert.Contains("private const string __sql0_CountAsync = ", source, System.StringComparison.Ordinal);
+        Assert.Contains("private const string __sql1_CountAsync = ", source, System.StringComparison.Ordinal);
+        Assert.Contains("__cmd.CommandText = __sql0_CountAsync;", source, System.StringComparison.Ordinal);
+        Assert.Contains("__cmd.CommandText = __sql1_CountAsync;", source, System.StringComparison.Ordinal);
+
+        var declarations = """
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                public partial Task<int> CountAsync(int id, CancellationToken ct);
+                public partial Task<int> CountAsync(string name, CancellationToken ct);
+            }
+            """;
+        var compilation = GeneratorHarness.CreateCompilation(new[]
+        {
+            CSharpSyntaxTree.ParseText(declarations),
+            CSharpSyntaxTree.ParseText(source),
+        });
+        var errors = compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => d.ToString())
+            .ToArray();
+        Assert.Empty(errors);
     }
 
     [Fact]
@@ -78,11 +120,14 @@ public class LinqSqlConstantEmitTests
     }
 
     private static QueryRepositoryModel Repository(string? comment)
-    {
-        var method = new QueryMethodModel(
+        => Repository(Method(comment, Sql,
+            new ParameterInfo("id", "int", IsCancellationToken: false, IsTransaction: false)));
+
+    private static QueryMethodModel Method(string? comment, string sql, ParameterInfo valueParameter)
+        => new(
             MethodName: "CountAsync",
             ContainingTypeFullName: "global::TestApp.Repo",
-            Sql: Sql,
+            Sql: sql,
             Shape: EmitShape.ScalarInt,
             Strategy: BatchEmitStrategy.SingleCommand,
             ReturnTypeDisplay: "global::System.Threading.Tasks.Task<int>",
@@ -90,7 +135,7 @@ public class LinqSqlConstantEmitTests
             Materialization: null,
             MultiResultMaterialization: null,
             MethodParameters: new EquatableArray<ParameterInfo>(ImmutableArray.Create(
-                new ParameterInfo("id", "int", IsCancellationToken: false, IsTransaction: false),
+                valueParameter,
                 new ParameterInfo("ct", "global::System.Threading.CancellationToken", IsCancellationToken: true, IsTransaction: false))),
             CancellationTokenParameterName: "ct",
             TransactionParameterName: null,
@@ -103,7 +148,9 @@ public class LinqSqlConstantEmitTests
             SprocOutputParamsMaterialization: null,
             MethodAccessibilityKeyword: "public",
             LinqSourceComment: comment);
-        return new QueryRepositoryModel(
+
+    private static QueryRepositoryModel Repository(params QueryMethodModel[] methods)
+        => new(
             ContainingTypeFullName: "global::TestApp.Repo",
             ContainingTypeName: "Repo",
             Namespace: "TestApp",
@@ -111,8 +158,7 @@ public class LinqSqlConstantEmitTests
             ConnectionResolved: true,
             ContainingTypePartial: true,
             ContainingTypeLocation: null,
-            Methods: new EquatableArray<QueryMethodModel>(ImmutableArray.Create(method)),
+            Methods: new EquatableArray<QueryMethodModel>(ImmutableArray.Create(methods)),
             ContainingTypeChain: default,
             HintName: "TestApp.Repo.g.cs");
-    }
 }

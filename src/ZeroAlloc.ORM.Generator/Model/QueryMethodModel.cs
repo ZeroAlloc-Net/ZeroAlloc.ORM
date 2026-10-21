@@ -284,10 +284,16 @@ internal sealed record QueryMethodModel(
     bool HasNpgsql = false,
     // [LinqQuery] — the one-line description of the LINQ chain the SQL came from.
     // Non-null only for a [LinqQuery] method: the emit then writes the SQL as a
-    // `private const string __sql_<Method>` above the method, preceded by this
-    // text as a `//` comment, and uses the constant as the CommandText. Null for
-    // [Query] / [Command] / [StoredProcedure], whose emit is unchanged.
-    string? LinqSourceComment = null);
+    // `private const string __sql<index>_<Method>` above the method, preceded by
+    // this text as a `//` comment, and uses the constant as the CommandText. Null
+    // for [Query] / [Command] / [StoredProcedure], whose emit is unchanged.
+    string? LinqSourceComment = null,
+    // [LinqQuery] — the name of that SQL constant. Emit-only: never set by the
+    // transform, so it plays no part in incremental caching. RenderRepository sets
+    // it once per method from the method's index in the repository, so overloads
+    // get distinct constants, and BuildCommandTextAssignment uses it as the
+    // CommandText when non-null.
+    string? LinqSqlConstantName = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
