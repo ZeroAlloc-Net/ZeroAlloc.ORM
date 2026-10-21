@@ -36,13 +36,10 @@ internal static class EnumParameterStorage
         {
             SqlSelectStatement own => own,
             SqlAggregateStatement aggregate => aggregate.Source,
-            _ => null,
+            _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
         };
-        if (select is not null)
-        {
-            foreach (var predicate in select.Predicates)
-                Visit(predicate);
-        }
+        foreach (var predicate in select.Predicates)
+            Visit(predicate);
 
         // A parameter compared with a decided one binds the same way.
         for (var changed = true; changed;)
@@ -102,6 +99,14 @@ internal static class EnumParameterStorage
                     Visit(conditional.Condition);
                     Visit(conditional.Predicate);
                     break;
+                // Forms that compare no enum parameter with a column or another parameter. One
+                // case per SqlExpression record, as in the renderer, so a new form is decided here.
+                case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
+                    or SqlIsNullExpression or SqlCastExpression or SqlLikeExpression or SqlILikeExpression
+                    or SqlAnyExpression or SqlPagingCountExpression:
+                    break;
+                default:
+                    throw new InvalidOperationException("No enum storage walk for " + expression.GetType().Name + ".");
             }
         }
 
