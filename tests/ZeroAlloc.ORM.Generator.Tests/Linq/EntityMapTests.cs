@@ -117,8 +117,8 @@ public class EntityMapTests
     private static EntityMapModel[] Maps(GeneratorDriverRunResult result) =>
         ((EntityMapSet)result.Results[0].TrackedSteps["EntityMapSets"][0].Outputs[0].Value).Maps.ToArray();
 
-    // The "EntityMaps" step projects Maps out of "EntityMapSets"; nothing consumes it until the LINQ
-    // pipeline does, and Roslyn does not run an unconsumed step, so the tests read the set.
+    // The "EntityMaps" step projects Maps out of "EntityMapSets". Roslyn runs it only when a
+    // [LinqQuery] method consumes it, so these tests read the set; LinqIncrementalityTests covers it.
 
     private static ColumnMapModel Column(EntityMapModel map, string property) =>
         Assert.Single(map.Columns, c => string.Equals(c.Property, property, StringComparison.Ordinal));

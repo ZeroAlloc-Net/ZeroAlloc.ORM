@@ -15,7 +15,7 @@ using ZeroAlloc.TypeConversions;
 namespace ZeroAlloc.ORM.Generator;
 
 [Generator(LanguageNames.CSharp)]
-public sealed class OrmGenerator : IIncrementalGenerator
+public sealed partial class OrmGenerator : IIncrementalGenerator
 {
     private const string QueryAttributeFullName = "ZeroAlloc.ORM.QueryAttribute";
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
@@ -91,6 +91,35 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .Where(static m => m is not null)
             .WithTrackingName("StoredProcedureMethods")!;
 
+        // Entity maps — `[TableMap]` on a map class, with `[ColumnMap]` overrides beside it. One read
+        // per map class, then a collect that orders them (file path, position), drops the second map
+        // of an entity and reports it as ZAO106. `entityMaps` is the provider the LINQ query pipeline
+        // combines with its methods; `entityMapSets` also carries the diagnostics.
+        var entityMapSets = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.TableMapAttribute",
+                predicate: static (node, _) => node is ClassDeclarationSyntax,
+                transform: static (ctx, ct) => EntityMapReader.Read(ctx, TypeDisplayFormat, ct))
+            .WithTrackingName("EntityMapReads")
+            .Collect()
+            .Select(static (results, _) => EntityMapReader.Resolve(results))
+            .WithTrackingName("EntityMapSets");
+
+        var entityMaps = entityMapSets
+            .Select(static (set, _) => set.Maps)
+            .WithTrackingName("EntityMaps");
+
+        context.RegisterSourceOutput(entityMapSets, static (sourceCtx, set) =>
+        {
+            foreach (var diagnostic in set.Diagnostics)
+                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
+        });
+
+        // [LinqQuery] — the SQL comes from the companion's LINQ chain. Each method is read into a
+        // symbol-free translation plus its [Query]-path model, then bound to the entity maps; the
+        // methods that bind join the union below. See OrmGenerator.Linq.cs.
+        var linqQueryMethods = LinqQueryMethods(context, entityMaps);
+
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
         // location, etc.) — we take them from g.First() instead of duplicating them
@@ -112,10 +141,12 @@ public sealed class OrmGenerator : IIncrementalGenerator
         var allMethods = queryMethods.Collect()
             .Combine(commandMethods.Collect())
             .Combine(storedProcedureMethods.Collect())
+            .Combine(linqQueryMethods.Collect())
             .SelectMany(static (combined, _) =>
             {
-                var pair = combined.Left;
-                var sprocs = combined.Right;
+                var pair = combined.Left.Left;
+                var sprocs = combined.Left.Right;
+                var linq = combined.Right;
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 var union = ImmutableArray.CreateBuilder<QueryMethodWithTypeContext>();
                 foreach (var m in pair.Left)
@@ -131,6 +162,10 @@ public sealed class OrmGenerator : IIncrementalGenerator
                 foreach (var m in sprocs)
                 {
                     if (m is null) continue;
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
+                }
+                foreach (var m in linq)
+                {
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 return union.ToImmutable();
@@ -235,30 +270,6 @@ public sealed class OrmGenerator : IIncrementalGenerator
             .WithTrackingName("StoreAsStringDiagnostics");
 
         context.RegisterSourceOutput(storeAsStringDiagnostics, ReportStandaloneDiagnostic);
-
-        // Entity maps — `[TableMap]` on a map class, with `[ColumnMap]` overrides beside it. One read
-        // per map class, then a collect that orders them (file path, position), drops the second map
-        // of an entity and reports it as ZAO106. `entityMaps` is the provider the LINQ query pipeline
-        // combines with its methods; `entityMapSets` also carries the diagnostics.
-        var entityMapSets = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
-                fullyQualifiedMetadataName: "ZeroAlloc.ORM.TableMapAttribute",
-                predicate: static (node, _) => node is ClassDeclarationSyntax,
-                transform: static (ctx, ct) => EntityMapReader.Read(ctx, TypeDisplayFormat, ct))
-            .WithTrackingName("EntityMapReads")
-            .Collect()
-            .Select(static (results, _) => EntityMapReader.Resolve(results))
-            .WithTrackingName("EntityMapSets");
-
-        var entityMaps = entityMapSets
-            .Select(static (set, _) => set.Maps)
-            .WithTrackingName("EntityMaps");
-
-        context.RegisterSourceOutput(entityMapSets, static (sourceCtx, set) =>
-        {
-            foreach (var diagnostic in set.Diagnostics)
-                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
-        });
 
         // ZAO083 — [Json] is only legal on a string. Like ZAO042 it has its own
         // pipeline: the marker sits on a parameter or property, and a misapplied one
@@ -4078,7 +4089,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
     // matches an unprefixed ParameterName to it. An override written with a sigil,
     // `[Param(Name = "@orderId")]` as v1 required, is normalised to `orderId` so the
     // one rule holds for every parameter and existing overrides keep compiling.
-    private static string? ReadParamNameOverride(IParameterSymbol p)
+    internal static string? ReadParamNameOverride(IParameterSymbol p)
     {
         foreach (var attr in p.GetAttributes())
         {
@@ -4740,7 +4751,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
         return false;
     }
 
-    private static bool IsIAsyncDbTransaction(ITypeSymbol type)
+    internal static bool IsIAsyncDbTransaction(ITypeSymbol type)
     {
         // Mirror of IsIAsyncDbConnection — same two-tier match for the same reason.
         // Snapshot test compilations that don't transitively reference AdoNet.Async
@@ -4886,7 +4897,7 @@ public sealed class OrmGenerator : IIncrementalGenerator
 
     // FlatRow: the widest public instance ctor with parameters; the first one wins a
     // tie. Positional records synthesize one ctor matching the parameter list.
-    private static IMethodSymbol? FlatRowConstructor(INamedTypeSymbol record)
+    internal static IMethodSymbol? FlatRowConstructor(INamedTypeSymbol record)
         => record.InstanceConstructors
             .Where(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
             .OrderByDescending(c => c.Parameters.Length)
@@ -4957,6 +4968,15 @@ public sealed class OrmGenerator : IIncrementalGenerator
         "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
         "ZAO083" => DiagnosticDescriptors.ZAO083_JsonRequiresString,
         "ZAO106" => DiagnosticDescriptors.ZAO106_InvalidEntityMap,
+        "ZAO100" => DiagnosticDescriptors.ZAO100_InvalidLinqCompanion,
+        "ZAO101" => DiagnosticDescriptors.ZAO101_LinqCompanionParameterMismatch,
+        "ZAO102" => DiagnosticDescriptors.ZAO102_UnsupportedLinqConstruct,
+        "ZAO103" => DiagnosticDescriptors.ZAO103_LinqCapture,
+        "ZAO104" => DiagnosticDescriptors.ZAO104_UnmappedLinqEntity,
+        "ZAO105" => DiagnosticDescriptors.ZAO105_UnmappedLinqMember,
+        "ZAO107" => DiagnosticDescriptors.ZAO107_UnsupportedLinqProjection,
+        "ZAO108" => DiagnosticDescriptors.ZAO108_LinqRequiresPostgreSql,
+        "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         _ => null,
     };
 

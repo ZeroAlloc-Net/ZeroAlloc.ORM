@@ -5,4 +5,13 @@
 
 Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
+ZAO100  | ZeroAlloc.ORM | Error    | Invalid LINQ companion
+ZAO101  | ZeroAlloc.ORM | Error    | LINQ companion parameters do not match the method
+ZAO102  | ZeroAlloc.ORM | Error    | Unsupported LINQ construct
+ZAO103  | ZeroAlloc.ORM | Error    | LINQ query captures a value
+ZAO104  | ZeroAlloc.ORM | Error    | LINQ entity has no table map
+ZAO105  | ZeroAlloc.ORM | Error    | LINQ member is not a mapped column
 ZAO106  | ZeroAlloc.ORM | Error    | Invalid entity map
+ZAO107  | ZeroAlloc.ORM | Error    | Unsupported LINQ projection
+ZAO108  | ZeroAlloc.ORM | Error    | LINQ query requires the PostgreSQL dialect
+ZAO112  | ZeroAlloc.ORM | Error    | LINQ method return type does not fit the query
