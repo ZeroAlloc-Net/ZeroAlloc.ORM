@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.AfterQuery
-    private const string __sql0_After = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (\"CreatedAt\", \"Id\") > (@afterAt, @afterId) ORDER BY \"CreatedAt\", \"Id\" LIMIT @take";
+    private const string __sql0_After = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE (\"CreatedAt\", \"Id\") > (@afterAt, @afterId) ORDER BY \"CreatedAt\", \"Id\" LIMIT GREATEST(@take, 0)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> After(global::System.DateTimeOffset @afterAt, global::System.Guid @afterId, int @take, global::System.Threading.CancellationToken @ct)

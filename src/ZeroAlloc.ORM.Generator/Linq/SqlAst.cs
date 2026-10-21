@@ -173,6 +173,15 @@ internal enum SqlLiteralKind
     String,
 }
 
+/// <summary>
+/// A Skip or Take parameter, clamped as LINQ reads it: a negative count skips or takes nothing,
+/// where PostgreSQL rejects a negative LIMIT or OFFSET. <c>GREATEST(@n, 0)</c>, or
+/// <c>LEAST(GREATEST(@n, 0), 1)</c> when the single-row shape reads one row at most.
+/// </summary>
+/// <param name="Count">The parameter.</param>
+/// <param name="AtMostOne">Whether the count is also capped at 1.</param>
+internal sealed record SqlPagingCountExpression(SqlExpression Count, bool AtMostOne) : SqlExpression;
+
 /// <summary>One ORDER BY key.</summary>
 internal sealed record SqlOrdering(SqlExpression Expression, bool Descending);
 

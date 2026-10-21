@@ -98,6 +98,7 @@ public sealed partial class OrmGenerator
             Materialization = ReadEnumsAsStrings(core.Method.Materialization, bound.EnumAsStringOrdinals),
         };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
+        method = UnbindUnreferenced(method, SqlParameterReferences.Collect(statement));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
     }
 
@@ -156,6 +157,28 @@ public sealed partial class OrmGenerator
             MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
             DbTypeChecks = new EquatableArray<DbTypeCheck>(checks.ToImmutable()),
         };
+    }
+
+    // A value parameter the rendered SQL never names, such as one only a dropped projection
+    // used, would cost a DbParameter per call for nothing. It stays in the signature.
+    private static QueryMethodModel UnbindUnreferenced(QueryMethodModel method, System.Collections.Generic.HashSet<string> referenced)
+    {
+        var parameters = method.MethodParameters.Values.ToBuilder();
+        var changed = false;
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            var parameter = parameters[i];
+            if (parameter.IsCancellationToken || parameter.IsTransaction
+                || referenced.Contains(parameter.ParamNameOverride ?? parameter.Name))
+            {
+                continue;
+            }
+            parameters[i] = parameter with { IsUnreferenced = true };
+            changed = true;
+        }
+        return changed
+            ? method with { MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()) }
+            : method;
     }
 
     // A column mapped with EnumAsString stores the member name. When the row member it feeds is

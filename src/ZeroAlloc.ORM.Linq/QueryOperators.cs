@@ -59,7 +59,10 @@ public static class QueryOperators
     /// <summary>Skips rows (OFFSET).</summary>
     /// <typeparam name="T">The element type of the query.</typeparam>
     /// <param name="source">The query to extend.</param>
-    /// <param name="count">The number of rows to skip.</param>
+    /// <param name="count">
+    /// The number of rows to skip: a companion parameter, or a non-negative <see langword="int"/>
+    /// literal. A negative parameter skips nothing, as in LINQ to Objects.
+    /// </param>
     /// <returns>Never returns; the generator reads the call at build time.</returns>
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static IQuery<T> Skip<T>(this IQuery<T> source, int count) => throw Guidance.Exception();
@@ -67,7 +70,10 @@ public static class QueryOperators
     /// <summary>Limits rows (LIMIT).</summary>
     /// <typeparam name="T">The element type of the query.</typeparam>
     /// <param name="source">The query to extend.</param>
-    /// <param name="count">The maximum number of rows.</param>
+    /// <param name="count">
+    /// The maximum number of rows: a companion parameter, or a non-negative <see langword="int"/>
+    /// literal. A negative parameter takes no rows, as in LINQ to Objects.
+    /// </param>
     /// <returns>Never returns; the generator reads the call at build time.</returns>
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static IQuery<T> Take<T>(this IQuery<T> source, int count) => throw Guidance.Exception();

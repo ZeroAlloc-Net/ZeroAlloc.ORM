@@ -75,6 +75,11 @@ public sealed class PostgresLinqOrderPagingTests
         // OFFSET paging walks the same rows by Order, descending.
         var offsetPage = await repo.OffsetPageAsync(20, 10, CancellationToken.None).ConfigureAwait(false);
         offsetPage.Select(r => r.Order).Should().Equal(4, 3, 2, 1, 0);
+
+        // A negative count reads as LINQ does: Skip(-5) skips nothing, Take(-1) takes nothing.
+        var clamped = await repo.OffsetPageAsync(-5, 3, CancellationToken.None).ConfigureAwait(false);
+        clamped.Select(r => r.Order).Should().Equal(24, 23, 22);
+        (await repo.OffsetPageAsync(0, -1, CancellationToken.None).ConfigureAwait(false)).Should().BeEmpty();
     }
 
     [Fact]
@@ -102,6 +107,9 @@ public sealed class PostgresLinqOrderPagingTests
         (await repo.CountPageAsync(2, 4, 3, CancellationToken.None).ConfigureAwait(false)).Should().Be(0);
         (await repo.AnyPageAsync(2, 3, CancellationToken.None).ConfigureAwait(false)).Should().BeTrue();
         (await repo.AnyPageAsync(2, 4, CancellationToken.None).ConfigureAwait(false)).Should().BeFalse();
+
+        // The label is only in the projection Count drops, so it is not bound at all.
+        (await repo.CountLabeledAsync("unused", 2, CancellationToken.None).ConfigureAwait(false)).Should().Be(4);
     }
 
     [Fact]
@@ -111,6 +119,9 @@ public sealed class PostgresLinqOrderPagingTests
         var repo = new LinqOrderPagingRepo(fx.Connection);
         var id = Guid.NewGuid();
 
+        // Npgsql runs a command on the connection's open transaction whether or not the command
+        // names it, so this case cannot tell a passed-through transaction from a dropped one.
+        // The generator snapshot Count_long_count_any pins `__cmd.Transaction = @tx;` instead.
         var tx = await fx.Connection.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
         await using (tx.ConfigureAwait(false))
         {

@@ -751,10 +751,11 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO108"));
 
-    // ZAO110 — a [LinqQuery] list or stream pages with Skip or Take but has no OrderBy, so which
-    // rows a page holds is up to PostgreSQL. A warning: the query runs as written. The single-row
-    // shape's implicit LIMIT 1 and the Count, LongCount and Any terminals do not report it.
-    // Reported at the first Skip or Take.
+    // ZAO110 — a [LinqQuery] list or stream pages with Skip or Take, or a single-row method skips
+    // with Skip, but the chain has no OrderBy, so which rows a page holds is up to PostgreSQL. A
+    // warning: the query runs as written. The single-row shape without a Skip, which reads any
+    // one row, and the Count, LongCount and Any terminals do not report it. Reported at the
+    // first Skip or Take.
     public static readonly DiagnosticDescriptor ZAO110_LinqPagingWithoutOrder = new(
         id: "ZAO110",
         title: "LINQ paging without OrderBy",

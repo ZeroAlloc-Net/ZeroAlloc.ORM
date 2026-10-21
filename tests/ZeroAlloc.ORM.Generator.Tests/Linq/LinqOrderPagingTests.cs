@@ -49,8 +49,9 @@ public class LinqOrderPagingTests
             """);
     }
 
-    // Skip and Take take a parameter or an int literal. On the single-row shape a Take sets
-    // the LIMIT, in place of the implicit LIMIT 1, and a Skip alone keeps LIMIT 1.
+    // Skip and Take take a parameter, clamped at 0 as LINQ reads a negative count, or an int
+    // literal. The single-row shape reads one row at most: a Take literal becomes min(n, 1), a
+    // Take parameter is capped at 1 too, and a Skip alone keeps LIMIT 1.
     [Fact]
     public void Skip_take_parameters()
     {
@@ -66,6 +67,9 @@ public class LinqOrderPagingTests
 
                 [LinqQuery(nameof(TopQuery))]
                 public partial Task<TaskSummary?> FirstOfTop(CancellationToken ct);
+
+                [LinqQuery(nameof(PageQuery))]
+                public partial Task<TaskSummary?> FirstOfPage(int skip, int take, CancellationToken ct);
 
                 private static IQuery<TaskSummary> PageQuery(int skip, int take) =>
                     Sql.Table<TaskEntity>()
@@ -215,6 +219,24 @@ public class LinqOrderPagingTests
             """);
     }
 
+    // A terminal drops its projection, and with it the only use of 'label': the method keeps the
+    // parameter, but binds no DbParameter for it.
+    [Fact]
+    public void Terminal_binds_no_parameter_its_dropped_projection_used()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(CountQuery))]
+                public partial Task<int> CountLabeled(string label, int min, CancellationToken ct);
+
+                private static IQuery<int> CountQuery(string label, int min) =>
+                    Sql.Table<TaskEntity>()
+                        .Where(t => t.Order >= min)
+                        .Select(t => new TaskSummary(t.Id, label))
+                        .Count();
+            }
+            """);
+    }
+
     // ZAO110 is a warning: the method is still generated, with the SQL as written.
     [Fact]
     public void Skip_without_order_warns_ZAO110()
@@ -259,20 +281,46 @@ public class LinqOrderPagingTests
         Assert.Single(result.Results[0].GeneratedSources);
     }
 
-    // The single-row shape reads one row whatever the order, and a terminal does not depend
-    // on the order at all, so neither warns.
+    // "The row after N others" depends on the order as much as a page does.
+    [Fact]
+    public void Skip_on_a_single_row_without_order_warns_ZAO110()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """
+                [LinqQuery(nameof(PageQuery))]
+                public partial Task<TaskSummary?> Nth(int skip, CancellationToken ct);
+
+                private static IQuery<TaskSummary> PageQuery(int skip) =>
+                    Sql.Table<TaskEntity>().Skip(skip).Take(3).Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO110", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("Skip", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Single(result.Results[0].GeneratedSources);
+    }
+
+    // The single-row shape without a Skip reads any one row, and a terminal does not depend on
+    // the order at all, so neither warns.
     [Fact]
     public void Single_row_and_terminals_without_order_do_not_warn()
     {
         var (result, _) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """
-                [LinqQuery(nameof(PageQuery))]
-                public partial Task<TaskSummary?> Nth(int skip, CancellationToken ct);
+                [LinqQuery(nameof(AnyQuery))]
+                public partial Task<TaskSummary?> AnyOne(CancellationToken ct);
+
+                [LinqQuery(nameof(TakeQuery))]
+                public partial Task<TaskSummary?> OneOfTop(int take, CancellationToken ct);
 
                 [LinqQuery(nameof(CountQuery))]
                 public partial Task<int> CountPage(CancellationToken ct);
 
-                private static IQuery<TaskSummary> PageQuery(int skip) =>
-                    Sql.Table<TaskEntity>().Skip(skip).Select(t => new TaskSummary(t.Id, t.Title));
+                private static IQuery<TaskSummary> AnyQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => new TaskSummary(t.Id, t.Title));
+
+                private static IQuery<TaskSummary> TakeQuery(int take) =>
+                    Sql.Table<TaskEntity>().Take(take).Select(t => new TaskSummary(t.Id, t.Title));
 
                 private static IQuery<int> CountQuery() =>
                     Sql.Table<TaskEntity>().Skip(5).Take(10).Count();

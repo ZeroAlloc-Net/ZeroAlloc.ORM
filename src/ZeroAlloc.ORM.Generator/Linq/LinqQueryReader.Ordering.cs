@@ -37,7 +37,8 @@ internal static partial class LinqQueryReader
 
     // Skip(n) and Take(n): OFFSET and LIMIT, each at most once, with Skip first, so the SQL
     // reads them in the order the chain applies them. n is a companion parameter, bound with
-    // its Int32 facet, or a non-negative int literal.
+    // its Int32 facet and clamped at 0 as LINQ does, or a non-negative int literal, since a
+    // negative literal is surely a mistake.
     private static bool ReadPaging(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         var name = invocation.TargetMethod.Name;
@@ -56,6 +57,8 @@ internal static partial class LinqQueryReader
             return false;
         }
 
+        // A literal is non-negative already; a parameter is clamped when rendered.
+        if (count is SqlParameterExpression) count = new SqlPagingCountExpression(count, AtMostOne: false);
         if (isTake) chain.Limit = count;
         else chain.Offset = count;
         chain.PagingOperator = name;

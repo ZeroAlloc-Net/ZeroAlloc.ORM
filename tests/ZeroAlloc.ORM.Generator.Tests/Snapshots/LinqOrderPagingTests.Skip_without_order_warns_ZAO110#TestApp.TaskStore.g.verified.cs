@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.PageQuery
-    private const string __sql0_Page = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"IsActive\" LIMIT 10 OFFSET @skip";
+    private const string __sql0_Page = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"IsActive\" LIMIT 10 OFFSET GREATEST(@skip, 0)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Page(int @skip, global::System.Threading.CancellationToken @ct)

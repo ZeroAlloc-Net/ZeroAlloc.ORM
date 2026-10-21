@@ -48,14 +48,17 @@ internal static partial class LinqQueryReader
         var chain = new ChainBuilder();
         if (operation is null || !ReadChain(operation, chain, context)) return null;
 
-        // ZAO110: the implicit LIMIT 1 below is not a Take, and a scalar shape does not depend on
-        // the order, so only the row-list shapes warn.
-        if (shape is LinqResultShape.List or LinqResultShape.Stream
-            && chain.PagingLocation is { } paging
-            && chain.Ordering.Count == 0)
+        // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
+        // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,
+        // or a Take, reads any one row. A scalar shape does not depend on the order at all.
+        var unorderedPaging = shape switch
         {
-            context.Report(LinqDiagnostics.UnorderedPaging(paging));
-        }
+            LinqResultShape.List or LinqResultShape.Stream => chain.PagingLocation,
+            LinqResultShape.SingleRow when chain.Offset is not null => chain.PagingLocation,
+            _ => null,
+        };
+        if (unorderedPaging is not null && chain.Ordering.Count == 0)
+            context.Report(LinqDiagnostics.UnorderedPaging(unorderedPaging));
 
         // A terminal reads the chain's rows, without the projection: Select(...).Count() counts
         // the same rows as Count(). The ordering goes too; it changes neither a count nor an
@@ -78,9 +81,7 @@ internal static partial class LinqQueryReader
             return null;
         }
 
-        // The single-row shape reads the first row. A later Take sets Limit itself, which wins;
-        // a check on Skip/Take without OrderBy must look at the chain, not at this implicit LIMIT.
-        var limit = chain.Limit ?? (shape == LinqResultShape.SingleRow ? SqlLiteralExpression.Number("1") : null);
+        var limit = shape == LinqResultShape.SingleRow ? SingleRowLimit(chain.Limit) : chain.Limit;
         return new SqlSelectStatement(
             chain.From!,
             new EquatableArray<SqlExpression>(projection),
@@ -148,6 +149,18 @@ internal static partial class LinqQueryReader
             _ => Unsupported(invocation, "'" + name + "'", context),
         };
     }
+
+    // The single-row shape reads the first row, so it never needs more than LIMIT 1: a Take
+    // literal becomes min(n, 1) and a Take parameter is capped at 1 as well as clamped at 0.
+    // A check on Skip/Take without OrderBy must look at the chain, not at this LIMIT.
+    private static SqlExpression SingleRowLimit(SqlExpression? take) => take switch
+    {
+        null => SqlLiteralExpression.Number("1"),
+        SqlLiteralExpression { Value: "0" } literal => literal,
+        SqlLiteralExpression => SqlLiteralExpression.Number("1"),
+        SqlPagingCountExpression count => count with { AtMostOne = true },
+        _ => take,
+    };
 
     private static SqlAggregate? TerminalOf(string operatorName) => operatorName switch
     {

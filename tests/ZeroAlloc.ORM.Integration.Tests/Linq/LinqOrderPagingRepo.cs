@@ -45,6 +45,9 @@ internal sealed partial class LinqOrderPagingRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(AnyPageQuery))]
     public partial Task<bool> AnyPageAsync(int min, int skip, CancellationToken ct);
 
+    [LinqQuery(nameof(CountLabeledQuery))]
+    public partial Task<int> CountLabeledAsync(string label, int min, CancellationToken ct);
+
     [LinqQuery(nameof(CountAtLeastQuery))]
     public partial Task<int> CountAtLeastInTransactionAsync(int min, IAsyncDbTransaction tx, CancellationToken ct);
 
@@ -81,6 +84,9 @@ internal sealed partial class LinqOrderPagingRepo(IAsyncDbConnection connection)
 
     private static IQuery<bool> AnyTitledQuery(string title) =>
         Sql.Table<TaskEntity>().Where(t => string.Equals(t.Title, title, StringComparison.Ordinal)).Any();
+
+    private static IQuery<int> CountLabeledQuery(string label, int min) =>
+        Sql.Table<TaskEntity>().Where(t => t.Order >= min).Select(t => new TaskLine(t.Id, label, t.Order)).Count();
 
     private static IQuery<int> CountPageQuery(int min, int skip, int take) =>
         Sql.Table<TaskEntity>().Where(t => t.Order >= min).OrderBy(t => t.Order).Skip(skip).Take(take).Count();

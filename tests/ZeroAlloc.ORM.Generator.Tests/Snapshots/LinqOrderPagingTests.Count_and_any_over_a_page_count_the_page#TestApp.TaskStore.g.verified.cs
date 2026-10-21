@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.CountPageQuery
-    private const string __sql0_CountPage = "SELECT count(*)::int FROM (SELECT 1 FROM \"Tasks\" WHERE \"IsActive\" LIMIT @take OFFSET @skip) AS q";
+    private const string __sql0_CountPage = "SELECT count(*)::int FROM (SELECT 1 FROM \"Tasks\" WHERE \"IsActive\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)) AS q";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<int> CountPage(int @skip, int @take, global::System.Threading.CancellationToken @ct)
@@ -61,7 +61,7 @@ partial class TaskStore
     }
 
     // LINQ: TaskStore.AnyPageQuery
-    private const string __sql2_AnyPage = "SELECT EXISTS (SELECT 1 FROM \"Tasks\" WHERE \"IsActive\" OFFSET @skip)";
+    private const string __sql2_AnyPage = "SELECT EXISTS (SELECT 1 FROM \"Tasks\" WHERE \"IsActive\" OFFSET GREATEST(@skip, 0))";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<bool> AnyPage(int @skip, global::System.Threading.CancellationToken @ct)

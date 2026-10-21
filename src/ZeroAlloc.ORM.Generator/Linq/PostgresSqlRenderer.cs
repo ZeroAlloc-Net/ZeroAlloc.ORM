@@ -149,6 +149,13 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlRowComparisonExpression rows:
                 RenderRowComparison(sb, rows, names);
                 break;
+            case SqlPagingCountExpression count:
+                if (count.AtMostOne) sb.Append("LEAST(");
+                sb.Append("GREATEST(");
+                RenderExpression(sb, count.Count, names);
+                sb.Append(", 0)");
+                if (count.AtMostOne) sb.Append(", 1)");
+                break;
             case SqlNotExpression { Operand: SqlBinaryExpression { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or } grouped }:
                 // AND and OR bring their own parentheses.
                 sb.Append("NOT ");

@@ -207,7 +207,10 @@ internal sealed record ParameterInfo(
     // placeholder and row, never one for itself, so no `[Param]` member applies.
     bool IsBulkInsertCollection = false,
     // A string marked `[Json]`: the binding sets NpgsqlDbType.Jsonb after `.Value`.
-    bool IsJson = false);
+    bool IsJson = false,
+    // [LinqQuery] only: the rendered SQL never names the parameter, for instance when a Count
+    // drops the projection that used it. The signature keeps it; no DbParameter is bound.
+    bool IsUnreferenced = false);
 
 // v2.0, #235 — `[Param]` members that shape the DbParameter's type. Each field is
 // null unless the adopter wrote the member, so the emit sets only what was asked

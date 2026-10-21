@@ -8071,7 +8071,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -8109,7 +8109,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks, one per inner ctor argument. The sentinel comment pins
@@ -8315,7 +8315,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
@@ -8577,7 +8577,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         foreach (var p in m.MethodParameters)
         {
-            if (p.IsCancellationToken || p.IsTransaction) continue;
+            if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
 
             // v0.5 Phase B — composite parameter unpacks into N DbParameter
             // blocks (see EmitCompositeParameterBinding). The sentinel comment
