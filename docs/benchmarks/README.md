@@ -74,10 +74,10 @@ the process to fixed CPUs where you can, for example `taskset -c 2-5 dotnet run 
 
 | File                            | Backend  | Captured on | Notes                              |
 |---------------------------------|----------|-------------|------------------------------------|
-| `v2.x-sqlite-results.md`        | Sqlite   | 2026-10-15  | 2.3.1; Linux VM, SDK 10.0.402, BenchmarkDotNet 0.15.8, 3 launches, pinned to 4 vCPUs |
-| `v2.x-postgres-results.md`      | Postgres | 2026-10-15  | 2.3.1; same setup, Docker `postgres:16-alpine`; first Postgres capture |
+| `v2.x-sqlite-results.md`        | Sqlite   | 2026-10-21  | 2.4.0; idle Windows 11 laptop, SDK 10.0.402, BenchmarkDotNet 0.15.8, 3 launches, pinned to 2 cores |
+| `v2.x-postgres-results.md`      | Postgres | 2026-10-21  | 2.4.0; same setup, Docker `postgres:16-alpine` on the same machine |
 | `v0.7.0-sqlite-results.md`      | Sqlite   | 2026-06-01  | Historical: v0.7.0, Windows 11, SDK 10.0.300, BenchmarkDotNet 0.15.2 |
 
-The 2.x captures publish exact allocations and same-run ratios only, because the benchmark host
-is a shared VM; absolute timings are not published. The v0.7.0 file keeps its absolute timings
+The 2.x captures publish exact allocations and same-run ratios only; absolute timings are not
+published, because they drift between runs and machines while a ratio measured side by side holds. The v0.7.0 file keeps its absolute timings
 from a different machine; do not compare them with the 2.x ratios.
