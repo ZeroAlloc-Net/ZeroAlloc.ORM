@@ -14,19 +14,24 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal abstract record SqlStatement;
 
 /// <summary>
-/// <c>SELECT projection FROM table [WHERE predicates] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
+/// <c>SELECT projection FROM table [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
 /// </summary>
 /// <param name="From">The queried entity.</param>
 /// <param name="Projection">The SELECT list, in the order the row type's constructor reads it.</param>
 /// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
 /// <param name="Ordering">ORDER BY keys, in order. Empty for no ORDER BY clause.</param>
 /// <param name="Paging">LIMIT and OFFSET.</param>
+/// <param name="GroupBy">
+/// GROUP BY keys, in the order the key selector names them. Empty for no GROUP BY clause. A
+/// grouped projection and ordering read only these keys and aggregate calls.
+/// </param>
 internal sealed record SqlSelectStatement(
     SqlTableSource From,
     EquatableArray<SqlExpression> Projection,
     EquatableArray<SqlExpression> Predicates,
     EquatableArray<SqlOrdering> Ordering,
-    SqlPaging Paging) : SqlStatement;
+    SqlPaging Paging,
+    EquatableArray<SqlExpression> GroupBy = default) : SqlStatement;
 
 /// <summary>
 /// A <c>Count()</c>, <c>LongCount()</c> or <c>Any()</c> terminal over a SELECT: one value, read
@@ -240,6 +245,16 @@ internal sealed record SqlAggregateCallExpression(
     SqlExpression? Argument,
     string? ResultCast,
     bool CoalesceToZero) : SqlExpression;
+
+/// <summary>
+/// C#'s <c>.Date</c> on a <c>DateTime</c> or <c>DateTimeOffset</c> column:
+/// <c>date_trunc('day', operand)</c>, as EF Core's Npgsql provider translates it. Over a
+/// <c>timestamptz</c> the day boundary follows the session's <c>TimeZone</c>, so
+/// <c>Timezone=UTC</c> in the connection string matches C#'s <c>.Date</c> on the UTC values
+/// Npgsql reads. The result is a timestamp of the operand's type, read as a <c>DateTime</c>.
+/// </summary>
+/// <param name="Operand">The column.</param>
+internal sealed record SqlDateTruncExpression(SqlExpression Operand) : SqlExpression;
 
 internal enum SqlAggregateFunction
 {

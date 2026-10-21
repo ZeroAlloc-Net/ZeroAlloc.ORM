@@ -74,6 +74,8 @@ internal static partial class LinqQueryReader
                 return false;
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);
+            case SqlDateTruncExpression dateTrunc:
+                return MayBeNull(dateTrunc.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
             case SqlRowComparisonExpression rows:

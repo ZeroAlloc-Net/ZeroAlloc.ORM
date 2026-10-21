@@ -4,7 +4,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // ("Order") as a column, a typed id, an enum stored as int and one stored as text, a text[],
 // a nullable timestamptz, and nullable int, real and int-enum columns for the null semantics.
 // "Projects" lives in its own schema so the map's Schema is used. "Executions" is Daedalus'
-// task-execution log, which the aggregates read.
+// task-execution log, which the aggregates read, and "Sessions" its chat sessions, which the
+// grouped token report reads.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -40,6 +41,13 @@ internal static class LinqSchema
             "TotalTokens" bigint NULL,
             "Cost" numeric NULL,
             "Weight" real NULL
+        );
+        CREATE TABLE "Sessions" (
+            "Id" uuid PRIMARY KEY,
+            "OwnerId" text NOT NULL,
+            "CreatedAt" timestamptz NOT NULL,
+            "TotalInputTokens" bigint NOT NULL,
+            "TotalOutputTokens" bigint NOT NULL
         );
         """;
 }

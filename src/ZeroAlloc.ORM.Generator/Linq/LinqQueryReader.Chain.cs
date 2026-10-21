@@ -43,6 +43,9 @@ internal static partial class LinqQueryReader
         public SqlAggregateCallExpression? Call { get; set; }
 
         public string? TerminalOperator { get; set; }
+
+        // The GroupBy key; the operators after it read groups.
+        public GroupKey? Group { get; set; }
     }
 
     private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
@@ -84,7 +87,9 @@ internal static partial class LinqQueryReader
         if (chain.Projection is not { } projection)
         {
             context.Report(LinqDiagnostics.UnsupportedProjection(
-                "the chain must end with Select(x => new Row(...)), constructing a positional record",
+                chain.Group is null
+                    ? "the chain must end with Select(x => new Row(...)), constructing a positional record"
+                    : "a GroupBy must end with Select(g => new Row(...)), constructing a positional record from g.Key and group aggregates",
                 body.GetLocation()));
             return null;
         }
@@ -95,7 +100,8 @@ internal static partial class LinqQueryReader
             new EquatableArray<SqlExpression>(projection),
             new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
             new EquatableArray<SqlOrdering>(chain.Ordering.ToImmutable()),
-            new SqlPaging(limit, chain.Offset));
+            new SqlPaging(limit, chain.Offset),
+            chain.Group is { } group ? new EquatableArray<SqlExpression>(group.Keys) : default);
     }
 
     // The rows a Sum, Min, Max or Average reads. A page keeps its ordering, which picks the
@@ -150,6 +156,8 @@ internal static partial class LinqQueryReader
     private static bool ReadOperator(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         var name = invocation.TargetMethod.Name;
+        if (chain.Group is not null && UnsupportedAfterGroupBy(name) is { } afterGroup)
+            return Unsupported(invocation, afterGroup, context);
         if (TerminalOf(name) is { } terminal)
         {
             chain.Terminal = terminal;
@@ -159,7 +167,7 @@ internal static partial class LinqQueryReader
 
         // SQL filters and orders before it pages. Written after Skip or Take, a filter or an
         // ordering would apply to the page alone, which one SELECT cannot express.
-        if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
+        if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "GroupBy")
             return Unsupported(invocation, "'" + name + "' after '" + paging + "'", context);
 
         if (IsValueAggregate(name)) return ReadAggregate(invocation, chain, context);
@@ -171,6 +179,7 @@ internal static partial class LinqQueryReader
             "WhereIf" => ReadWhereIf(invocation, chain, context),
             "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => ReadOrdering(invocation, chain, context),
             "Skip" or "Take" => ReadPaging(invocation, chain, context),
+            "GroupBy" => ReadGroupBy(invocation, chain, context),
             _ => Unsupported(invocation, "'" + name + "'", context),
         };
     }
@@ -185,6 +194,16 @@ internal static partial class LinqQueryReader
         SqlLiteralExpression => SqlLiteralExpression.Number("1"),
         SqlPagingCountExpression count => count with { AtMostOne = true },
         _ => take,
+    };
+
+    // After GroupBy, a Where filters groups, which is HAVING; and a terminal would count or
+    // aggregate the groups, which needs a subquery. Neither is translated yet.
+    private static string? UnsupportedAfterGroupBy(string operatorName) => operatorName switch
+    {
+        "Where" or "WhereIf" => "'" + operatorName + "' after 'GroupBy', which filters groups as HAVING,",
+        _ when TerminalOf(operatorName) is not null || IsValueAggregate(operatorName)
+            => "'" + operatorName + "' over the groups of a 'GroupBy'",
+        _ => null,
     };
 
     private static SqlAggregate? TerminalOf(string operatorName) => operatorName switch

@@ -34,6 +34,7 @@ internal static class SqlParameterReferences
     {
         foreach (var item in select.Projection) Add(item, names);
         foreach (var predicate in select.Predicates) Add(predicate, names);
+        foreach (var key in select.GroupBy) Add(key, names);
         foreach (var ordering in select.Ordering) Add(ordering.Expression, names);
         if (select.Paging.Limit is { } limit) Add(limit, names);
         if (select.Paging.Offset is { } offset) Add(offset, names);
@@ -90,6 +91,9 @@ internal static class SqlParameterReferences
                 break;
             case SqlAggregateCallExpression call:
                 if (call.Argument is { } argument) Add(argument, names);
+                break;
+            case SqlDateTruncExpression dateTrunc:
+                Add(dateTrunc.Operand, names);
                 break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + expression.GetType().Name + ".");

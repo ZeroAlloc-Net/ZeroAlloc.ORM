@@ -41,6 +41,11 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         sb.Append("SELECT ");
         AppendList(sb, select.Projection, names);
         RenderFromWhere(sb, select, names);
+        if (select.GroupBy.Length > 0)
+        {
+            sb.Append(" GROUP BY ");
+            AppendList(sb, select.GroupBy, names);
+        }
         RenderOrdering(sb, select, names);
         RenderPaging(sb, select.Paging, names);
     }
@@ -253,6 +258,11 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             case SqlAggregateCallExpression call:
                 RenderAggregateCall(sb, call, names);
+                break;
+            case SqlDateTruncExpression dateTrunc:
+                sb.Append("date_trunc('day', ");
+                RenderExpression(sb, dateTrunc.Operand, names);
+                sb.Append(')');
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

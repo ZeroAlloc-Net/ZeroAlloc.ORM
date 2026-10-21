@@ -1,4 +1,5 @@
 using System;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
@@ -21,6 +22,9 @@ internal static partial class LinqQueryReader
             return Unsupported(invocation, "'" + name + "' without a lambda", context);
         }
 
+        if (chain.Group is { } group)
+            return ReadGroupOrdering(name, returned, row, group, chain, context);
+
         var key = ReadComparand(returned, row, context);
         if (key is null) return false;
         if (key is not SqlMemberExpression)
@@ -33,6 +37,29 @@ internal static partial class LinqQueryReader
 
         chain.Ordering.Add(new SqlOrdering(key, name.EndsWith("Descending", StringComparison.Ordinal)));
         return true;
+    }
+
+    // An ordering of groups: by g.Key, a key member or a group aggregate, as ORDER BY over the
+    // key's expression or the aggregate call.
+    private static bool ReadGroupOrdering(
+        string name,
+        IOperation returned,
+        IParameterSymbol group,
+        GroupKey key,
+        ChainBuilder chain,
+        ReaderContext context)
+    {
+        switch (ReadGroupValue(returned, group, key, context, out var expression))
+        {
+            case OperandRead.Read:
+                chain.Ordering.Add(new SqlOrdering(expression!, name.EndsWith("Descending", StringComparison.Ordinal)));
+                return true;
+            case OperandRead.Reported:
+                return false;
+            default:
+                ReportUnsupported(Unwrap(returned), context);
+                return false;
+        }
     }
 
     // Skip(n) and Take(n): OFFSET and LIMIT, each at most once, with Skip first, so the SQL

@@ -58,6 +58,7 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlConditionalExpression), expressions);
         Assert.True(expressions.Count >= 15, "found " + expressions.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
+        Assert.Contains(typeof(SqlDateTruncExpression), expressions);
         Assert.Equal(
             [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
             Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
@@ -72,15 +73,16 @@ public class SqlAstExhaustivenessTests
         _ = LinqQueryBinder.Bind(statement, new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map)));
     }
 
-    // The expression in every position a statement has: the projection, the WHERE, the ORDER BY
-    // and the paging.
+    // The expression in every position a statement has: the projection, the WHERE, the GROUP BY,
+    // the ORDER BY and the paging.
     private static SqlSelectStatement Select(SqlExpression expression)
         => new(
             From,
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(expression, Descending: false))),
-            new SqlPaging(expression, expression));
+            new SqlPaging(expression, expression),
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)));
 
     // The expression as an aggregate's argument, the position a scalar aggregate adds.
     private static SqlAggregateCallExpression Call(SqlExpression argument)
