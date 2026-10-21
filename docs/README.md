@@ -189,7 +189,7 @@ These pages are the documentation. They also render at [orm.zeroalloc.net](https
 | [composites.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/composites.md) | Multi-column composites (`Money`) and `[Materialize(Factory)]` |
 | [provider-quirks.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/provider-quirks.md) | `[Dialect]` and SQLite / PostgreSQL / SQL Server / MySQL differences |
 | [migrations.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/migrations.md) | `MigrationRunner`, the three dialects, several sources in one database |
-| [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) | `[LinqQuery]`: map classes, the method and companion pattern, operators and their SQL, keyset paging, diagnostics |
+| [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) | `[LinqQuery]`: map classes, the method and companion pattern, operators and their SQL, scalar aggregates, `GroupBy`, inner joins, keyset paging, diagnostics |
 | [observability.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/observability.md) | Composing with ZeroAlloc.Telemetry's `[Instrument]` |
 
 - [Migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md) — parameter names without the `@` prefix, `[Param(DbType)]` on inputs, and the `IMigrationDialect` change.
@@ -202,4 +202,4 @@ ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards
 
 ## Not supported yet
 
-Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. For `[LinqQuery]`, `GroupBy` and joins, loading a parent with its children, and set-based writes with concurrency checks and `FOR UPDATE` come next; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#not-supported-yet). The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).
+Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. For `[LinqQuery]`, loading a parent with its children, and set-based writes with concurrency checks and `FOR UPDATE` come next; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#not-supported-yet). The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).

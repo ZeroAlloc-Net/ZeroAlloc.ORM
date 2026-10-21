@@ -151,6 +151,7 @@ The method's return type picks the shape. `T` is the companion's row type.
 | `Task<int>` or `ValueTask<int>` after `.Count()` | `SELECT count(*)::int ...` |
 | `Task<long>` or `ValueTask<long>` after `.LongCount()` | `SELECT count(*) ...` |
 | `Task<bool>` or `ValueTask<bool>` after `.Any()` | `SELECT EXISTS (SELECT 1 ...)` |
+| `Task<int>`, `Task<long>`, `Task<double>`, `Task<decimal>`, a nullable one, `DateTime?`, `DateTimeOffset?` or `string?`, or the same in `ValueTask`, after `Sum`, `Min`, `Max` or `Average` | see [Scalar aggregates](#scalar-aggregates) |
 
 Any other return type reports [ZAO112](../diagnostics/ZAO112.md).
 
@@ -188,7 +189,9 @@ a mapped column, a companion parameter or a literal; named arguments are put in 
 ```
 
 A column stored by name reads back into its enum. Any other projection, such as an anonymous type, an
-expression or a single column into `List<Guid>`, reports [ZAO107](../diagnostics/ZAO107.md).
+expression or a single column into `List<Guid>`, reports [ZAO107](../diagnostics/ZAO107.md). After a
+`GroupBy` the arguments are group keys and aggregates instead, see [GroupBy](#groupby); after a `Join`
+they read the joined sources, see [Joins](#joins).
 
 ## Operators and their SQL
 
@@ -205,6 +208,9 @@ The chain filters, orders, pages, then projects, in that order:
 | `Take(take)` | `LIMIT GREATEST(@take, 0)`, or `LIMIT 10` for a literal |
 | `Select(t => new Row(...))` | the `SELECT` list |
 | `Count()`, `LongCount()`, `Any()` | see [Result shapes](#result-shapes) |
+| `Sum`, `Min`, `Max`, `Average` | see [Scalar aggregates](#scalar-aggregates) |
+| `GroupBy(t => key)` | see [GroupBy](#groupby) |
+| `Join(Sql.Table<U>(), outer, inner, result)` | see [Joins](#joins) |
 
 The order is checked, and each break of it reports [ZAO102](../diagnostics/ZAO102.md):
 
@@ -219,7 +225,9 @@ Ordering keys are mapped columns. An enum stored by name orders by its member na
 Nulls sort as in LINQ: first in an ascending ordering, last in a descending one. PostgreSQL's own
 default is the opposite, so a key that can be null, such as a nullable column, a nullable group key,
 or a `Min`, `Max` or `Average` of a nullable selector, renders `NULLS FIRST` after `ORDER BY "A"` and
-`NULLS LAST` after `"A" DESC`. A key that cannot be null renders without it.
+`NULLS LAST` after `"A" DESC`. A key that cannot be null renders without it. Releases up to 2.5.0
+ordered a nullable key by PostgreSQL's default, nulls last ascending, so the row order of such a query
+changes with this version.
 
 `Skip` and `Take` take a companion parameter or an `int` literal. A negative parameter counts as 0, as
 in LINQ, through `GREATEST`. A negative literal is a build error. On the single-row shape a `Take`
@@ -307,6 +315,149 @@ parameter wins over the generated type, and ZAO015 checks it against the dialect
 A parameter the rendered SQL does not use, for example one that only a projection dropped by `Count()`
 read, stays in the signature but is not bound.
 
+## Scalar aggregates
+
+`Sum`, `Min`, `Max` and `Average` end a chain like `Count` does, and the method returns the value:
+
+```csharp
+[LinqQuery(nameof(TokensQuery))]
+public partial Task<long> Tokens(Guid taskId, CancellationToken ct);
+
+[LinqQuery(nameof(MeanTokensQuery))]
+public partial Task<double> MeanTokens(Guid taskId, CancellationToken ct);
+
+private static IQuery<long> TokensQuery(Guid taskId) =>
+    Sql.Table<ExecutionEntity>().Where(e => e.TaskId == taskId).Sum(e => (long)e.InputTokens);
+
+private static IQuery<double> MeanTokensQuery(Guid taskId) =>
+    Sql.Table<ExecutionEntity>().Where(e => e.TaskId == taskId).Average(e => e.InputTokens);
+```
+
+| C# | SQL |
+|---|---|
+| `Sum(e => e.Tokens)` | `COALESCE(sum("Tokens"), 0)::<type>`, an exact cast back to the selector's type: `integer`, `bigint`, `numeric` or `double precision` |
+| `Sum(e => e.Weight)`, a `float` widened to `double` | `COALESCE(sum("Weight"::double precision), 0)`: the sum adds doubles, as C# does |
+| `Average(e => e.Tokens)`, `int` or `long` | `avg("Tokens")::double precision` |
+| `Average(e => e.Price)`, `decimal` | `avg("Price")` |
+| `Min(e => e.At)`, `Max(e => e.At)` | `min("At")`, `max("At")` |
+
+The result follows LINQ to Objects, with these rules:
+
+- `Sum` is `0` over no rows, as in LINQ, through `COALESCE`. A nullable selector, `Sum(e => e.Bonus)`
+  with `int? Bonus`, still sums to `0` when every value is null.
+- `Average` is a `double`, for `int` and `long` selectors too, so `Average(e => e.Tokens)` keeps its
+  fraction. A `decimal` average agrees with LINQ only to about 16 significant digits, because
+  PostgreSQL's `avg(numeric)` has its own scale. This is a known difference.
+- `Average`, `Min` and `Max` over no rows return `null` for a nullable result: `Task<double?>`,
+  `Task<DateTime?>`. For a non-null result such as `Task<double>` they throw `InvalidCastException`
+  when no row matches. LINQ throws `InvalidOperationException` there. Ask for the nullable result, or
+  check with `Any()`, when the set can be empty.
+- `Min` and `Max` over a `bool`, a `Guid` or an enum stored by name report ZAO102, because
+  PostgreSQL has no such aggregate or would compare names. A method that returns an enum from a
+  terminal reports [ZAO112](../diagnostics/ZAO112.md).
+- Over a page, `Skip` and `Take` run in a subquery:
+  `SELECT sum("Tokens") FROM (SELECT "Tokens" FROM ... ORDER BY ... LIMIT ...) AS q`.
+  The `ORDER BY` stays inside it, because which rows form the page decides the result; without one
+  the chain reports [ZAO110](../diagnostics/ZAO110.md). A paged `Count` or `Any` needs no ordering.
+
+## GroupBy
+
+`GroupBy` makes `IQuery<IGroup<TKey, T>>`. A group has `g.Key` and the aggregates `Count`,
+`LongCount`, `Sum`, `Min`, `Max` and `Average`, and the chain ends with a `Select` that builds a
+positional record from them:
+
+```csharp
+private static IQuery<ModelDayTokens> TokensPerModelAndDayQuery(DateTime since) =>
+    Sql.Table<ExecutionEntity>()
+        .Where(e => e.ExecutedAt >= since)
+        .GroupBy(e => new { e.ModelId, Day = e.ExecutedAt.Date })
+        .OrderBy(g => g.Key.Day)
+        .ThenByDescending(g => g.Sum(e => (long)e.InputTokens))
+        .Select(g => new ModelDayTokens(
+            g.Key.ModelId, g.Key.Day, g.Sum(e => (long)e.InputTokens), g.Count()));
+```
+
+```sql
+SELECT "ModelId", date_trunc('day', "ExecutedAt"), sum("InputTokens")::bigint, count(*)::int
+FROM "Executions" WHERE "ExecutedAt" >= @since
+GROUP BY "ModelId", date_trunc('day', "ExecutedAt")
+ORDER BY date_trunc('day', "ExecutedAt"), sum("InputTokens")::bigint DESC
+```
+
+A key is one of:
+
+- a mapped column, `GroupBy(e => e.ModelId)`;
+- an anonymous type of columns and `.Date` members, `new { e.ModelId, Day = e.ExecutedAt.Date }`;
+- `.Date` alone, `GroupBy(e => e.ExecutedAt.Date)`.
+
+Any other key reports ZAO102.
+
+`.Date` is the calendar day, as in C#:
+
+| Column | SQL | Day |
+|---|---|---|
+| `DateTime` | `date_trunc('day', "col")` | cut in the session's `TimeZone` for a `timestamptz` column. Connect with `Timezone=UTC` to match C# on UTC values |
+| `DateTimeOffset` | `date_trunc('day', "col" AT TIME ZONE 'UTC')` | the UTC day, as a `DateTime` of `Kind` `Unspecified`, as `DateTimeOffset.UtcDateTime.Date` is |
+
+The group aggregates render like the [scalar ones](#scalar-aggregates), with the same casts and
+rules: `Average` is a `double` and a `float` sum adds doubles. A group is never empty, so the
+empty-input differences do not arise, and `Sum` is `COALESCE`d only over a nullable selector, whose
+values can all be null: `COALESCE(sum("Bonus"), 0)::int`. `Count()` is `count(*)::int` and
+`LongCount()` is `count(*)`.
+
+`OrderBy` and `ThenBy` after `GroupBy` take keys, key members and aggregates, as in the example. The
+`Select` may use only `g.Key`, its members, group aggregates, companion parameters and literals. Any
+other use of the group, such as `g.Count() + 1` or a column that is not a key, reports ZAO102, and a
+`GroupBy` without a final `Select` reports [ZAO107](../diagnostics/ZAO107.md).
+
+Nulls order as LINQ orders them, see [Operators and their SQL](#operators-and-their-sql). A nullable
+key or a nullable aggregate such as `Max` of a nullable column renders `NULLS FIRST` ascending and
+`NULLS LAST` descending.
+
+## Joins
+
+`Join` is an inner join. The inner side is `Sql.Table<T>()`, optionally narrowed by `Where`, which
+renders in the `ON` clause:
+
+```csharp
+private static IQuery<TaskCost> CostsByTaskQuery(ProjectId projectId) =>
+    Sql.Table<ExecutionEntity>()
+        .Join(
+            Sql.Table<TaskEntity>().Where(t => t.ProjectId == projectId),
+            e => e.TaskId,
+            t => t.Id,
+            (e, t) => new { Execution = e, Task = t })
+        .GroupBy(x => new { x.Task.Id, x.Task.Title })
+        .OrderBy(g => g.Key.Title)
+        .Select(g => new TaskCost(g.Key.Id, g.Key.Title, g.Sum(x => (long)x.Execution.InputTokens), g.Count()));
+```
+
+```sql
+SELECT t1."Id", t1."Title", sum(t0."InputTokens")::bigint, count(*)::int
+FROM "Executions" AS t0
+INNER JOIN "app"."Tasks" AS t1 ON t0."TaskId" = t1."Id" AND t1."ProjectId" = @projectId
+GROUP BY t1."Id", t1."Title" ORDER BY t1."Title"
+```
+
+The rules:
+
+- Each key is one mapped column, on either side. The outer key comes first in the `ON`.
+- `.Value` of a value-object column, such as a typed id, reads as the column, in a join key and
+  anywhere else in a chain: `t.ProjectId.Value` is the `"ProjectId"` column. `.Value` of a
+  `Nullable<TValueObject>` is rejected.
+- The result selector is an anonymous type of the two range variables, `new { Execution = e, Task = t }`,
+  or members carried over from an earlier join, `new { et.Execution, et.Task, Project = p }`. A
+  chain may join more than once. A computed member reports ZAO102.
+- Later operators read the sources through those names: `x.Task.Title`, `x.Execution.InputTokens`. The
+  source tables are aliased `t0`, `t1`, and so on, in join order, only when the chain has a join. A
+  chain without a join renders exactly as before, with no alias.
+- A joined chain ends with `Select`, `GroupBy` and `Select`, or a terminal. `Where` before the `Join`
+  filters the outer side.
+
+Not translated, each reported as ZAO102: a composite key, a computed result member, an inner side
+with an operator other than `Where`, left joins, and `Join` after
+`GroupBy`, `Select`, `Skip`, `Take` or `OrderBy`.
+
 ## Keyset paging
 
 Deep `OFFSET` pages read and throw away every skipped row. Keyset paging continues from the last row
@@ -367,15 +518,19 @@ compare by name.
 
 ## Not supported yet
 
-These are planned, in this order. Until then, write such a query as a raw `[Query]` or `[Command]`:
+The next planned work, in this order. Until then, write such a query as a raw `[Query]` or `[Command]`:
 
-- `GroupBy` with aggregates such as `Sum`, and explicit joins.
 - Loading a parent with its children: a multi-result head and lines method with a companion per
   result set.
 - Set-based `ExecuteUpdate` and `ExecuteDelete`, optimistic concurrency checks, and `FOR UPDATE`.
 
 Also not supported today:
 
+- `HAVING`: `Where` after `GroupBy` reports ZAO102. Filter the rows before grouping.
+- Counting groups, such as `GroupBy(...).Count()` (ZAO102), and `GroupBy` without a final `Select`
+  (ZAO107).
+- Left joins, composite join keys, an inner side other than `Sql.Table<T>()` with `Where`, and
+  `Join` after `GroupBy`, `Select`, `Skip`, `Take` or `OrderBy`.
 - Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
   (ZAO107). Project into a one-member record instead.
 - `Skip` and `Take` after `Select` (ZAO102). Put them before it.
