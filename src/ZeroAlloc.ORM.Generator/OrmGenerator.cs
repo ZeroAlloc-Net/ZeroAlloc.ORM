@@ -800,15 +800,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // ZAO082 — a PostgreSQL array column reads only through Npgsql, like an array
         // parameter. Checked on the classified result, so every row, composite, tuple
         // element and scalar shape is covered by the one walk.
-        if (!hasNpgsql)
-        {
-            ReportArrayColumnsWithoutNpgsql(
-                diagnostics,
-                LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
-                method.Name,
-                materialization,
-                multiResultMaterialization?.Elements ?? sprocOutputParamsMaterialization?.ResultElements);
-        }
+        ReportArrayColumnsWithoutNpgsql(
+            diagnostics,
+            LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
+            method.Name,
+            materialization,
+            multiResultMaterialization?.Elements ?? sprocOutputParamsMaterialization?.ResultElements);
 
         // v0.5 Phase C.2 — ZAO050: warn on every nullable composite position.
         // Three triggers:
@@ -1252,17 +1249,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         if (!nullableRefComposite)
                         {
                             compositeFields = BuildCompositeFields(resolution, conventionContext);
-                            if (!hasNpgsql)
+                            // ZAO082 and ZAO084 — an array member binds as its own
+                            // DbParameter, named the way the unpacking names it.
+                            foreach (var field in compositeFields)
                             {
-                                // ZAO082 — an array member binds as its own DbParameter,
-                                // named the way the unpacking names it.
-                                foreach (var field in compositeFields)
-                                {
-                                    if (field.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
-                                        diagnostics.Add(ArrayRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
-                                    else if (field.IsJson)
-                                        diagnostics.Add(JsonRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
-                                }
+                                if (field.Convention is { Kind: (int)ConventionKind.PrimitiveArray })
+                                    diagnostics.Add(ArrayRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
+                                else if (field.IsJson)
+                                    diagnostics.Add(JsonRequiresNpgsql(p.Name + "_" + field.CtorArgName, LocationInfo.From(p.Locations.FirstOrDefault())));
                             }
                             if (compositeFields.Length > 0)
                             {
@@ -1292,7 +1286,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
                     // ZAO082 — a PostgreSQL array binds only through Npgsql. Without
                     // it the provider can't send the value, so fail at build time.
-                    if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
+                    if (resolution.Kind == ConventionKind.PrimitiveArray)
                     {
                         diagnostics.Add(ArrayRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
                     }
@@ -1339,7 +1333,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
                 // A string marked [Json] binds as jsonb, which only Npgsql can send.
                 var isJson = !isCt && IsJsonString(p, p.Type);
-                if (isJson && !hasNpgsql)
+                if (isJson)
                 {
                     diagnostics.Add(JsonRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
                 }
@@ -1388,6 +1382,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
         var returnTypeDisplay = method.ReturnType.ToDisplayString(returnTypeFormat);
 
+        var providerSplit = SplitProviderTypeUsages(diagnostics.ToImmutable(), hasNpgsql);
         var methodModel = new QueryMethodModel(
             MethodName: method.Name,
             ContainingTypeFullName: containing.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -1401,7 +1396,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             MethodParameters: new EquatableArray<ParameterInfo>(methodParameters),
             CancellationTokenParameterName: cancellationTokenParameterName,
             TransactionParameterName: transactionParameterName,
-            Diagnostics: new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
+            Diagnostics: new EquatableArray<DiagnosticInfo>(providerSplit.Diagnostics),
             // [Query] pipeline passes (false, NonQuery); [Command] passes (true, kind).
             // Threading both explicitly (no defaults) keeps the call site self-documenting
             // and forces future pipeline additions (e.g. [StoredProcedure]) to make a
@@ -1438,6 +1433,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             SqlServerOnlyDiagnostics: new EquatableArray<DiagnosticInfo>(sqlServerOnlyDiagnostics.ToImmutable()),
             ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()),
             HasNpgsql: hasNpgsql,
+            PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
             LinqSourceComment: linq?.SourceComment);
 
         return new QueryMethodWithTypeContext(
@@ -2277,14 +2273,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
             // ZAO082 — a row property that is a PostgreSQL array binds only through
             // Npgsql, the same as a single-row parameter of that type.
-            if (resolution.Kind == ConventionKind.PrimitiveArray && !hasNpgsql)
+            if (resolution.Kind == ConventionKind.PrimitiveArray)
             {
                 diagnostics.Add(ArrayRequiresNpgsql(matchedProp.Name, methodLocation));
             }
 
             // A [Json] string row property binds as jsonb, which only Npgsql can send.
             var isJson = IsJsonRowProperty(rowTypeNamed, matchedProp);
-            if (isJson && !hasNpgsql)
+            if (isJson)
             {
                 diagnostics.Add(JsonRequiresNpgsql(matchedProp.Name, methodLocation));
             }
@@ -4846,6 +4842,29 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
     }
 
+    // Every PostgreSQL array or [Json] usage is recorded as a ZAO082 candidate while the
+    // method is transformed. ZAO084 needs all of them, whether Npgsql is referenced or
+    // not, so they move to PostgresOnlyUsages; ZAO082 keeps them only without Npgsql.
+    private static (ImmutableArray<DiagnosticInfo> Diagnostics, ImmutableArray<PostgresOnlyUsage> Usages) SplitProviderTypeUsages(
+        ImmutableArray<DiagnosticInfo> diagnostics,
+        bool hasNpgsql)
+    {
+        var kept = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        var usages = ImmutableArray.CreateBuilder<PostgresOnlyUsage>();
+        foreach (var diag in diagnostics)
+        {
+            if (!string.Equals(diag.DescriptorId, "ZAO082", StringComparison.Ordinal))
+            {
+                kept.Add(diag);
+                continue;
+            }
+            usages.Add(new PostgresOnlyUsage(diag.MessageArgs.Values[0], diag.MessageArgs.Values[1], diag.Location));
+            if (!hasNpgsql)
+                kept.Add(diag);
+        }
+        return (kept.ToImmutable(), usages.ToImmutable());
+    }
+
     private static DiagnosticInfo ArrayRequiresNpgsql(string name, LocationInfo? location)
         => RequiresNpgsql(name, "a PostgreSQL array", location);
 
@@ -4991,6 +5010,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO080" => DiagnosticDescriptors.ZAO080_MultipleTransactionParameters,
         "ZAO081" => DiagnosticDescriptors.ZAO081_ContainingTypeNotPartial,
         "ZAO082" => DiagnosticDescriptors.ZAO082_ProviderTypeRequiresNpgsql,
+        "ZAO084" => DiagnosticDescriptors.ZAO084_PostgresOnlyTypeOnOtherDialect,
         "ZAO083" => DiagnosticDescriptors.ZAO083_JsonRequiresString,
         "ZAO106" => DiagnosticDescriptors.ZAO106_InvalidEntityMap,
         "ZAO100" => DiagnosticDescriptors.ZAO100_InvalidLinqCompanion,
@@ -5059,6 +5079,26 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         binding.ParameterName,
                         binding.MethodName,
                         knownDialect!.Value.ToString()));
+                }
+            }
+        }
+
+        // ZAO084 — #376. A PostgreSQL array or [Json] value on a repository that
+        // declares another dialect. Without a declared dialect nothing is reported.
+        if (knownDialect is { } declaredDialect && declaredDialect != SqlDialectModel.PostgreSql)
+        {
+            foreach (var method in repo.Methods)
+            {
+                foreach (var usage in method.PostgresOnlyUsages)
+                {
+                    hadError = true;
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        DiagnosticDescriptors.ZAO084_PostgresOnlyTypeOnOtherDialect,
+                        usage.Location?.ToLocation(),
+                        usage.Name,
+                        usage.Kind,
+                        repo.ContainingTypeName,
+                        declaredDialect.ToString()));
                 }
             }
         }

@@ -282,6 +282,9 @@ internal sealed record QueryMethodModel(
     // PostgreSQL arrays report ZAO082 without it; the emit for Npgsql-only
     // shapes reads it. A bool, not the Compilation, keeps the model cache-safe.
     bool HasNpgsql = false,
+    // #376 — every PostgreSQL array or [Json] usage, with or without Npgsql. ZAO084
+    // reports each one when the repository declares a dialect other than PostgreSql.
+    EquatableArray<PostgresOnlyUsage> PostgresOnlyUsages = default,
     // [LinqQuery] — the one-line description of the LINQ chain the SQL came from.
     // Non-null only for a [LinqQuery] method: the emit then writes the SQL as a
     // `private const string __sql<index>_<Method>` above the method, preceded by
