@@ -47,6 +47,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO081 | Error | Containing type must be partial (nested repository) | [ZAO081](ZAO081.md) |
 | ZAO082 | Error | Provider-specific type requires Npgsql | [ZAO082](ZAO082.md) |
 | ZAO083 | Error | `[Json]` requires a string | [ZAO083](ZAO083.md) |
+| ZAO084 | Error | PostgreSQL-only type on another dialect | [ZAO084](ZAO084.md) |
 | ZAO100 | Error | Invalid LINQ companion | [ZAO100](ZAO100.md) |
 | ZAO101 | Error | LINQ companion parameters do not match the method | [ZAO101](ZAO101.md) |
 | ZAO102 | Error | Unsupported LINQ construct | [ZAO102](ZAO102.md) |
@@ -69,7 +70,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO060`–`ZAO069` — `[StoredProcedure]` and `[Param]` guardrails. `ZAO060` is reserved: registered for catalog completeness but never emitted (C# already rejects the case it targets via CS1988).
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
-- `ZAO082`–`ZAO083` — provider-specific types and their markers: PostgreSQL arrays and `[Json]` strings need Npgsql, and `[Json]` needs a string.
+- `ZAO082`–`ZAO084` — provider-specific types and their markers: PostgreSQL arrays and `[Json]` strings need Npgsql, `[Json]` needs a string, and both only work on a PostgreSQL repository.
 - `ZAO100`–`ZAO199` — `[LinqQuery]` translation and its `[TableMap]` / `[ColumnMap]` entity maps. `ZAO106` is an invalid entity map; `ZAO109` is a call to a companion, which never runs; `ZAO110` is a warning about paging without an order; the others report a companion, chain, projection, parameter, dialect or return type the translator cannot use.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.

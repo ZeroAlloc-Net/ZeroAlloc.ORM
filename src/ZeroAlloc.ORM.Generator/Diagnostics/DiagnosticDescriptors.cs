@@ -600,6 +600,23 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO082"));
 
+    // ZAO084 — a PostgreSQL array or [Json] string on a repository whose declared dialect
+    // is not PostgreSql. Independent of Npgsql: the other provider cannot send the value.
+    //
+    // MessageArgs:
+    //   {0} = the parameter or column name
+    //   {1} = "a PostgreSQL array" or "[Json]"
+    //   {2} = the repository type name
+    //   {3} = the declared dialect
+    public static readonly DiagnosticDescriptor ZAO084_PostgresOnlyTypeOnOtherDialect = new(
+        id: "ZAO084",
+        title: "PostgreSQL-only type on another dialect",
+        messageFormat: "Parameter or column '{0}' uses {1}, which only PostgreSQL supports, but repository '{2}' declares dialect {3}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO084"));
+
     // ZAO083 — [Json] on something that is not a string. [Json] binds the value as
     // PostgreSQL jsonb, a JSON document the adopter holds as a string; any other type,
     // a string[] included, has no jsonb meaning. Reported from its own pipeline, at the

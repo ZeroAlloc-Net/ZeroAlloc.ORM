@@ -62,6 +62,15 @@ internal sealed record ReturnValueBinding(
     string MethodName,
     LocationInfo? Location);
 
+/// <summary>
+/// #376 — a parameter or column that uses a PostgreSQL array or a [Json] string. ZAO084 reports
+/// it when the repository declares a dialect other than PostgreSql.
+/// </summary>
+internal sealed record PostgresOnlyUsage(
+    string Name,
+    string Kind,
+    LocationInfo? Location);
+
 internal sealed record LocationInfo(SyntaxTree Tree, TextSpan Span)
 {
     public Location ToLocation() => Microsoft.CodeAnalysis.Location.Create(Tree, Span);
