@@ -247,4 +247,39 @@ static async Task RunLinqAsync(IAsyncDbConnection connection)
         throw new InvalidOperationException($"Unexpected LINQ count: {count}.");
 
     Console.WriteLine("Postgres LINQ smoke passed.");
+
+    await RunLinqJoinAsync(connection).ConfigureAwait(false);
+}
+
+// A grouped inner join and a scalar Average: tokens per task title, and the mean over all runs.
+static async Task RunLinqJoinAsync(IAsyncDbConnection connection)
+{
+    var ddl = connection.CreateCommand();
+    await using (ddl.ConfigureAwait(false))
+    {
+        ddl.CommandText = "CREATE TABLE public.smoke_tasks (id uuid PRIMARY KEY, title text NOT NULL); "
+            + "CREATE TABLE public.smoke_runs (id uuid PRIMARY KEY, task_id uuid NOT NULL, tokens integer NOT NULL);";
+        await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    var repo = new LinqJoinRepo(connection);
+    var one = Guid.NewGuid();
+    var two = Guid.NewGuid();
+    await repo.InsertTaskAsync(one, "build", CancellationToken.None).ConfigureAwait(false);
+    await repo.InsertTaskAsync(two, "test", CancellationToken.None).ConfigureAwait(false);
+    await repo.InsertRunAsync(Guid.NewGuid(), one, 10, CancellationToken.None).ConfigureAwait(false);
+    await repo.InsertRunAsync(Guid.NewGuid(), one, 20, CancellationToken.None).ConfigureAwait(false);
+    await repo.InsertRunAsync(Guid.NewGuid(), two, 5, CancellationToken.None).ConfigureAwait(false);
+
+    var rows = await repo.TokensPerTaskAsync(CancellationToken.None).ConfigureAwait(false);
+    if (rows.Count != 2
+        || !string.Equals(rows[0].Title, "build", StringComparison.Ordinal) || rows[0].Tokens != 30 || rows[0].Runs != 2
+        || !string.Equals(rows[1].Title, "test", StringComparison.Ordinal) || rows[1].Tokens != 5 || rows[1].Runs != 1)
+        throw new InvalidOperationException($"Unexpected grouped join rows: {rows.Count}.");
+
+    var average = await repo.AverageTokensAsync(CancellationToken.None).ConfigureAwait(false);
+    if (Math.Abs(average - 35.0 / 3.0) > 1e-9)
+        throw new InvalidOperationException($"Unexpected LINQ average: {average}.");
+
+    Console.WriteLine("Postgres LINQ join smoke passed.");
 }
