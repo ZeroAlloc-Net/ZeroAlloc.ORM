@@ -61,8 +61,9 @@ internal static partial class LinqQueryReader
     private static bool IsParameter(IParameterReferenceOperation reference, IParameterSymbol parameter)
         => SymbolEqualityComparer.Default.Equals(reference.Parameter, parameter);
 
-    // A local, a field or property not reached through the row parameter, or `this`.
-    private static bool IsCapture(IOperation op, IParameterSymbol row) => op switch
+    // A local, a field or property not reached through the row parameter, or `this`. With no row
+    // parameter, as for the chain source, every field and property is a capture.
+    private static bool IsCapture(IOperation op, IParameterSymbol? row) => op switch
     {
         ILocalReferenceOperation or IInstanceReferenceOperation => true,
         IFieldReferenceOperation field => !IsRooted(field.Instance, row),
@@ -71,9 +72,9 @@ internal static partial class LinqQueryReader
     };
 
     // Whether a member access chain starts at the row parameter, as `t.Project.Name` does.
-    private static bool IsRooted(IOperation? instance, IParameterSymbol row) => instance switch
+    private static bool IsRooted(IOperation? instance, IParameterSymbol? row) => instance switch
     {
-        IParameterReferenceOperation p => IsParameter(p, row),
+        IParameterReferenceOperation p => row is not null && IsParameter(p, row),
         IMemberReferenceOperation member => IsRooted(member.Instance, row),
         _ => false,
     };

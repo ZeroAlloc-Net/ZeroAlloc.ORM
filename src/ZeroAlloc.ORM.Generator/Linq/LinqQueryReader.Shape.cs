@@ -13,8 +13,12 @@ internal static partial class LinqQueryReader
     {
         if (IsGeneric(returnType, CollectionsNamespace, "IAsyncEnumerable`1", out var streamed))
             return IsRow(streamed, rowType) ? LinqResultShape.Stream : null;
-        if (!IsGeneric(returnType, TasksNamespace, "Task`1", out var result))
+        // Task<T> and ValueTask<T> take the same shapes, as they do for [Query].
+        if (!IsGeneric(returnType, TasksNamespace, "Task`1", out var result)
+            && !IsGeneric(returnType, TasksNamespace, "ValueTask`1", out result))
+        {
             return null;
+        }
 
         if (IsGeneric(result, CollectionsNamespace, "List`1", out var element)
             || IsGeneric(result, CollectionsNamespace, "IReadOnlyList`1", out element)

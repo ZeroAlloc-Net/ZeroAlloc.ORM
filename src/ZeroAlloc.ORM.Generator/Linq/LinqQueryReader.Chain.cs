@@ -61,7 +61,9 @@ internal static partial class LinqQueryReader
         var op = Unwrap(operation);
         if (op is not IInvocationOperation invocation)
         {
-            context.Report(LinqDiagnostics.Unsupported("'" + op.Syntax + "'", op.Syntax.GetLocation()));
+            context.Report(IsCapture(op, row: null)
+                ? LinqDiagnostics.Capture(op.Syntax.ToString(), op.Syntax.GetLocation())
+                : LinqDiagnostics.Unsupported("'" + op.Syntax + "' as the chain source", op.Syntax.GetLocation()));
             return false;
         }
 
@@ -75,7 +77,7 @@ internal static partial class LinqQueryReader
                 LocationInfo.From(invocation.Syntax.GetLocation()));
             return true;
         }
-        if (!IsLinqMember(target, QueryOperatorsTypeName, target.Name) || invocation.Arguments.Length == 0)
+        if (!IsQueryOperator(target) || invocation.Arguments.Length == 0)
             return Unsupported(invocation, "'" + target.Name + "'", context);
 
         if (!ReadChain(invocation.Arguments[0].Value, chain, context)) return false;
@@ -105,8 +107,13 @@ internal static partial class LinqQueryReader
             : invocation.Syntax.GetLocation();
 
     private static bool IsLinqMember(IMethodSymbol method, string typeName, string memberName)
-        => string.Equals(method.Name, memberName, StringComparison.Ordinal)
-            && method.ContainingType is { } type
+        => string.Equals(method.Name, memberName, StringComparison.Ordinal) && IsLinqType(method, typeName);
+
+    // Any operator of ZeroAlloc.ORM.Linq.QueryOperators; ReadOperator decides which are supported.
+    private static bool IsQueryOperator(IMethodSymbol method) => IsLinqType(method, QueryOperatorsTypeName);
+
+    private static bool IsLinqType(IMethodSymbol method, string typeName)
+        => method.ContainingType is { } type
             && string.Equals(type.Name, typeName, StringComparison.Ordinal)
             && string.Equals(type.ContainingNamespace?.ToDisplayString(), LinqNamespace, StringComparison.Ordinal);
 

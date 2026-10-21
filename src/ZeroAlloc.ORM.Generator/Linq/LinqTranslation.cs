@@ -5,10 +5,10 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 /// <summary>How the partial method returns the companion's rows.</summary>
 internal enum LinqResultShape
 {
-    /// <summary><c>Task&lt;List|IReadOnlyList|IList&lt;TRow&gt;&gt;</c>.</summary>
+    /// <summary><c>Task</c> or <c>ValueTask</c> of <c>List|IReadOnlyList|IList&lt;TRow&gt;</c>.</summary>
     List,
 
-    /// <summary><c>Task&lt;TRow?&gt;</c>: the first row, with an implicit <c>LIMIT 1</c>.</summary>
+    /// <summary><c>Task&lt;TRow?&gt;</c> or <c>ValueTask&lt;TRow?&gt;</c>: the first row, with an implicit <c>LIMIT 1</c>.</summary>
     SingleRow,
 
     /// <summary><c>IAsyncEnumerable&lt;TRow&gt;</c>.</summary>

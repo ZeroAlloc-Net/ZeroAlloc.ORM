@@ -153,6 +153,41 @@ public class LinqFrontEndDiagnosticsTests
     }
 
     [Fact]
+    public void Static_field_chain_source_reports_ZAO103()
+    {
+        var (d, located) = Single(Repo + """
+                private static readonly IQuery<TaskEntity> AllTasks = Sql.Table<TaskEntity>();
+
+                [LinqQuery(nameof(SummariesQuery))]
+                public partial Task<List<TaskSummary>> Summaries(CancellationToken ct);
+
+                private static IQuery<TaskSummary> SummariesQuery() =>
+                    AllTasks.Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal("ZAO103", d.Id);
+        Assert.Equal("AllTasks", located);
+    }
+
+    [Fact]
+    public void Parameter_chain_source_reports_ZAO102()
+    {
+        var (d, located) = Single(Repo + """
+                [LinqQuery(nameof(SummariesQuery))]
+                public partial Task<List<TaskSummary>> Summaries(IQuery<TaskEntity> source, CancellationToken ct);
+
+                private static IQuery<TaskSummary> SummariesQuery(IQuery<TaskEntity> source) =>
+                    source.Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+
+        Assert.Equal("ZAO102", d.Id);
+        Assert.Equal("source", located);
+        Assert.Contains("chain source", Message(d), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Unmapped_entity_reports_ZAO104_at_the_table_call()
     {
         var (d, located) = Single("""

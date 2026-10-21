@@ -98,6 +98,25 @@ public class LinqProjectionTests
     }
 
     [Fact]
+    public void ValueTask_list_and_single_row()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(SummariesQuery))]
+                public partial ValueTask<IReadOnlyList<TaskSummary>> Summaries(CancellationToken ct);
+
+                [LinqQuery(nameof(SummariesQuery))]
+                public partial ValueTask<TaskSummary?> First(CancellationToken ct);
+
+                private static IQuery<TaskSummary> SummariesQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
+    [Fact]
     public void Named_projection_arguments_follow_ctor_order()
     {
         VerifyCompiled(Prelude + """
