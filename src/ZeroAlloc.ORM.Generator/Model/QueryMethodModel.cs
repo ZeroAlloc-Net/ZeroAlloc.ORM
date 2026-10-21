@@ -13,6 +13,9 @@ internal enum EmitShape
     // Task<bool> / Task<long> [Query] results; same ExecuteScalar shape as ScalarInt.
     ScalarBool,
     ScalarLong,
+    // Task<double> / Task<decimal> [Query] results; Convert.ToDouble / Convert.ToDecimal.
+    ScalarDouble,
+    ScalarDecimal,
     NullableScalar,
     FlatRow,
     // Multi-arg class with column-name-keyed reads. Detected when the return-type
