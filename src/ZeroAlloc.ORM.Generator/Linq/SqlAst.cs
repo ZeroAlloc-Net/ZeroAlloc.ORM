@@ -42,7 +42,13 @@ internal abstract record SqlExpression;
 internal sealed record SqlMemberExpression(string Member, LocationInfo? Location) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
-internal sealed record SqlParameterExpression(string Name) : SqlExpression;
+/// <param name="Name">The SQL name, without the <c>@</c>.</param>
+/// <param name="ColumnPicksEnumStorage">
+/// The parameter is an enum without <c>[StoreAsString]</c>, so the columns it is compared with
+/// decide whether it binds as its integer or as its member name; see ZAO111.
+/// </param>
+/// <param name="Location">The parameter reference, where ZAO111 is reported.</param>
+internal sealed record SqlParameterExpression(string Name, bool ColumnPicksEnumStorage, LocationInfo? Location) : SqlExpression;
 
 /// <summary>A compile-time constant, inlined as a SQL literal.</summary>
 /// <param name="Kind">How the renderer writes the value.</param>
@@ -57,6 +63,60 @@ internal sealed record SqlLiteralExpression(SqlLiteralKind Kind, string Value) :
 
     public static SqlLiteralExpression Number(string value) => new(SqlLiteralKind.Number, value);
 }
+
+/// <summary>
+/// An enum member constant. It renders as its integer, or as its quoted member name where the
+/// value is stored by name: when the enum type is <c>[StoreAsString]</c>, or when it is compared
+/// with a column the map marks <c>EnumAsString</c>.
+/// </summary>
+/// <param name="Number">The member's integer value, as invariant text.</param>
+/// <param name="Name">The member name; null when the value names no member.</param>
+/// <param name="StoresName">The enum type is <c>[StoreAsString]</c>.</param>
+/// <param name="Location">The constant, where a nameless value compared by name is reported.</param>
+internal sealed record SqlEnumLiteralExpression(string Number, string? Name, bool StoresName, LocationInfo? Location) : SqlExpression;
+
+/// <summary>A comparison, or AND / OR of two conditions.</summary>
+internal sealed record SqlBinaryExpression(SqlBinaryOperator Operator, SqlExpression Left, SqlExpression Right) : SqlExpression;
+
+internal enum SqlBinaryOperator
+{
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    And,
+    Or,
+}
+
+/// <summary><c>NOT (operand)</c>.</summary>
+internal sealed record SqlNotExpression(SqlExpression Operand) : SqlExpression;
+
+/// <summary><c>operand IS NULL</c>, or <c>IS NOT NULL</c> when <paramref name="Negated"/>.</summary>
+internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated) : SqlExpression;
+
+/// <summary>
+/// <c>string.Contains</c>, <c>StartsWith</c> or <c>EndsWith</c>: a <c>LIKE</c> whose pattern is the
+/// value with its wildcards escaped, and <c>%</c> on the open sides.
+/// </summary>
+internal sealed record SqlLikeExpression(SqlExpression Operand, SqlExpression Value, SqlLikeMatch Match) : SqlExpression;
+
+internal enum SqlLikeMatch
+{
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+
+/// <summary><c>Sql.ILike(operand, pattern)</c>: <c>operand ILIKE pattern</c>, the pattern as written.</summary>
+internal sealed record SqlILikeExpression(SqlExpression Operand, SqlExpression Pattern) : SqlExpression;
+
+/// <summary><c>array.Contains(operand)</c>: <c>operand = ANY(array)</c>, for an array parameter.</summary>
+internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Array) : SqlExpression;
+
+/// <summary><c>WhereIf(condition, predicate)</c>: <c>(NOT (condition) OR (predicate))</c>.</summary>
+internal sealed record SqlConditionalExpression(SqlExpression Condition, SqlExpression Predicate) : SqlExpression;
 
 internal enum SqlLiteralKind
 {

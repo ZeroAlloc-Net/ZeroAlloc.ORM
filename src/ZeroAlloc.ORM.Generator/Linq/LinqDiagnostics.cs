@@ -17,6 +17,9 @@ internal static class LinqDiagnostics
     public static DiagnosticInfo Unsupported(string construct, Location? location)
         => Create("ZAO102", location, construct);
 
+    public static DiagnosticInfo UnsupportedAt(string construct, LocationInfo? location)
+        => new("ZAO102", location, Args(construct));
+
     public static DiagnosticInfo Capture(string captured, Location? location)
         => Create("ZAO103", location, captured);
 
@@ -31,6 +34,9 @@ internal static class LinqDiagnostics
 
     public static DiagnosticInfo DialectNotPostgres(string method, string found, Location? location)
         => Create("ZAO108", location, method, found);
+
+    public static DiagnosticInfo EnumStorageConflict(string parameter, LocationInfo? location)
+        => new("ZAO111", location, Args(parameter));
 
     public static DiagnosticInfo ShapeMismatch(string method, string returnType, string queryType, Location? location)
         => Create("ZAO112", location, method, returnType, queryType);

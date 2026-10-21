@@ -751,6 +751,21 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO108"));
 
+    // ZAO111 — an enum parameter without [StoreAsString] is compared with a column that stores
+    // the enum by name (EnumAsString) and with one that stores its integer, so no single binding
+    // fits both. Reported at the parameter reference in the comparison that disagrees.
+    //
+    // MessageArgs:
+    //   {0} = the parameter's SQL name
+    public static readonly DiagnosticDescriptor ZAO111_LinqEnumParameterStorageConflict = new(
+        id: "ZAO111",
+        title: "LINQ enum parameter compared with differently stored columns",
+        messageFormat: "Parameter '{0}' is compared with columns that store its enum differently",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO111"));
+
     // ZAO112 — the method's return type does not fit the companion's IQuery<T>. Reported at the
     // method's return type.
     //

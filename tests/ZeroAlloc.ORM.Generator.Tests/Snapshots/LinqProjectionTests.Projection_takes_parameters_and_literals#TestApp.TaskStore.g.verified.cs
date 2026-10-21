@@ -21,10 +21,12 @@ partial class TaskStore
             __cmd.CommandText = __sql0_Tag;
             var __p_label = __cmd.CreateParameter();
             __p_label.ParameterName = "label";
+            __p_label.DbType = global::System.Data.DbType.String;
             __p_label.Value = @label;
             __cmd.Parameters.Add(__p_label);
             var __p_rank = __cmd.CreateParameter();
             __p_rank.ParameterName = "r";
+            __p_rank.DbType = global::System.Data.DbType.Int32;
             __p_rank.Value = @rank;
             __cmd.Parameters.Add(__p_rank);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

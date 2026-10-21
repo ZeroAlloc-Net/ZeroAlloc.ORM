@@ -45,10 +45,15 @@ internal sealed record LinqTranslation(
 /// SELECT positions that read an <c>EnumAsString</c> column, so an enum member there parses the
 /// member name instead of casting an integer.
 /// </param>
-/// <param name="Diagnostics">Binding diagnostics: ZAO104 and ZAO105.</param>
+/// <param name="NameBoundEnumParameters">
+/// SQL names of the enum parameters without <c>[StoreAsString]</c> that are compared with
+/// <c>EnumAsString</c> columns, so they bind as their member name.
+/// </param>
+/// <param name="Diagnostics">Binding diagnostics: ZAO102, ZAO104, ZAO105 and ZAO111.</param>
 internal sealed record LinqBoundQuery(
     string Sql,
     EquatableArray<int> EnumAsStringOrdinals,
+    EquatableArray<string> NameBoundEnumParameters,
     EquatableArray<DiagnosticInfo> Diagnostics);
 
 /// <summary>

@@ -91,6 +91,8 @@ internal static partial class LinqQueryReader
         => invocation.TargetMethod.Name switch
         {
             "Select" => ReadSelect(invocation, chain, context),
+            "Where" => ReadWhere(invocation, chain, context),
+            "WhereIf" => ReadWhereIf(invocation, chain, context),
             var name => Unsupported(invocation, "'" + name + "'", context),
         };
 

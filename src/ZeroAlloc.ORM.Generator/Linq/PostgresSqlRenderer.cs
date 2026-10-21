@@ -87,6 +87,8 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     }
 
     // One case per SqlExpression record. A new expression form adds its case here.
+    // AND and OR are parenthesised, and NOT wraps its operand, so the tree's grouping
+    // survives whatever PostgreSQL's precedence would make of the flat text.
     private static void RenderExpression(StringBuilder sb, SqlExpression expression, SqlNameScope names)
     {
         switch (expression)
@@ -100,9 +102,136 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlLiteralExpression literal:
                 AppendLiteral(sb, literal);
                 break;
+            case SqlEnumLiteralExpression enumLiteral:
+                AppendEnumLiteral(sb, enumLiteral, byName: enumLiteral.StoresName, names);
+                break;
+            case SqlBinaryExpression binary:
+                RenderBinary(sb, binary, names);
+                break;
+            case SqlNotExpression { Operand: SqlBinaryExpression { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or } grouped }:
+                // AND and OR bring their own parentheses.
+                sb.Append("NOT ");
+                RenderExpression(sb, grouped, names);
+                break;
+            case SqlNotExpression not:
+                sb.Append("NOT (");
+                RenderExpression(sb, not.Operand, names);
+                sb.Append(')');
+                break;
+            case SqlIsNullExpression isNull:
+                RenderExpression(sb, isNull.Operand, names);
+                sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
+                break;
+            case SqlLikeExpression like:
+                RenderLike(sb, like, names);
+                break;
+            case SqlILikeExpression ilike:
+                RenderExpression(sb, ilike.Operand, names);
+                sb.Append(" ILIKE ");
+                RenderExpression(sb, ilike.Pattern, names);
+                break;
+            case SqlAnyExpression any:
+                RenderExpression(sb, any.Operand, names);
+                sb.Append(" = ANY(");
+                RenderExpression(sb, any.Array, names);
+                sb.Append(')');
+                break;
+            case SqlConditionalExpression conditional:
+                sb.Append("(NOT (");
+                RenderExpression(sb, conditional.Condition, names);
+                sb.Append(") OR (");
+                RenderExpression(sb, conditional.Predicate, names);
+                sb.Append("))");
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + expression.GetType().Name + ".");
         }
+    }
+
+    private static void RenderBinary(StringBuilder sb, SqlBinaryExpression binary, SqlNameScope names)
+    {
+        if (binary.Operator is SqlBinaryOperator.And or SqlBinaryOperator.Or)
+        {
+            sb.Append('(');
+            RenderExpression(sb, binary.Left, names);
+            sb.Append(binary.Operator == SqlBinaryOperator.And ? " AND " : " OR ");
+            RenderExpression(sb, binary.Right, names);
+            sb.Append(')');
+            return;
+        }
+
+        if (binary.Operator is not (SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual))
+        {
+            ReportOrderedNameColumn(binary.Left, names);
+            ReportOrderedNameColumn(binary.Right, names);
+        }
+
+        RenderComparand(sb, binary.Left, binary.Right, names);
+        sb.Append(binary.Operator switch
+        {
+            SqlBinaryOperator.Equal => " = ",
+            SqlBinaryOperator.NotEqual => " <> ",
+            SqlBinaryOperator.LessThan => " < ",
+            SqlBinaryOperator.LessThanOrEqual => " <= ",
+            SqlBinaryOperator.GreaterThan => " > ",
+            _ => " >= ",
+        });
+        RenderComparand(sb, binary.Right, binary.Left, names);
+    }
+
+    // <, >, <= and >= on a column that stores enum member names would order the names.
+    private static void ReportOrderedNameColumn(SqlExpression side, SqlNameScope names)
+    {
+        if (side is SqlMemberExpression member && names.IsEnumAsString(member))
+        {
+            names.Report(LinqDiagnostics.UnsupportedAt(
+                "Ordering '" + member.Member + "', whose column stores enum member names,",
+                member.Location));
+        }
+    }
+
+    // An enum constant compared with a column the map stores by name renders as the name.
+    private static void RenderComparand(StringBuilder sb, SqlExpression side, SqlExpression other, SqlNameScope names)
+    {
+        if (side is SqlEnumLiteralExpression enumLiteral)
+        {
+            var byName = enumLiteral.StoresName || (other is SqlMemberExpression member && names.IsEnumAsString(member));
+            AppendEnumLiteral(sb, enumLiteral, byName, names);
+            return;
+        }
+        RenderExpression(sb, side, names);
+    }
+
+    // `"Col" LIKE '%' || <esc>(value) || '%' ESCAPE '\'`, with `%` only on the open sides.
+    // <esc> escapes the value's backslashes, then its wildcards, so it matches literally.
+    private static void RenderLike(StringBuilder sb, SqlLikeExpression like, SqlNameScope names)
+    {
+        RenderExpression(sb, like.Operand, names);
+        sb.Append(" LIKE ");
+        if (like.Match != SqlLikeMatch.StartsWith) sb.Append("'%' || ");
+        sb.Append("replace(replace(replace(");
+        RenderExpression(sb, like.Value, names);
+        sb.Append(@",'\','\\'),'%','\%'),'_','\_')");
+        if (like.Match != SqlLikeMatch.EndsWith) sb.Append(" || '%'");
+        sb.Append(@" ESCAPE '\'");
+    }
+
+    private static void AppendEnumLiteral(StringBuilder sb, SqlEnumLiteralExpression literal, bool byName, SqlNameScope names)
+    {
+        if (!byName)
+        {
+            sb.Append(literal.Number);
+            return;
+        }
+        if (literal.Name is null)
+        {
+            names.Report(LinqDiagnostics.UnsupportedAt(
+                "'" + literal.Number + "', which names no enum member, compared with a column that stores member names",
+                literal.Location));
+            sb.Append(literal.Number);
+            return;
+        }
+        sb.Append('\'').Append(literal.Name).Append('\'');
     }
 
     private static void AppendLiteral(StringBuilder sb, SqlLiteralExpression literal)

@@ -49,6 +49,9 @@ internal sealed class SqlNameScope
         return member.Member;
     }
 
+    /// <summary>Records a diagnostic the render found, such as an enum value with no name to compare by.</summary>
+    public void Report(DiagnosticInfo diagnostic) => _diagnostics.Add(diagnostic);
+
     /// <summary>Whether the member maps to a column that stores an enum as its member name.</summary>
     public bool IsEnumAsString(SqlMemberExpression member)
         => _columns.TryGetValue(member.Member, out var column) && column.EnumAsString;

@@ -4113,6 +4113,31 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return null;
     }
 
+    // [LinqQuery] — whether `[Param]` writes a DbType on the parameter, which then wins over
+    // the facet the translation derives.
+    internal static bool HasWrittenDbType(IParameterSymbol p)
+        => ReadParamFacets(p)?.DbTypeExpression is not null;
+
+    // [LinqQuery] — the reader of the primitive a value parameter binds as, the same one the
+    // parameter's ConventionInfo.UnderlyingReader or, for a bare primitive, its own reader
+    // gives: a value object binds as its factory's primitive, an enum as its underlying
+    // integral type or, with [StoreAsString], as a string. Null for anything else, such as
+    // an array or a composite.
+    internal static string? BoundReader(ITypeSymbol type, ConventionContext context)
+    {
+        var underlying = UnwrapNullableValueType(type);
+        var resolution = ConventionDiscovery.Resolve(underlying, context);
+        return resolution.Kind switch
+        {
+            ConventionKind.Primitive => PrimitiveCatalog.GetScalarReaderMethod(underlying),
+            ConventionKind.ValueObject or ConventionKind.SingleArgCtor or ConventionKind.StaticFactory
+                => ResolveUnderlyingReaderForFactory(resolution),
+            ConventionKind.Enum => ResolveUnderlyingReaderForEnum(underlying),
+            ConventionKind.EnumAsString => "GetString",
+            _ => null,
+        };
+    }
+
     // v2.0, #235 — read the type facets and direction written on
     // `[ZeroAlloc.ORM.ParamAttribute]`. Presence in NamedArguments is what counts,
     // not the value: `Scale = 0` is a real scale, and the attribute's own defaults
@@ -4976,6 +5001,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO105" => DiagnosticDescriptors.ZAO105_UnmappedLinqMember,
         "ZAO107" => DiagnosticDescriptors.ZAO107_UnsupportedLinqProjection,
         "ZAO108" => DiagnosticDescriptors.ZAO108_LinqRequiresPostgreSql,
+        "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         _ => null,
     };
@@ -5940,8 +5966,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // but reads off `row.<Property>` rather than `@<paramName>`:
     //
     //   * No convention                          -> row.PropertyName
-    //   * Enum (default integral storage)        -> ({castType})row.PropertyName
-    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString()
+    //   * Enum (default integral storage)        -> ({castType})row.PropertyName, `{castType}?` when nullable
+    //   * EnumAsString ([StoreAsString])         -> row.PropertyName.ToString(), `?.ToString()` when nullable
     //   * ValueObject / SingleArgCtor / StaticFactory
     //                                            -> row.PropertyName.<ValueProperty>
     //
@@ -5953,15 +5979,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var direct = $"{rowLocal}.{binding.PropertyName}";
         if (binding.Convention is not { } conv) return direct;
 
-        if (conv.Kind == (int)ConventionKind.Enum)
-        {
-            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-            return $"({castType}){direct}";
-        }
-        if (conv.Kind == (int)ConventionKind.EnumAsString)
-        {
-            return $"{direct}.ToString()";
-        }
+        if (BuildEnumBindExpression(direct, conv, binding.IsNullable) is { } enumExpr)
+            return enumExpr;
         if (conv.ValuePropertyName is { } propName)
         {
             return $"{direct}{NullConditionalAccess(binding.IsNullable)}{propName}";
@@ -8613,22 +8632,15 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         var valueExpr = "@" + p.Name;
         if (p.Convention is not { } conv) return valueExpr;
-        if (conv.Kind == (int)ConventionKind.Enum)
-        {
-            // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
-            // for an int-backed enum; for byte/short/long-backed enums the cast
-            // target derives from the GetXxx reader name. The provider then sees
-            // the integral value; SQL stores it as INTEGER.
-            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-            return $"({castType})@{p.Name}";
-        }
-        if (conv.Kind == (int)ConventionKind.EnumAsString)
-        {
-            // Round-trip as the enum member name. ToString() is allocating but
-            // [StoreAsString] is opt-in; a source-generated parse/format table
-            // is a v0.3+ optimization.
-            return $"@{p.Name}.ToString()";
-        }
+        // Cast to the enum's underlying primitive. C# allows `(int)Color.Red`
+        // for an int-backed enum; for byte/short/long-backed enums the cast
+        // target derives from the GetXxx reader name. The provider then sees
+        // the integral value; SQL stores it as INTEGER. [StoreAsString]
+        // round-trips as the member name. ToString() is allocating but
+        // [StoreAsString] is opt-in; a source-generated parse/format table is
+        // a v0.3+ optimization.
+        if (BuildEnumBindExpression(valueExpr, conv, p.IsNullable) is { } enumExpr)
+            return enumExpr;
         if (conv.ValuePropertyName is { } propName)
         {
             // A nullable value object binds its inner value, or null: `@p?.Value`.
@@ -8636,6 +8648,23 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             return $"@{p.Name}{NullConditionalAccess(p.IsNullable)}{propName}";
         }
         return valueExpr;
+    }
+
+    // The value an enum binds as: its underlying integer for the Enum convention, its
+    // member name for EnumAsString. Null for any other convention. A nullable enum casts
+    // to the nullable primitive and calls `?.ToString()`: `(int)x` on a null `Color?`
+    // throws and `x.ToString()` on one gives "", where null is what the caller's
+    // `?? DBNull.Value` needs.
+    private static string? BuildEnumBindExpression(string valueExpr, ConventionInfo conv, bool isNullable)
+    {
+        if (conv.Kind == (int)ConventionKind.Enum)
+        {
+            var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
+            return $"({castType}{(isNullable ? "?" : string.Empty)}){valueExpr}";
+        }
+        if (conv.Kind == (int)ConventionKind.EnumAsString)
+            return $"{valueExpr}{NullConditionalAccess(isNullable)}ToString()";
+        return null;
     }
 
     // The value a DbParameter gets for `valueExpr`, the parameter, composite field or
@@ -8840,15 +8869,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var baseExpr = "@" + paramName + ".Value.@" + field.CtorArgName;
         if (field.Convention is { } conv)
         {
-            if (conv.Kind == (int)ConventionKind.Enum)
-            {
-                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                return $"({castType}){baseExpr}";
-            }
-            if (conv.Kind == (int)ConventionKind.EnumAsString)
-            {
-                return $"{baseExpr}.ToString()";
-            }
+            if (BuildEnumBindExpression(baseExpr, conv, field.IsNullable) is { } enumExpr)
+                return enumExpr;
             if (conv.ValuePropertyName is { } propName)
             {
                 return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";
@@ -8882,15 +8904,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var baseExpr = "@" + paramName + ".@" + field.CtorArgName;
         if (field.Convention is { } conv)
         {
-            if (conv.Kind == (int)ConventionKind.Enum)
-            {
-                var castType = PrimitiveCatalog.GetScalarCastTypeFromReader(conv.UnderlyingReader);
-                return $"({castType}){baseExpr}";
-            }
-            if (conv.Kind == (int)ConventionKind.EnumAsString)
-            {
-                return $"{baseExpr}.ToString()";
-            }
+            if (BuildEnumBindExpression(baseExpr, conv, field.IsNullable) is { } enumExpr)
+                return enumExpr;
             if (conv.ValuePropertyName is { } propName)
             {
                 return $"{baseExpr}{NullConditionalAccess(field.IsNullable)}{propName}";

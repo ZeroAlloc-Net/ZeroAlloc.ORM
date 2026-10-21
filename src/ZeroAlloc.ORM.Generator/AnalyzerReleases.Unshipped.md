@@ -14,4 +14,5 @@ ZAO105  | ZeroAlloc.ORM | Error    | LINQ member is not a mapped column
 ZAO106  | ZeroAlloc.ORM | Error    | Invalid entity map
 ZAO107  | ZeroAlloc.ORM | Error    | Unsupported LINQ projection
 ZAO108  | ZeroAlloc.ORM | Error    | LINQ query requires the PostgreSQL dialect
+ZAO111  | ZeroAlloc.ORM | Error    | LINQ enum parameter compared with differently stored columns
 ZAO112  | ZeroAlloc.ORM | Error    | LINQ method return type does not fit the query

@@ -44,10 +44,34 @@ public class LinqIncrementalityTests
         }
     }
 
+    // A filtered chain: predicates, a WhereIf, an enum bound by name and parameter facets all
+    // live in the cached models, so they must compare equal across runs too.
+    private const string FilteredStore = """
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class TaskStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(SummariesQuery))]
+            public partial Task<List<TaskSummary>> Summaries(WorkKind? kind, string title, CancellationToken ct);
+
+            private static IQuery<TaskSummary> SummariesQuery(WorkKind? kind, string title) =>
+                Sql.Table<TaskEntity>()
+                    .WhereIf(kind != null, t => t.Kind == kind)
+                    .Where(t => t.Title.Contains(title) && t.Status == WorkStatus.Done)
+                    .Select(t => new TaskSummary(t.Id, t.Title));
+        }
+        """;
+
     [Fact]
     public void Unrelated_edit_leaves_the_maps_and_the_linq_method_cached()
+        => AssertUnrelatedEditCached(Store);
+
+    [Fact]
+    public void Unrelated_edit_leaves_a_filtered_linq_method_cached()
+        => AssertUnrelatedEditCached(FilteredStore);
+
+    private static void AssertUnrelatedEditCached(string storeSource)
     {
-        var store = CSharpSyntaxTree.ParseText(LinqProjectionTests.Prelude + Store, path: "/src/Store.cs");
+        var store = CSharpSyntaxTree.ParseText(LinqProjectionTests.Prelude + storeSource, path: "/src/Store.cs");
         var other = CSharpSyntaxTree.ParseText("namespace TestApp; public static class Other { }", path: "/src/Other.cs");
         var compilation = GeneratorHarness.CreateCompilation([store, other]);
 

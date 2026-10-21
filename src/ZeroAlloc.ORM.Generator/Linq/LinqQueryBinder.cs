@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Linq;
 using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
@@ -24,9 +25,17 @@ internal static class LinqQueryBinder
         var sql = PostgresSqlRenderer.Instance.Render(statement, names);
         var diagnostics = names.Diagnostics;
         if (!diagnostics.IsEmpty)
-            return new LinqBoundQuery(string.Empty, default, new EquatableArray<DiagnosticInfo>(diagnostics));
+            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics));
 
-        return new LinqBoundQuery(sql, EnumAsStringOrdinals(statement, names), default);
+        var storage = EnumParameterStorage.Decide(statement, names);
+        if (!storage.Conflicts.IsEmpty)
+            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(storage.Conflicts));
+
+        return new LinqBoundQuery(
+            sql,
+            EnumAsStringOrdinals(statement, names, storage.ByName),
+            new EquatableArray<string>(storage.ByName),
+            default);
     }
 
     // The statement's table. A wrapping statement a later task adds names its inner SELECT's.
@@ -36,14 +45,24 @@ internal static class LinqQueryBinder
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 
-    private static EquatableArray<int> EnumAsStringOrdinals(SqlStatement statement, SqlNameScope names)
+    // SELECT positions that read a member name: an EnumAsString column, or an enum parameter
+    // that binds by name, which the database hands back as the text it was sent.
+    private static EquatableArray<int> EnumAsStringOrdinals(
+        SqlStatement statement,
+        SqlNameScope names,
+        ImmutableArray<string> nameBoundParameters)
     {
         if (statement is not SqlSelectStatement select) return default;
         var ordinals = ImmutableArray.CreateBuilder<int>();
         for (var i = 0; i < select.Projection.Length; i++)
         {
-            if (select.Projection[i] is SqlMemberExpression member && names.IsEnumAsString(member))
-                ordinals.Add(i);
+            var byName = select.Projection[i] switch
+            {
+                SqlMemberExpression member => names.IsEnumAsString(member),
+                SqlParameterExpression parameter => nameBoundParameters.Contains(parameter.Name, StringComparer.Ordinal),
+                _ => false,
+            };
+            if (byName) ordinals.Add(i);
         }
         return new EquatableArray<int>(ordinals.ToImmutable());
     }
@@ -65,5 +84,5 @@ internal static class LinqQueryBinder
             : entityTypeFullName;
 
     private static LinqBoundQuery Failed(DiagnosticInfo diagnostic)
-        => new(string.Empty, default, new EquatableArray<DiagnosticInfo>(ImmutableArray.Create(diagnostic)));
+        => new(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(ImmutableArray.Create(diagnostic)));
 }

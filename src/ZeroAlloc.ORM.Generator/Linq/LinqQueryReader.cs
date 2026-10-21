@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ZeroAlloc.ORM.Generator.Model;
+using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
@@ -56,7 +57,8 @@ internal static partial class LinqQueryReader
         var statement = ReadStatement(companion.Body!, shape.Value, context);
         if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
-        return new LinqTranslation(statement, shape.Value, default, comment, default);
+        var facets = ReadFacets(ValueParameters(method), context.Conventions);
+        return new LinqTranslation(statement, shape.Value, facets, comment, default);
     }
 
     private static LinqTranslation Failed(string comment, params DiagnosticInfo[] diagnostics)
@@ -98,9 +100,7 @@ internal static partial class LinqQueryReader
         MethodDeclarationSyntax companionSyntax,
         ReaderContext context)
     {
-        var valueParameters = method.Parameters
-            .Where(p => !IsCancellationToken(p.Type) && !OrmGenerator.IsIAsyncDbTransaction(p.Type))
-            .ToList();
+        var valueParameters = ValueParameters(method);
         var matches = valueParameters.Count == companion.Parameters.Length;
         for (var i = 0; matches && i < valueParameters.Count; i++)
         {
@@ -121,6 +121,12 @@ internal static partial class LinqQueryReader
         }
         return null;
     }
+
+    // Every parameter but the CancellationToken and the transaction, which bind no value.
+    private static List<IParameterSymbol> ValueParameters(IMethodSymbol method)
+        => method.Parameters
+            .Where(p => !IsCancellationToken(p.Type) && !OrmGenerator.IsIAsyncDbTransaction(p.Type))
+            .ToList();
 
     private static readonly SymbolDisplayFormat ParameterFormat = SymbolDisplayFormat.MinimallyQualifiedFormat
         .WithParameterOptions(SymbolDisplayParameterOptions.IncludeType | SymbolDisplayParameterOptions.IncludeName);
@@ -148,6 +154,8 @@ internal static partial class LinqQueryReader
         public SemanticModel Model { get; } = compilation.GetSemanticModel(companion.SyntaxTree);
 
         public CancellationToken CancellationToken { get; } = ct;
+
+        public ConventionContext Conventions { get; } = new(compilation);
 
         // Companion parameter -> the SQL name its method parameter binds with.
         public Dictionary<IParameterSymbol, string> SqlNames { get; } = new(SymbolEqualityComparer.Default);

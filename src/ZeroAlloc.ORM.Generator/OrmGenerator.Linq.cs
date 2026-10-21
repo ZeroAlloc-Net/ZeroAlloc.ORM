@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -96,7 +97,65 @@ public sealed partial class OrmGenerator
             Sql = bound.Sql,
             Materialization = ReadEnumsAsStrings(core.Method.Materialization, bound.EnumAsStringOrdinals),
         };
+        method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
+    }
+
+    // An int-convention enum parameter compared with EnumAsString columns binds the way a
+    // [StoreAsString] one does: as its member name, through the EnumAsString convention. The
+    // facet the translation derived becomes String; a DbType written on [Param] stays. Either
+    // way the parameter's DbTypeCheck now names the reader it binds as, so ZAO015 checks the
+    // DbType against a string.
+    private static QueryMethodModel BindEnumsByName(
+        QueryMethodModel method,
+        EquatableArray<string> sqlNames,
+        EquatableArray<LinqParameterFacet> generatedFacets)
+    {
+        if (sqlNames.Length == 0) return method;
+        var parameters = method.MethodParameters.Values.ToBuilder();
+        var checks = ImmutableArray.CreateBuilder<DbTypeCheck>();
+        checks.AddRange(method.DbTypeChecks);
+        var stringFacet = LinqQueryReader.Facet(string.Empty, "String");
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            var parameter = parameters[i];
+            if (parameter.Convention is not { Kind: (int)ConventionKind.Enum } convention
+                || !sqlNames.Contains(parameter.ParamNameOverride ?? parameter.Name, System.StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            // Derived, not written: the translation's facet, or none at all for an enum whose
+            // integral type the facet table leaves out, such as a byte enum.
+            var derived = parameter.Facets?.DbTypeExpression is null
+                || generatedFacets.Any(f => string.Equals(f.ParameterName, parameter.Name, System.StringComparison.Ordinal));
+            var facets = !derived
+                ? parameter.Facets
+                : parameter.Facets is { } current
+                    ? current with { DbTypeExpression = stringFacet.DbTypeExpression, DbTypeValue = stringFacet.DbTypeValue }
+                    : new ParamFacets(stringFacet.DbTypeExpression, null, null, null, null, stringFacet.DbTypeValue);
+            parameters[i] = parameter with
+            {
+                Convention = convention with { Kind = (int)ConventionKind.EnumAsString, UnderlyingReader = "GetString" },
+                Facets = facets,
+            };
+
+            // A parameter that had no DbType has no check to update, and String on a string is
+            // never rejected, so none is added.
+            for (var c = 0; c < checks.Count; c++)
+            {
+                if (!string.Equals(checks[c].ParameterName, parameter.Name, System.StringComparison.Ordinal)) continue;
+                checks[c] = derived
+                    ? checks[c] with { BoundReader = "GetString", DbTypeValue = stringFacet.DbTypeValue, DbTypeDisplay = "String" }
+                    : checks[c] with { BoundReader = "GetString" };
+            }
+        }
+
+        return method with
+        {
+            MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
+            DbTypeChecks = new EquatableArray<DbTypeCheck>(checks.ToImmutable()),
+        };
     }
 
     // A column mapped with EnumAsString stores the member name. When the row member it feeds is
