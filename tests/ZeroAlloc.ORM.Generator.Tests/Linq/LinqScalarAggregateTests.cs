@@ -251,6 +251,8 @@ public class LinqScalarAggregateTests
     [InlineData("IQuery<float>", ".Min(t => t.Weight)", "Task<float>")]
     [InlineData("IQuery<short>", ".Max(t => t.Rank)", "Task<short>")]
     [InlineData("IQuery<WorkStatus>", ".Max(t => t.Status)", "Task<WorkStatus>")]
+    [InlineData("IQuery<WorkKind>", ".Max(t => t.Kind)", "Task<WorkKind>")]
+    [InlineData("IQuery<Origin?>", ".Min(t => (Origin?)t.Origin)", "Task<Origin?>")]
     [InlineData("IQuery<string>", ".Min(t => t.Title)", "Task<string>")]
     [InlineData("IQuery<int?>", ".Sum(t => t.Priority)", "Task<int>")]
     [InlineData("IQuery<double>", ".Average(t => t.Order)", "Task<decimal>")]

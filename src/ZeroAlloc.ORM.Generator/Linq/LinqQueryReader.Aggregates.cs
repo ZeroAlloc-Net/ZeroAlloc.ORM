@@ -1,3 +1,4 @@
+using System;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
@@ -34,14 +35,7 @@ internal static partial class LinqQueryReader
         var function = AggregateFunctionOf(name);
         var column = Unwrap(PeelWidening(returned, context)).Type!;
         var value = ((INamedTypeSymbol)invocation.TargetMethod.Parameters[1].Type).TypeArguments[1];
-        if (function is SqlAggregateFunction.Min or SqlAggregateFunction.Max
-            && UnwrapNullable(value).SpecialType == SpecialType.System_Boolean)
-        {
-            context.Report(LinqDiagnostics.Unsupported(
-                "'" + name + "' over the bool '" + returned.Syntax + "', which PostgreSQL has no min or max for,",
-                returned.Syntax.GetLocation()));
-            return false;
-        }
+        if (RejectsMinMax(function, name, value, returned, context)) return false;
 
         var result = ((INamedTypeSymbol)invocation.TargetMethod.ReturnType).TypeArguments[0];
         chain.Call = new SqlAggregateCallExpression(
@@ -100,6 +94,31 @@ internal static partial class LinqQueryReader
             operation = conversion.Operand;
         }
         return operation;
+    }
+
+    // Min and Max need an order PostgreSQL and C# agree on, for scalar and group aggregates
+    // alike. PostgreSQL has no min or max over boolean or uuid, and an enum stored by name would
+    // order its names where C# orders its values. An enum stored as its integer orders right. A
+    // [StoreAsString] enum is known here; a column the map stores by name is known only when the
+    // statement is bound, so PostgresSqlRenderer checks that one, see ReportNameOrderedAggregate.
+    private static bool RejectsMinMax(
+        SqlAggregateFunction function,
+        string operatorName,
+        ITypeSymbol value,
+        IOperation returned,
+        ReaderContext context)
+    {
+        if (function is not (SqlAggregateFunction.Min or SqlAggregateFunction.Max)) return false;
+        var type = UnwrapNullable(value);
+        var unordered = type.SpecialType == SpecialType.System_Boolean
+            || string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal)
+            || (type is INamedTypeSymbol { TypeKind: TypeKind.Enum } enumType && StoresName(enumType));
+        if (!unordered) return false;
+        context.Report(LinqDiagnostics.Unsupported(
+            "'" + operatorName + "' over '" + returned.Syntax + "', a bool, a Guid or an enum stored by name, which "
+                + "PostgreSQL has no min or max for or orders differently from C#,",
+            returned.Syntax.GetLocation()));
+        return true;
     }
 
     private static SqlAggregateFunction AggregateFunctionOf(string operatorName) => operatorName switch

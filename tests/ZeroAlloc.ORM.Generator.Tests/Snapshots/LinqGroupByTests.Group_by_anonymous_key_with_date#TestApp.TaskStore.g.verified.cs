@@ -7,7 +7,7 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.TokensPerNoteAndDayQuery
-    private const string __sql0_TokensPerNoteAndDay = "SELECT \"Note\", date_trunc('day', \"CreatedAt\"), sum(\"Order\")::bigint, sum(\"Size\")::bigint, count(*)::int FROM \"Tasks\" WHERE \"CreatedAt\" >= @since GROUP BY \"Note\", date_trunc('day', \"CreatedAt\")";
+    private const string __sql0_TokensPerNoteAndDay = "SELECT \"Note\", date_trunc('day', \"CreatedAt\" AT TIME ZONE 'UTC'), sum(\"Order\")::bigint, sum(\"Size\")::bigint, count(*)::int FROM \"Tasks\" WHERE \"CreatedAt\" >= @since GROUP BY \"Note\", date_trunc('day', \"CreatedAt\" AT TIME ZONE 'UTC')";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
     public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.NoteDayTokens>> TokensPerNoteAndDay(global::System.DateTimeOffset @since, global::System.Threading.CancellationToken @ct)

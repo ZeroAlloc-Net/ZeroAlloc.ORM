@@ -4,8 +4,9 @@ using Xunit;
 namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 
 // [LinqQuery] GroupBy against a real PostgreSQL: each grouped result equals LINQ to Objects'.
-// The container runs in UTC, so date_trunc('day', ...) of a timestamptz cuts at UTC midnight, as
-// C#'s .Date does on the UTC values Npgsql reads. Each case boots its own container, so related
+// The container runs in UTC, so date_trunc('day', ...) of a DateTime column's timestamptz cuts at
+// UTC midnight, as C#'s .Date does on the UTC values Npgsql reads. A DateTimeOffset column is cut
+// at the UTC day whatever the session's TimeZone. Each case boots its own container, so related
 // checks share a case.
 [Trait("Provider", "Postgres")]
 public sealed class PostgresLinqGroupByTests
@@ -87,14 +88,28 @@ public sealed class PostgresLinqGroupByTests
         await repo.InsertSessionAsync(Guid.NewGuid(), "ann", day1.AddDays(2).AddSeconds(-1), 4_000_000_000, 1, ct).ConfigureAwait(false);
         await repo.InsertSessionAsync(Guid.NewGuid(), "bob", day1.AddHours(2), 3, 4, ct).ConfigureAwait(false);
 
-        var rows = await repo.SessionTokensPerOwnerAndDayAsync(ct).ConfigureAwait(false);
+        // 23:30 UTC on day 1 is 01:30 on day 2 in Amsterdam: still day 1, the UTC day.
+        await repo.InsertSessionAsync(Guid.NewGuid(), "cid", day1.AddHours(23.5), 6, 7, ct).ConfigureAwait(false);
 
-        // A DateTimeOffset column's .Date is a DateTime, read as UTC; bigint sums stay bigint.
-        rows.Should().Equal(
+        var expected = new[]
+        {
             new OwnerDayTokens("ann", Day1, 150, 15, 2),
             new OwnerDayTokens("ann", Day2, 4_000_000_000, 1, 1),
-            new OwnerDayTokens("bob", Day1, 3, 4, 1));
-        rows.Should().AllSatisfy(r => r.Day.Kind.Should().Be(DateTimeKind.Utc));
+            new OwnerDayTokens("bob", Day1, 3, 4, 1),
+            new OwnerDayTokens("cid", Day1, 6, 7, 1),
+        };
+
+        // A DateTimeOffset column's .Date is the UTC date with Kind Unspecified, as C#'s .Date is
+        // on the offset-0 value Npgsql reads; bigint sums stay bigint.
+        var rows = await repo.SessionTokensPerOwnerAndDayAsync(ct).ConfigureAwait(false);
+        rows.Should().Equal(expected);
+        rows.Should().AllSatisfy(r => r.Day.Kind.Should().Be(DateTimeKind.Unspecified));
+
+        // The same days under a session whose TimeZone is not UTC.
+        await fx.ExecuteDdlAsync("SET TIME ZONE 'Europe/Amsterdam'").ConfigureAwait(false);
+        var amsterdam = await repo.SessionTokensPerOwnerAndDayAsync(ct).ConfigureAwait(false);
+        amsterdam.Should().Equal(expected);
+        amsterdam.Should().AllSatisfy(r => r.Day.Kind.Should().Be(DateTimeKind.Unspecified));
     }
 
     [Fact]
@@ -113,12 +128,20 @@ public sealed class PostgresLinqGroupByTests
 
         var rows = await repo.CountPerModelAsync(CancellationToken.None).ConfigureAwait(false);
 
-        // Both null models are one group, as in LINQ. PostgreSQL orders NULL last. A nullable
-        // Sum whose values are all null is 0, as LINQ's is.
-        rows.Should().Equal(
+        // Both null models are one group, as in LINQ. A nullable Sum whose values are all null
+        // is 0, as LINQ's is. The order pins PostgreSQL's current NULLS LAST for ascending keys,
+        // which differs from LINQ, where null sorts first; null ordering awaits a decision.
+        var expected = new[]
+        {
             new ModelCount("a", 1, 0),
             new ModelCount("b", 3, 3),
-            new ModelCount(null, 2, 1));
+            new ModelCount(null, 2, 1),
+        };
+        rows.Should().Equal(expected);
+
+        // g.Count() renders count(*)::int; the record's long member reads the int4 as a long.
+        var intCounts = await repo.IntCountPerModelAsync(CancellationToken.None).ConfigureAwait(false);
+        intCounts.Should().Equal(expected);
     }
 
     [Fact]

@@ -122,12 +122,33 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             _ => "avg(",
         });
         if (call.Argument is { } argument)
+        {
+            ReportNameOrderedAggregate(call, argument, names);
             RenderExpression(sb, argument, names);
+        }
         else
+        {
             sb.Append('*');
+        }
         sb.Append(')');
         if (call.CoalesceToZero) sb.Append(", 0)");
         if (call.ResultCast is { } cast) sb.Append("::").Append(cast);
+    }
+
+    // min or max over a column that stores enum member names would order the names, where C#
+    // orders the values. The reader rejects a [StoreAsString] enum; the map's storage is known
+    // only here.
+    private static void ReportNameOrderedAggregate(SqlAggregateCallExpression call, SqlExpression argument, SqlNameScope names)
+    {
+        if (call.Function is SqlAggregateFunction.Min or SqlAggregateFunction.Max
+            && argument is SqlMemberExpression member
+            && names.IsEnumAsString(member))
+        {
+            names.Report(LinqDiagnostics.UnsupportedAt(
+                "'" + (call.Function == SqlAggregateFunction.Min ? "Min" : "Max") + "' over '" + member.Member
+                    + "', whose column stores enum member names, which order differently from C#,",
+                member.Location));
+        }
     }
 
     // ` FROM "schema"."table" [WHERE a AND b]`.
@@ -262,7 +283,7 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlDateTruncExpression dateTrunc:
                 sb.Append("date_trunc('day', ");
                 RenderExpression(sb, dateTrunc.Operand, names);
-                sb.Append(')');
+                sb.Append(dateTrunc.AtUtc ? " AT TIME ZONE 'UTC')" : ")");
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

@@ -28,6 +28,9 @@ internal sealed partial class LinqGroupByRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(CountPerModelQuery))]
     public partial Task<List<ModelCount>> CountPerModelAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(IntCountPerModelQuery))]
+    public partial Task<List<ModelCount>> IntCountPerModelAsync(CancellationToken ct);
+
     [LinqQuery(nameof(AveragesPerModelQuery))]
     public partial Task<List<ModelAverages>> AveragesPerModelAsync(CancellationToken ct);
 
@@ -45,7 +48,8 @@ internal sealed partial class LinqGroupByRepo(IAsyncDbConnection connection)
                 g.Sum(e => (long)e.OutputTokens),
                 g.Count()));
 
-    // Daedalus Q2: session tokens per owner and day, over a DateTimeOffset column.
+    // Daedalus Q2: session tokens per owner and day, over a DateTimeOffset column, whose .Date
+    // is the UTC day whatever the session's TimeZone.
     private static IQuery<OwnerDayTokens> SessionTokensPerOwnerAndDayQuery() =>
         Sql.Table<SessionEntity>()
             .GroupBy(s => new { s.OwnerId, Day = s.CreatedAt.Date })
@@ -63,6 +67,13 @@ internal sealed partial class LinqGroupByRepo(IAsyncDbConnection connection)
             .GroupBy(e => e.ModelId)
             .OrderBy(g => g.Key)
             .Select(g => new ModelCount(g.Key, g.LongCount(), g.Sum(e => e.Sequence)));
+
+    // g.Count() is an int, count(*)::int, read into the record's long member.
+    private static IQuery<ModelCount> IntCountPerModelQuery() =>
+        Sql.Table<ExecutionEntity>()
+            .GroupBy(e => e.ModelId)
+            .OrderBy(g => g.Key)
+            .Select(g => new ModelCount(g.Key, g.Count(), g.Sum(e => e.Sequence)));
 
     private static IQuery<ModelAverages> AveragesPerModelQuery() =>
         Sql.Table<ExecutionEntity>()

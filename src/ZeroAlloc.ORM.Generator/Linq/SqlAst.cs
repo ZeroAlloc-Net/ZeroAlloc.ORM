@@ -247,14 +247,22 @@ internal sealed record SqlAggregateCallExpression(
     bool CoalesceToZero) : SqlExpression;
 
 /// <summary>
-/// C#'s <c>.Date</c> on a <c>DateTime</c> or <c>DateTimeOffset</c> column:
-/// <c>date_trunc('day', operand)</c>, as EF Core's Npgsql provider translates it. Over a
-/// <c>timestamptz</c> the day boundary follows the session's <c>TimeZone</c>, so
-/// <c>Timezone=UTC</c> in the connection string matches C#'s <c>.Date</c> on the UTC values
-/// Npgsql reads. The result is a timestamp of the operand's type, read as a <c>DateTime</c>.
+/// C#'s <c>.Date</c> on a <c>DateTime</c> or <c>DateTimeOffset</c> column, as EF Core's Npgsql
+/// provider translates it.
+/// <list type="bullet">
+/// <item>A <c>DateTimeOffset</c> column is a <c>timestamptz</c>, which Npgsql reads at offset 0, so
+/// C#'s <c>.Date</c> is the UTC date: <c>date_trunc('day', col AT TIME ZONE 'UTC')</c>, a
+/// <c>timestamp</c> read with Kind Unspecified, as C#'s is. It does not depend on the session's
+/// <c>TimeZone</c>.</item>
+/// <item>A <c>DateTime</c> column may be a <c>timestamp</c> or a <c>timestamptz</c>, which the
+/// generator cannot tell apart: <c>date_trunc('day', col)</c>. Over a <c>timestamptz</c> its day
+/// boundary follows the session's <c>TimeZone</c>, so <c>Timezone=UTC</c> in the connection
+/// string matches C#'s <c>.Date</c> on the UTC values Npgsql reads.</item>
+/// </list>
 /// </summary>
 /// <param name="Operand">The column.</param>
-internal sealed record SqlDateTruncExpression(SqlExpression Operand) : SqlExpression;
+/// <param name="AtUtc">Whether the column is a <c>timestamptz</c> cut at the UTC day.</param>
+internal sealed record SqlDateTruncExpression(SqlExpression Operand, bool AtUtc) : SqlExpression;
 
 internal enum SqlAggregateFunction
 {

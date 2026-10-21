@@ -172,4 +172,53 @@ partial class TaskStore
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
         }
     }
+
+    // LINQ: TaskStore.StatusRangeQuery
+    private const string __sql3_StatusRanges = "SELECT \"IsActive\", min(\"Status\"), max(\"Status\") FROM \"Tasks\" GROUP BY \"IsActive\"";
+
+    [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
+    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.StatusRange>> StatusRanges(global::System.Threading.CancellationToken @ct)
+    {
+        var __conn = @connection;
+        var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
+        if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var __cmd = __conn.CreateCommand();
+            __cmd.CommandText = __sql3_StatusRanges;
+            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            var __list = new global::System.Collections.Generic.List<global::TestApp.StatusRange>();
+            while (await __reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                try
+                {
+                    __list.Add(new global::TestApp.StatusRange(
+                        __reader.GetBoolean(0),
+                        (global::TestApp.WorkStatus)__reader.GetInt32(1),
+                        __reader.IsDBNull(2) ? (global::TestApp.WorkStatus?)null : (global::TestApp.WorkStatus)__reader.GetInt32(2)));
+                }
+                catch (global::System.Exception __ex) when (__NullColumn(__reader, __ex) is { } __nullColumn)
+                {
+                    throw __nullColumn;
+                }
+
+                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                static global::System.Exception? __NullColumn(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
+                {
+                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                        return null;
+                    if (__r.IsDBNull(0))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'IsActive' of 'TestApp.StatusRange' is the non-nullable type 'bool'. Declare it as 'bool?' to receive null.", __inner);
+                    if (__r.IsDBNull(1))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'Lowest' of 'TestApp.StatusRange' is the non-nullable type 'TestApp.WorkStatus'. Declare it as 'TestApp.WorkStatus?' to receive null.", __inner);
+                    return null;
+                }
+            }
+            return __list;
+        }
+        finally
+        {
+            if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
+        }
+    }
 }

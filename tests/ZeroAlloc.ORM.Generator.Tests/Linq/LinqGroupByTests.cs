@@ -31,11 +31,19 @@ public class LinqGroupByTests
 
         public sealed record NoteDayTokens(string? Note, DateTime Day, long Order, long Size, int Count);
 
+        public sealed record StatusRange(bool IsActive, WorkStatus Lowest, WorkStatus? Highest);
+
+        public sealed record GuidMax(Guid Value);
+
+        public sealed record OriginMax(Origin Value);
+
+        public sealed record KindMax(WorkKind Value);
+
         """;
 
     // One column as the key, g.Key projected as it, and every group aggregate: Count, LongCount,
     // a nullable Sum, which keeps COALESCE, a plain Sum, Average, Min and Max, next to a literal
-    // and a parameter. `.Date` alone is a key too.
+    // and a parameter. `.Date` alone is a key too, and Min and Max over an int-stored enum.
     [Fact]
     public void Group_by_single_column_with_count()
     {
@@ -48,6 +56,9 @@ public class LinqGroupByTests
 
                 [LinqQuery(nameof(CountByDayQuery))]
                 public partial Task<List<DayCount>> CountByDay(CancellationToken ct);
+
+                [LinqQuery(nameof(StatusRangeQuery))]
+                public partial Task<List<StatusRange>> StatusRanges(CancellationToken ct);
 
                 private static IQuery<StatusCount> CountByStatusQuery() =>
                     Sql.Table<TaskEntity>()
@@ -73,6 +84,12 @@ public class LinqGroupByTests
                     Sql.Table<TaskEntity>()
                         .GroupBy(t => t.LocalAt.Date)
                         .Select(g => new DayCount(g.Key, g.Count()));
+
+                // An enum stored as its integer orders by value, as in C#.
+                private static IQuery<StatusRange> StatusRangeQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .GroupBy(t => t.IsActive)
+                        .Select(g => new StatusRange(g.Key, g.Min(t => t.Status), g.Max(t => (WorkStatus?)t.Status)));
             }
             """ + Rows);
     }
@@ -133,7 +150,8 @@ public class LinqGroupByTests
     }
 
     // HAVING and counting the groups are not translated yet, nor is a key that is not a column,
-    // a column's `.Date` or an anonymous type of those; nor reading an anonymous g.Key whole.
+    // a column's `.Date` or an anonymous type of those; nor reading an anonymous g.Key whole. Min
+    // and Max reject a Guid and an enum stored by name, by [StoreAsString] or by the map.
     [Theory]
     [InlineData("IQuery<StatusCount>", "Task<List<StatusCount>>", ".GroupBy(t => t.Status).Where(g => g.Count() > 1).Select(g => new StatusCount(g.Key, g.Count()))", "Where")]
     [InlineData("IQuery<int>", "Task<int>", ".GroupBy(t => t.Status).Count()", "Count")]
@@ -147,6 +165,9 @@ public class LinqGroupByTests
     [InlineData("IQuery<StatusCount>", "Task<List<StatusCount>>", ".OrderBy(t => t.Order).GroupBy(t => t.Status).Select(g => new StatusCount(g.Key, g.Count()))", "GroupBy")]
     [InlineData("IQuery<StatusCount>", "Task<List<StatusCount>>", ".GroupBy(t => t.Status).Select(g => new StatusCount(g.Key, g.Max(t => (int)t.Kind)))", "(int)t.Kind")]
     [InlineData("IQuery<StatusCount>", "Task<List<StatusCount>>", ".GroupBy(t => t.Status).OrderBy(g => 1).Select(g => new StatusCount(g.Key, g.Count()))", "1")]
+    [InlineData("IQuery<GuidMax>", "Task<List<GuidMax>>", ".GroupBy(t => t.Status).Select(g => new GuidMax(g.Max(t => t.Id)))", "t.Id")]
+    [InlineData("IQuery<OriginMax>", "Task<List<OriginMax>>", ".GroupBy(t => t.Status).Select(g => new OriginMax(g.Min(t => t.Origin)))", "t.Origin")]
+    [InlineData("IQuery<KindMax>", "Task<List<KindMax>>", ".GroupBy(t => t.Status).Select(g => new KindMax(g.Max(t => t.Kind)))", "t.Kind")]
     public void Having_and_group_count_report_ZAO102(string queryType, string returnType, string chain, string located)
     {
         var (result, tree) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """

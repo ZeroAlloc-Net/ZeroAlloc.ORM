@@ -12,8 +12,8 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 // group aggregates g.Count(), g.LongCount(), g.Sum, g.Min, g.Max and g.Average. A key is:
 //
 //   a mapped column                     GroupBy(t => t.Status)
-//   a DateTime or DateTimeOffset        GroupBy(t => t.CreatedAt.Date), date_trunc('day', ...)
-//   column's .Date
+//   a DateTime or DateTimeOffset        GroupBy(t => t.CreatedAt.Date), date_trunc('day', ...),
+//   column's .Date                      a DateTimeOffset's at the UTC day; see SqlDateTruncExpression
 //   an anonymous type of those          GroupBy(t => new { t.Note, Day = t.CreatedAt.Date })
 //
 // A group always has rows, so a group aggregate needs no COALESCE, with one exception: a Sum
@@ -74,12 +74,12 @@ internal static partial class LinqQueryReader
     private static SqlExpression? ReadGroupKeyValue(IOperation value, IOperation at, IParameterSymbol row, ReaderContext context)
     {
         var op = Unwrap(value);
-        var truncated = false;
+        bool? truncatedAtUtc = null;
         if (op is IPropertyReferenceOperation { Property.Name: "Date", Instance: { } instance } date
             && IsDateTimeOrOffset(date.Property.ContainingType))
         {
             op = Unwrap(instance);
-            truncated = true;
+            truncatedAtUtc = IsDateTimeOffset(date.Property.ContainingType);
         }
 
         var read = ReadOperand(op, row, context, out var expression);
@@ -89,7 +89,7 @@ internal static partial class LinqQueryReader
             ReportGroupKey(at, context);
             return null;
         }
-        return truncated ? new SqlDateTruncExpression(column) : column;
+        return truncatedAtUtc is { } atUtc ? new SqlDateTruncExpression(column, atUtc) : column;
     }
 
     private static bool ReportGroupKey(IOperation at, ReaderContext context)
@@ -209,29 +209,12 @@ internal static partial class LinqQueryReader
         var function = AggregateFunctionOf(name);
         var column = Unwrap(PeelWidening(returned, context)).Type!;
         var value = ((INamedTypeSymbol)invocation.TargetMethod.Parameters[1].Type).TypeArguments[1];
-        if (function is SqlAggregateFunction.Min or SqlAggregateFunction.Max && !HasGroupMinMax(value))
-        {
-            context.Report(LinqDiagnostics.Unsupported(
-                "'" + name + "' over '" + returned.Syntax + "', a bool, an enum or a Guid, which PostgreSQL has no "
-                    + "min or max for or orders differently from C#,",
-                returned.Syntax.GetLocation()));
-            return null;
-        }
+        if (RejectsMinMax(function, name, value, returned, context)) return null;
 
         return new SqlAggregateCallExpression(
             function,
             SumArgument(function, argument, value, column),
             AggregateCast(function, value, column, invocation.TargetMethod.ReturnType),
             CoalesceToZero: function == SqlAggregateFunction.Sum && CanBeNull(value));
-    }
-
-    // PostgreSQL has no min or max over boolean or uuid, and an enum stored by name would order
-    // its names, not its values as C# does.
-    private static bool HasGroupMinMax(ITypeSymbol value)
-    {
-        var type = UnwrapNullable(value);
-        return type.SpecialType != SpecialType.System_Boolean
-            && type.TypeKind != TypeKind.Enum
-            && !string.Equals(type.ToDisplayString(), "System.Guid", StringComparison.Ordinal);
     }
 }
