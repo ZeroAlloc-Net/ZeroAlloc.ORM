@@ -185,6 +185,24 @@ public class LinqScalarAggregateTests
             """);
     }
 
+    // A nullable ordering key keeps its NULLS FIRST inside the paged subquery, where it decides
+    // which rows the sum reads.
+    [Fact]
+    public void Paged_aggregate_ordered_by_nullable_key()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(SumEarliestQuery))]
+                public partial Task<long> SumEarliest(int take, CancellationToken ct);
+
+                private static IQuery<long> SumEarliestQuery(int take) =>
+                    Sql.Table<TaskEntity>()
+                        .OrderBy(t => t.DueAt)
+                        .Take(take)
+                        .Sum(t => t.Size);
+            }
+            """);
+    }
+
     // The WHERE applies as for any chain, and a projection before the aggregate is dropped with
     // the parameter only it used. A paged aggregate reads a paged subquery, which keeps the ORDER
     // BY: unlike a count, which rows are in the page changes a sum.
