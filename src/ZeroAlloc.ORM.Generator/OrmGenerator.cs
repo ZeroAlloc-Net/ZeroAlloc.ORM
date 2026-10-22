@@ -8052,7 +8052,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -8106,7 +8106,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // (Auto, sharing try/finally) can re-use the same body shape.
     private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
         EmitBatchSetupWithIndent(sb, m, statements, indent);
         sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -8124,6 +8124,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
     }
+
+    // The statements a multi-result batch runs, one command each. A [LinqQuery] tuple
+    // companion carries the statements it rendered; [Query] SQL is split on `;`.
+    private static ImmutableArray<string> BatchStatements(QueryMethodModel m)
+        => m.LinqStatements.Length > 0 ? m.LinqStatements.Values : SqlStatementSplitter.Split(m.Sql);
 
     // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
     // top-level BatchAlways path still calls the no-indent version through its

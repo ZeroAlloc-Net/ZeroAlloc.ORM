@@ -126,6 +126,7 @@ public sealed partial class OrmGenerator
             {
                 MultiResultMaterialization = BindElements(method.MultiResultMaterialization, statements, bound.EnumAsStringOrdinals),
                 LinqStatementParameters = StatementParameters(statements),
+                LinqStatements = bound.Statements,
             };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
         method = UnbindUnreferenced(method, ReferencedParameters(statements));

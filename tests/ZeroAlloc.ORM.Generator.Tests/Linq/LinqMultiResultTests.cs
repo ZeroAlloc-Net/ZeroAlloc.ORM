@@ -158,6 +158,82 @@ public class LinqMultiResultTests
             generated => Assert.DoesNotContain("__p_role_0", generated, StringComparison.Ordinal));
     }
 
+    // Every terminal value a single LINQ method reads as a scalar is a tuple element too, emitted
+    // through the [Query] multi-result path rather than left without an implementation.
+    [Theory]
+    [InlineData("bool", "Any()")]
+    [InlineData("long", "LongCount()")]
+    [InlineData("decimal", "Sum(r => r.Cost)")]
+    [InlineData("int?", "Max(r => r.Sequence)")]
+    [InlineData("DateTimeOffset?", "Max(r => r.ReadAt)")]
+    [InlineData("string?", "Max(r => r.Label)")]
+    public void Scalar_terminal_elements_compile(string valueType, string terminal)
+    {
+        var source = Prelude + """
+            public sealed class Reading
+            {
+                public Guid Id { get; private set; }
+                public Guid TaskId { get; private set; }
+                public decimal Cost { get; private set; }
+                public int? Sequence { get; private set; }
+                public DateTimeOffset? ReadAt { get; private set; }
+                public string Label { get; private set; } = "";
+            }
+
+            [TableMap(typeof(Reading), "Readings")]
+            internal static class ReadingMap;
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(WithValueQuery))]
+                public partial Task<(TaskHead? Head, VALUE Value)> WithValue(Guid id, CancellationToken ct);
+
+                private static (IQuery<TaskHead>, IQuery<VALUE>) WithValueQuery(Guid id) =>
+                    (Sql.Table<TaskEntity>().Where(t => t.Id == id).Select(t => new TaskHead(t.Id, t.Title)),
+                     Sql.Table<Reading>().Where(r => r.TaskId == id).TERMINAL);
+            }
+            """.Replace("VALUE", valueType, StringComparison.Ordinal).Replace("TERMINAL", terminal, StringComparison.Ordinal);
+
+        var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(source);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        var generatedPaths = result.GeneratedTrees.Select(t => t.FilePath).ToHashSet(StringComparer.Ordinal);
+        var problems = compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error
+                || (d.Severity == DiagnosticSeverity.Warning
+                    && d.Location.SourceTree is { } tree
+                    && generatedPaths.Contains(tree.FilePath)))
+            .Select(d => d.Id + ": " + d.GetMessage(CultureInfo.InvariantCulture))
+            .ToList();
+        Assert.Empty(problems);
+        Assert.Contains(result.GeneratedTrees, t => t.ToString().Contains("__elem1", StringComparison.Ordinal));
+    }
+
+    // A parameter only the head chain reads binds on the head's command alone.
+    [Fact]
+    public void Parameter_used_only_by_parent_statement()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(WithExecutionsQuery))]
+                public partial Task<(TaskHead? Head, List<ExecutionLine> Executions)> WithExecutions(Guid id, string title, CancellationToken ct);
+
+                private static (IQuery<TaskHead>, IQuery<ExecutionLine>) WithExecutionsQuery(Guid id, string title) =>
+                    (Sql.Table<TaskEntity>().Where(t => t.Id == id && t.Title == title).Select(t => new TaskHead(t.Id, t.Title)),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+            }
+            """);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString()));
+        Assert.Contains("var __p_title_0 = __cmd0.CreateParameter();", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("__p_title_1", generated, StringComparison.Ordinal);
+        Assert.Contains("var __p_id_1 = __cmd1.CreateParameter();", generated, StringComparison.Ordinal);
+    }
+
     // A nullable outer tuple keeps [Query]'s meaning: null when the first result set is empty.
     [Fact]
     public void Nullable_outer_tuple()

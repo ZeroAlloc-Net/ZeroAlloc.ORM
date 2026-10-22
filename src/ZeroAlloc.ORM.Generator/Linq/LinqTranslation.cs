@@ -75,7 +75,11 @@ internal sealed record LinqBoundQuery(
     string Sql,
     EquatableArray<EquatableArray<int>> EnumAsStringOrdinals,
     EquatableArray<string> NameBoundEnumParameters,
-    EquatableArray<DiagnosticInfo> Diagnostics);
+    EquatableArray<DiagnosticInfo> Diagnostics)
+{
+    /// <summary>Each statement's rendered SQL, in order; <see cref="Sql"/> is these joined.</summary>
+    public EquatableArray<string> Statements { get; init; }
+}
 
 /// <summary>
 /// The per-method read: the translation, and the <c>[Query]</c>-path model built from the method

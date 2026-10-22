@@ -310,7 +310,12 @@ internal sealed record QueryMethodModel(
     // statement renders, in statement order. Each batch command then binds only its own
     // statement's parameters. Default off the LINQ multi-result path: every batch command binds
     // every parameter, as before.
-    EquatableArray<EquatableArray<string>> LinqStatementParameters = default);
+    EquatableArray<EquatableArray<string>> LinqStatementParameters = default,
+    // [LinqQuery] — for a tuple companion's batch, each statement's rendered SQL, in order.
+    // The batch emit uses them as the commands' CommandText instead of splitting Sql again,
+    // so the batch never depends on SqlStatementSplitter reading the rendered SQL back.
+    // Default off the LINQ multi-result path, which goes on splitting Sql.
+    EquatableArray<string> LinqStatements = default);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

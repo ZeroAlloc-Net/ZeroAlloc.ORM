@@ -54,7 +54,10 @@ internal static class LinqQueryBinder
             string.Join(";\n", sql),
             new EquatableArray<EquatableArray<int>>(ordinals.MoveToImmutable()),
             new EquatableArray<string>(storage.ByName),
-            default);
+            default)
+        {
+            Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
+        };
     }
 
     // The statement's SELECT; a terminal's is its inner one.
