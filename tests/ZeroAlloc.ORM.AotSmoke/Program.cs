@@ -206,20 +206,20 @@ static async Task RunPostgresAsync()
 // jsonb strings: [Json] sets NpgsqlDbType.Jsonb, so no cast is needed in the SQL.
 static async Task RunJsonAsync(IAsyncDbConnection connection)
 {
-        var ddlJson = connection.CreateCommand();
-        await using (ddlJson.ConfigureAwait(false))
-        {
-            ddlJson.CommandText = "CREATE TABLE documents (id uuid PRIMARY KEY, body jsonb NOT NULL, note jsonb NULL);";
-            await ddlJson.ExecuteNonQueryAsync().ConfigureAwait(false);
-        }
+    var ddlJson = connection.CreateCommand();
+    await using (ddlJson.ConfigureAwait(false))
+    {
+        ddlJson.CommandText = "CREATE TABLE documents (id uuid PRIMARY KEY, body jsonb NOT NULL, note jsonb NULL);";
+        await ddlJson.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
 
-        var json = new JsonRepo(connection);
-        var d = new Guid("1b4e28ba-2fa1-11d2-883f-0016d3cca427");
-        await json.InsertAsync(d, "{\"a\": 1}", null, CancellationToken.None).ConfigureAwait(false);
-        var doc = await json.GetAsync(d, CancellationToken.None).ConfigureAwait(false);
-        if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
-            throw new InvalidOperationException("Unexpected jsonb row.");
-        await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
+    var json = new JsonRepo(connection);
+    var d = new Guid("1b4e28ba-2fa1-11d2-883f-0016d3cca427");
+    await json.InsertAsync(d, "{\"a\": 1}", null, CancellationToken.None).ConfigureAwait(false);
+    var doc = await json.GetAsync(d, CancellationToken.None).ConfigureAwait(false);
+    if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
+        throw new InvalidOperationException("Unexpected jsonb row.");
+    await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
     Console.WriteLine("Postgres jsonb smoke passed.");
 }
 

@@ -46,6 +46,12 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(AmongOptionalOrQuery))]
     public partial Task<List<TaskLine>> AmongOptionalOrAsync(Guid[]? ids, CancellationToken ct);
 
+    [Command("""UPDATE "Tasks" SET "Score" = @score WHERE "Id" = @id""")]
+    public partial Task<int> ScoreAsync(Guid id, float score, CancellationToken ct);
+
+    [LinqQuery(nameof(AmongScoresQuery))]
+    public partial Task<List<TaskLine>> AmongScoresAsync(float[]? scores, CancellationToken ct);
+
     [LinqQuery(nameof(StartedBeforeQuery))]
     public partial Task<List<TaskLine>> StartedBeforeAsync(DateTime? before, CancellationToken ct);
 
@@ -150,6 +156,10 @@ internal sealed partial class LinqWhereRepo(IAsyncDbConnection connection)
 
     private static IQuery<TaskLine> AmongOptionalOrQuery(Guid[]? ids) =>
         Sql.Table<TaskEntity>().Where(t => ids == null || ids.Contains(t.Id)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
+
+    // A nullable float[] casts its null test to real[].
+    private static IQuery<TaskLine> AmongScoresQuery(float[]? scores) =>
+        Sql.Table<TaskEntity>().WhereIf(scores != null, t => scores!.Contains(t.Score)).Select(t => new TaskLine(t.Id, t.Title, t.Order));
 
     private static IQuery<TaskLine> StartedBeforeQuery(DateTime? before) =>
         Sql.Table<TaskEntity>().WhereIf(before != null, t => t.StartedAt < before).Select(t => new TaskLine(t.Id, t.Title, t.Order));
