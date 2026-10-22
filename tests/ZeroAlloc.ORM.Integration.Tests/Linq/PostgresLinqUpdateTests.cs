@@ -90,6 +90,22 @@ public sealed class PostgresLinqUpdateTests
         session.TotalInputTokens.Should().Be(2L * TurnsPerConnection * 3);
     }
 
+    // Every SET item reads the row as it was before the statement, as PostgreSQL defines it: the
+    // second setter adds the old TurnCount, 5, not the 6 the first one writes.
+    [Fact]
+    public async Task Computed_setters_read_the_row_before_the_update()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqUpdateRepo(fx.Connection);
+        var id = await InsertAsync(repo, AgentSessionState.Running, 5).ConfigureAwait(false);
+
+        (await repo.AdvanceAsync(id, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+        var session = await repo.GetAsync(id, CancellationToken.None).ConfigureAwait(false);
+        session!.TurnCount.Should().Be(6);
+        session.TotalInputTokens.Should().Be(5);
+    }
+
     // The state changes only from the state the caller read. Once it moved, the same swap
     // affects no row and the session keeps the state it moved to.
     [Fact]

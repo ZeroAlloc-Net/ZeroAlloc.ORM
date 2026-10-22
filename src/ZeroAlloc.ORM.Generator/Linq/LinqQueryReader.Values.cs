@@ -147,11 +147,23 @@ internal static partial class LinqQueryReader
     // The operator is the language's own: no user-defined one, though decimal's built-in
     // operators are bound to its op_ methods. The result, and so both promoted operands, is one
     // of the five numeric types; a string + is a concatenation and an enum + is not a number.
+    // Each operand is one too, before C#'s promotion: a char, a short or a uint promoted to int
+    // or long would meet PostgreSQL's own type for it, such as a smallint, rather than C#'s. A
+    // null operand has no type and makes the result NULL.
     private static bool IsArithmeticOnNumbers(IBinaryOperation binary)
         => (binary.OperatorMethod is null || binary.OperatorMethod.ContainingType?.SpecialType == SpecialType.System_Decimal)
             && binary.Type is { } type
-            && UnwrapNullable(type).SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
-                or SpecialType.System_Decimal or SpecialType.System_Double or SpecialType.System_Single;
+            && IsArithmeticType(type)
+            && IsArithmeticOperand(binary.LeftOperand)
+            && IsArithmeticOperand(binary.RightOperand);
+
+    private static bool IsArithmeticOperand(IOperation operand)
+        => Unwrap(operand) is var op
+            && (op.Type is { } type ? IsArithmeticType(type) : IsNullValue(op));
+
+    private static bool IsArithmeticType(ITypeSymbol type)
+        => UnwrapNullable(type).SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
+            or SpecialType.System_Decimal or SpecialType.System_Double or SpecialType.System_Single;
 
     // A column or a parameter, recorded in NullableValues when its declared type can be null.
     private static SqlExpression? ReadReference(IOperation op, IParameterSymbol? row, ReaderContext context)

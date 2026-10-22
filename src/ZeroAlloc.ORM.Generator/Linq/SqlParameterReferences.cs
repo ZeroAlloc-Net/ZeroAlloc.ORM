@@ -41,6 +41,14 @@ internal static class SqlParameterReferences
         return names;
     }
 
+    /// <summary>The SQL names of the parameters the expressions render.</summary>
+    public static HashSet<string> Collect(IEnumerable<SqlExpression> expressions)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var expression in expressions) Add(expression, names);
+        return names;
+    }
+
     private static void AddSelect(SqlSelectStatement select, HashSet<string> names)
     {
         foreach (var item in select.Projection) Add(item, names);

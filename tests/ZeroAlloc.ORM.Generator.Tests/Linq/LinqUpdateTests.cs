@@ -45,6 +45,11 @@ public class LinqUpdateTests
             public string? FailureReason { get; private set; }
             public uint Version { get; private set; }
             public string Scratch { get; private set; } = "";
+            public short Level { get; private set; }
+            [Json]
+            public string? Payload { get; private set; }
+            [Json]
+            public string? Snapshot { get; private set; }
         }
 
         public sealed class SkillEntity
@@ -266,6 +271,27 @@ public class LinqUpdateTests
             "__p_state.Value = @state.ToString();");
     }
 
+    // A [Json] column takes another [Json] column, a constant or null as it is: PostgreSQL types
+    // each from the target, and no parameter binds as jsonb.
+    [Fact]
+    public void Json_column_takes_a_json_column_or_a_constant()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + Repo + """
+                [LinqCommand(nameof(CopyQuery))]
+                public partial Task<int> Copy(CancellationToken ct);
+
+                private static int CopyQuery() =>
+                    Sql.Table<AgentSessionEntity>()
+                        .ExecuteUpdate(set => set.SetProperty(s => s.Payload, s => s.Snapshot).SetProperty(s => s.Snapshot, "{}"));
+            }
+            """);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString())).Replace("\\\"", "\"", StringComparison.Ordinal);
+        Assert.Contains("UPDATE \"AgentSessions\" SET \"Payload\" = \"Snapshot\", \"Snapshot\" = '{}'", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("Jsonb", generated, StringComparison.Ordinal);
+    }
+
     // What a setter cannot be, each reported at the construct with a message that names it.
     [Theory]
     [InlineData(
@@ -327,14 +353,69 @@ public class LinqUpdateTests
         "Sql.Table<AgentSessionEntity>().Where(s => s.PreviousState == state).ExecuteUpdate(set => set.SetProperty(s => s.State, state))",
         "ZAO111",
         "state",
-        "Parameter 'state' is compared with columns that store its enum differently")]
+        "Parameter 'state' is compared with or set into columns that store its enum differently")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, (int?)null))",
+        "ZAO102",
+        "s.TurnCount",
+        "'s.TurnCount' as a setter target of type 'int?', a conversion of its column's 'int', is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, maybe))",
+        "ZAO102",
+        "s.TurnCount",
+        "'s.TurnCount' as a setter target of type 'int?', a conversion of its column's 'int', is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.State, (SessionState?)null))",
+        "ZAO102",
+        "s.State",
+        "'s.State' as a setter target of type 'TestApp.SessionState?', a conversion of its column's 'TestApp.SessionState', is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, wide))",
+        "ZAO102",
+        "s.TurnCount",
+        "'s.TurnCount' as a setter target of type 'long', a conversion of its column's 'int', is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, s => (int)(s.TotalInputTokens + 1)))",
+        "ZAO102",
+        "(int)(s.TotalInputTokens + 1)",
+        "'(int)(s.TotalInputTokens + 1)' as a setter value, rather than a companion parameter, a constant, a column of the row, or +, - and * over those, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, s => s.TurnCount + 'a'))",
+        "ZAO102",
+        "s.TurnCount + 'a'",
+        "'s.TurnCount + 'a'' in a setter value, where +, - and * apply to int, long, decimal, double and float only, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TotalInputTokens, s => 1u + s.TurnCount))",
+        "ZAO102",
+        "1u + s.TurnCount",
+        "'1u + s.TurnCount' in a setter value, where +, - and * apply to int, long, decimal, double and float only, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, s => s.TurnCount + s.Level))",
+        "ZAO102",
+        "s.TurnCount + s.Level",
+        "'s.TurnCount + s.Level' in a setter value, where +, - and * apply to int, long, decimal, double and float only, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().Where(s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc).SetProperty(s => s.Note, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, s => s.Note))",
+        "ZAO102",
+        "s.Note",
+        "'s.Note' set into the [Json] 'Payload', rather than a parameter, a constant, null or another [Json] column, is not supported in a [LinqCommand] chain")]
     public void Setter_reports(string chain, string id, string located, string message)
     {
         var (d, at) = Single(Repo + """
                 [LinqCommand(nameof(UpdateQuery))]
-                public partial Task<int> Update(SessionState state, CancellationToken ct);
+                public partial Task<int> Update(SessionState state, int? maybe, long wide, string? doc, CancellationToken ct);
 
-                private static int UpdateQuery(SessionState state) =>
+                private static int UpdateQuery(SessionState state, int? maybe, long wide, string? doc) =>
             """ + chain + """
             ;
             }

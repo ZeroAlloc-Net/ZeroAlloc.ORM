@@ -42,7 +42,8 @@ public sealed class AggregationSurfaceTests
         Throws(() => table.ExecuteDelete());
     }
 
-    // The setters are read at build time with the rest of the chain; neither overload runs.
+    // ExecuteUpdate throws the build-time guidance with either SetProperty overload in its
+    // setters lambda; it throws before the lambda is invoked.
     [Fact]
     public void Execute_update_throws()
     {

@@ -21,6 +21,9 @@ internal sealed partial class LinqUpdateRepo(IAsyncDbConnection connection)
     [LinqCommand(nameof(RecordTurnQuery))]
     public partial Task RecordTurnAsync(Guid id, int inputTokens, CancellationToken ct);
 
+    [LinqCommand(nameof(AdvanceQuery))]
+    public partial Task<int> AdvanceAsync(Guid id, CancellationToken ct);
+
     [LinqCommand(nameof(TransitionQuery))]
     public partial ValueTask<int> TransitionAsync(Guid id, AgentSessionState from, AgentSessionState to, CancellationToken ct);
 
@@ -47,6 +50,14 @@ internal sealed partial class LinqUpdateRepo(IAsyncDbConnection connection)
             .ExecuteUpdate(set => set
                 .SetProperty(s => s.TurnCount, s => s.TurnCount + 1)
                 .SetProperty(s => s.TotalInputTokens, s => s.TotalInputTokens + inputTokens));
+
+    // TotalInputTokens adds TurnCount as it was before this statement, not after its + 1.
+    private static int AdvanceQuery(Guid id) =>
+        Sql.Table<AgentSessionEntity>()
+            .Where(s => s.Id == id)
+            .ExecuteUpdate(set => set
+                .SetProperty(s => s.TurnCount, s => s.TurnCount + 1)
+                .SetProperty(s => s.TotalInputTokens, s => s.TotalInputTokens + s.TurnCount));
 
     private static int TransitionQuery(Guid id, AgentSessionState from, AgentSessionState to) =>
         Sql.Table<AgentSessionEntity>()
