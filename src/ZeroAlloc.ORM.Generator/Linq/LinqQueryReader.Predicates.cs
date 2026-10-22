@@ -222,14 +222,7 @@ internal static partial class LinqQueryReader
                 INamedTypeSymbol { TypeArguments.Length: 1 } named => named.TypeArguments[0],
                 _ => null,
             };
-            return element switch
-            {
-                { SpecialType: SpecialType.System_String } => "text[]",
-                { SpecialType: SpecialType.System_Int32 } => "integer[]",
-                { SpecialType: SpecialType.System_Int64 } => "bigint[]",
-                { MetadataName: "Guid" } => "uuid[]",
-                _ => null,
-            };
+            return element is null ? null : PrimitiveCatalog.GetPostgresArrayTypeName(element);
         }
         return OrmGenerator.BoundReader(type, conventions) switch
         {

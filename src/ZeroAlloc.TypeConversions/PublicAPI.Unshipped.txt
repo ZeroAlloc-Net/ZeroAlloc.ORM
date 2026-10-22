@@ -1,1 +1,2 @@
 #nullable enable
+static ZeroAlloc.TypeConversions.PrimitiveCatalog.GetPostgresArrayTypeName(Microsoft.CodeAnalysis.ITypeSymbol! element) -> string?

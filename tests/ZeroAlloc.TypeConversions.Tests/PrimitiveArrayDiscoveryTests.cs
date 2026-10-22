@@ -103,6 +103,32 @@ public class PrimitiveArrayDiscoveryTests
     }
 
     [Theory]
+    [InlineData("string", "text[]")]
+    [InlineData("string?", "text[]")]
+    [InlineData("int", "integer[]")]
+    [InlineData("long", "bigint[]")]
+    [InlineData("float", "real[]")]
+    [InlineData("double", "double precision[]")]
+    [InlineData("System.Guid", "uuid[]")]
+    public void Postgres_array_type_name_names_the_element_array(string elementSyntax, string typeName)
+    {
+        var (_, element) = TypeOf(elementSyntax);
+
+        PrimitiveCatalog.GetPostgresArrayTypeName(element).Should().Be(typeName);
+    }
+
+    [Theory]
+    [InlineData("byte")]
+    [InlineData("decimal")]
+    [InlineData("CustomerRow")]
+    public void Postgres_array_type_name_is_null_for_other_elements(string elementSyntax)
+    {
+        var (_, element) = TypeOf(elementSyntax);
+
+        PrimitiveCatalog.GetPostgresArrayTypeName(element).Should().BeNull();
+    }
+
+    [Theory]
     [InlineData("byte")]
     [InlineData("decimal")]
     [InlineData("CustomerRow")]
