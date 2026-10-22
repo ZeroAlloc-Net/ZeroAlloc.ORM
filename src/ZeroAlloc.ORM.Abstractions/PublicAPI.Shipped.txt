@@ -50,6 +50,9 @@ ZeroAlloc.ORM.MaterializeStrategy.Auto = 0 -> ZeroAlloc.ORM.MaterializeStrategy
 ZeroAlloc.ORM.MaterializeStrategy.Custom = 3 -> ZeroAlloc.ORM.MaterializeStrategy
 ZeroAlloc.ORM.MaterializeStrategy.DomainEntity = 2 -> ZeroAlloc.ORM.MaterializeStrategy
 ZeroAlloc.ORM.MaterializeStrategy.FlatRow = 1 -> ZeroAlloc.ORM.MaterializeStrategy
+ZeroAlloc.ORM.OwnedMapAttribute
+ZeroAlloc.ORM.OwnedMapAttribute.OwnedMapAttribute(string! property) -> void
+ZeroAlloc.ORM.OwnedMapAttribute.Property.get -> string!
 ZeroAlloc.ORM.ParamAttribute
 ZeroAlloc.ORM.ParamAttribute.DbType.get -> System.Data.DbType
 ZeroAlloc.ORM.ParamAttribute.DbType.init -> void

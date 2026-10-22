@@ -1,2 +1,1 @@
 #nullable enable
-static ZeroAlloc.ORM.Linq.QueryOperators.Contains<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, T value) -> bool
