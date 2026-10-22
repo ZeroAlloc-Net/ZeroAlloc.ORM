@@ -11,7 +11,7 @@ namespace ZeroAlloc.TypeConversions;
 /// Rules are checked in priority order (see design doc Section 3); first match wins:
 /// <list type="number">
 ///   <item>Explicit <c>[Materialize]</c> annotation (reserved for v0.3+).</item>
-///   <item>PostgreSQL array: <c>T[]</c>, <c>List&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c> of string, int, long or Guid.</item>
+///   <item>PostgreSQL array: <c>T[]</c>, <c>List&lt;T&gt;</c>, <c>IReadOnlyList&lt;T&gt;</c> of string, int, long, float, double or Guid.</item>
 ///   <item>Primitive (<see cref="PrimitiveCatalog"/>).</item>
 ///   <item>ZA.ValueObjects <c>[ValueObject]</c> attribute.</item>
 ///   <item>Static <c>From</c> / <c>FromValue</c> factory.</item>

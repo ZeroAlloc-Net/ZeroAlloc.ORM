@@ -370,7 +370,7 @@ internal static partial class LinqQueryReader
     }
 
     // `ids.Contains(t.Id)` — `"Id" = ANY(@ids)`. The collection must be a companion parameter
-    // that binds as a PostgreSQL array: T[], List<T> or IReadOnlyList<T> of string, int, long or Guid.
+    // that binds as a PostgreSQL array: T[], List<T> or IReadOnlyList<T> of string, int, long, float, double or Guid.
     private static SqlExpression? ReadArrayContains(
         IInvocationOperation invocation,
         IOperation collection,
