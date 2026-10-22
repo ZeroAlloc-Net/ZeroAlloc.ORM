@@ -28,6 +28,7 @@ static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQue
 static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, int?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Contains<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, T value) -> bool
 static ZeroAlloc.ORM.Linq.QueryOperators.Count<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<int>!
 static ZeroAlloc.ORM.Linq.QueryOperators.GroupBy<T, TKey>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TKey>! key) -> ZeroAlloc.ORM.Linq.IQuery<ZeroAlloc.ORM.Linq.IGroup<TKey, T>!>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Join<TOuter, TInner, TKey, TResult>(this ZeroAlloc.ORM.Linq.IQuery<TOuter>! outer, ZeroAlloc.ORM.Linq.IQuery<TInner>! inner, System.Func<TOuter, TKey>! outerKey, System.Func<TInner, TKey>! innerKey, System.Func<TOuter, TInner, TResult>! result) -> ZeroAlloc.ORM.Linq.IQuery<TResult>!

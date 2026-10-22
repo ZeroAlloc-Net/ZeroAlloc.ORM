@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.8.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.7.0...v2.8.0) (2026-10-22)
+
+
+### Features
+
+* load a parent with its children from a tuple LINQ companion ([39122b9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/39122b995bdbc612f20899f9b6d611e6aff069fd))
+* map EF owned types as columns for LINQ queries ([39122b9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/39122b995bdbc612f20899f9b6d611e6aff069fd))
+* translate IQuery Contains to an IN subquery ([39122b9](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/39122b995bdbc612f20899f9b6d611e6aff069fd))
+
 ## [2.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.6.0...v2.7.0) (2026-10-22)
 
 
