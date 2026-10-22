@@ -281,6 +281,62 @@ SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "Exec
 - The caller assembles the object graph from the tuple. An element that does not fit its chain, or a
   tuple of another length, reports [ZAO112](../diagnostics/ZAO112.md), naming the element.
 
+### Children of a paged parent list
+
+For a page of parents, the child chain filters with `IQuery<T>.Contains`: a subquery that repeats the
+parent chain's order and page, and selects its id. It renders as an `IN` subquery, with the
+`ORDER BY`, `LIMIT` and `OFFSET` inside it, so the children are exactly those of the parents the
+first statement returns:
+
+```csharp
+[LinqQuery(nameof(PageQuery))]
+public partial Task<(List<TaskHead> Tasks, List<ExecutionLine> Executions)> Page(int skip, int take, CancellationToken ct);
+
+private static (IQuery<TaskHead>, IQuery<ExecutionLine>) PageQuery(int skip, int take) =>
+    (Sql.Table<TaskEntity>()
+        .OrderByDescending(t => t.CreatedAt).ThenBy(t => t.Id)
+        .Skip(skip).Take(take)
+        .Select(t => new TaskHead(t.Id, t.Title)),
+     Sql.Table<ExecutionEntity>()
+        .Where(e => Sql.Table<TaskEntity>()
+            .OrderByDescending(t => t.CreatedAt).ThenBy(t => t.Id)
+            .Skip(skip).Take(take)
+            .Select(t => t.Id)
+            .Contains(e.TaskId))
+        .OrderBy(e => e.ExecutedAt)
+        .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+```
+
+```sql
+SELECT "Id", "Title" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0);
+SELECT "Id", "InputTokens" FROM "Executions"
+WHERE "TaskId" IN (SELECT "Id" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0))
+ORDER BY "ExecutedAt"
+```
+
+- End both orderings with a unique key, such as `ThenBy(t => t.Id)`. Rows that tie on every key
+  have no defined order, so without one the page and the subquery could pick different rows.
+  Paging without any `OrderBy` warns [ZAO110](../diagnostics/ZAO110.md), inside the subquery too.
+- The subquery is a full `Sql.Table<T>()` chain, with `Where`, ordering, `Skip`, `Take` and joins,
+  ending in a `Select` of exactly one mapped column. It may use companion parameters, which bind on
+  the statement that contains it, but not the outer row: a correlated subquery reports
+  [ZAO102](../diagnostics/ZAO102.md).
+- `!query.Contains(x)` renders `NOT IN`.
+- `Contains` follows C#, which never errs on a null. SQL's `IN` is NULL for a NULL value, and
+  `NOT IN` is NULL for every row once the subquery selects one NULL. So the selected column and the
+  outer value must both be non-nullable, or the query reports ZAO102. A nullable column becomes
+  eligible with a `!= null` filter in the subquery:
+
+  ```csharp
+  .Where(e => !Sql.Table<TaskEntity>()
+      .Where(t => t.ParentId != null)
+      .Select(t => t.ParentId)
+      .Contains(e.TaskId))
+  ```
+
+- A subquery with a join aliases its sources `s0`, `s1`, ..., which never meet the outer query's
+  `t0`, `t1`, .... A subquery without one is not aliased.
+
 ## Projection
 
 `Select` constructs a positional record through the constructor its rows are read with. Each argument is
@@ -357,6 +413,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 | `t.Title.StartsWith(text)`, `EndsWith(text)` | the same `LIKE`, with `%` on one side |
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
+| `Sql.Table<P>().Select(p => p.Id).Contains(t.ParentId)` | `"ParentId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent list](#children-of-a-paged-parent-list) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
 
 - `Contains`, `StartsWith` and `EndsWith` match literally: `%`, `_` and `\` in the value are escaped,

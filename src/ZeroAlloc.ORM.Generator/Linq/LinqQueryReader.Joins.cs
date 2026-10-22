@@ -68,7 +68,7 @@ internal static partial class LinqQueryReader
         if (chain.Ordering.Count > 0) return Unsupported(invocation, "'Join' after 'OrderBy'", context);
         if (invocation.Arguments.Length != 5) return Unsupported(invocation, "'Join'", context);
 
-        var alias = "t" + (chain.Joins.Count + 1).ToString(CultureInfo.InvariantCulture);
+        var alias = chain.AliasPrefix + (chain.Joins.Count + 1).ToString(CultureInfo.InvariantCulture);
         var outer = context.Row;
         var inner = RowShape.Entity(alias);
         var outerKey = ReadJoinKey(ArgumentFor(invocation, 2), invocation, context);

@@ -108,6 +108,20 @@ public static class QueryOperators
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static IQuery<bool> Any<T>(this IQuery<T> source) => throw Guidance.Exception();
 
+    /// <summary>
+    /// Tests whether the query's one selected column holds <paramref name="value"/>, inside a
+    /// predicate: <c>value IN (SELECT ...)</c>, with the query's own filter, order and page.
+    /// </summary>
+    /// <typeparam name="T">The type of the selected column.</typeparam>
+    /// <param name="source">
+    /// A full <c>Sql.Table&lt;T&gt;()</c> chain ending in a <c>Select</c> of one non-nullable column,
+    /// which does not read the outer row.
+    /// </param>
+    /// <param name="value">The outer value to look for, which cannot be null.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static bool Contains<T>(this IQuery<T> source, T value) => throw Guidance.Exception();
+
     /// <summary>Groups rows by a key; read the group's <c>Key</c> and aggregates in a following Select.</summary>
     /// <typeparam name="T">The element type of the query.</typeparam>
     /// <typeparam name="TKey">The grouping key type.</typeparam>

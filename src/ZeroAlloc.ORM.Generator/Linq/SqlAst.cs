@@ -237,6 +237,21 @@ internal sealed record SqlILikeExpression(SqlExpression Operand, SqlExpression P
 internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Array) : SqlExpression;
 
 /// <summary>
+/// <c>query.Select(p =&gt; p.Col).Contains(operand)</c>: <c>operand IN (SELECT "Col" FROM ... WHERE
+/// ... ORDER BY ... LIMIT ... OFFSET ...)</c>, or <c>NOT IN</c> when <paramref name="Negated"/>. The
+/// ordering and the paging stay inside the subquery, so a paged parent set selects exactly the
+/// parents' ids. Both the operand and the selected column are non-nullable, which the reader
+/// checks, so the test is never NULL and NOT IN has no NULL trap.
+/// </summary>
+/// <param name="Operand">The outer value, a column or parameter of the outer query.</param>
+/// <param name="Subquery">
+/// The uncorrelated subquery, projecting exactly one column. Its sources are aliased <c>s0</c>,
+/// <c>s1</c>, ... only when it has a join, and it binds through its own name scope.
+/// </param>
+/// <param name="Negated">Whether the test is NOT IN, C#'s <c>!</c> over the Contains.</param>
+internal sealed record SqlInSubqueryExpression(SqlExpression Operand, SqlSelectStatement Subquery, bool Negated) : SqlExpression;
+
+/// <summary>
 /// <c>WhereIf(condition, predicate)</c>: <c>((condition) IS NOT TRUE OR (predicate))</c>. A NULL
 /// condition counts as false, as in C#, so it skips the filter.
 /// </summary>

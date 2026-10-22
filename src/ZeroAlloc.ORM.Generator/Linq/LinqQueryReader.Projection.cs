@@ -18,6 +18,8 @@ internal static partial class LinqQueryReader
             return Unsupported(invocation, "'Select' without a lambda", context);
         }
 
+        if (chain.IsSubquery) return ReadSubquerySelect(invocation, returned, row, chain, context);
+
         if (Unwrap(returned) is not IObjectCreationOperation creation)
             return RejectProjection("Select must construct a positional record with 'new'", returned, context);
 

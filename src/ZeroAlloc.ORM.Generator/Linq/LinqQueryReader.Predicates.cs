@@ -259,7 +259,8 @@ internal static partial class LinqQueryReader
         return op.ConstantValue.HasValue && op.ConstantValue.Value is null;
     }
 
-    // Sql.ILike, string.Contains / StartsWith / EndsWith, and Contains on an array parameter.
+    // Sql.ILike, string.Contains / StartsWith / EndsWith, Contains on an array parameter, and
+    // IQuery Contains, an IN subquery.
     private static SqlExpression? ReadPredicateCall(IInvocationOperation invocation, IParameterSymbol? row, ReaderContext context)
     {
         var method = invocation.TargetMethod;
@@ -292,6 +293,9 @@ internal static partial class LinqQueryReader
             var value = ReadComparand(invocation.Arguments[0].Value, row, context);
             return value is null ? null : new SqlLikeExpression(operand, value, match);
         }
+
+        if (IsLinqMember(method, QueryOperatorsTypeName, "Contains") && invocation.Arguments.Length == 2)
+            return ReadSubqueryContains(invocation, row, context);
 
         if (string.Equals(method.Name, "Contains", StringComparison.Ordinal) && CollectionContains(invocation) is { } membership)
             return ReadArrayContains(invocation, membership.Collection, membership.Item, row, context);

@@ -100,6 +100,11 @@ internal static class SqlParameterReferences
             case SqlDateTruncExpression dateTrunc:
                 Add(dateTrunc.Operand, names);
                 break;
+            case SqlInSubqueryExpression subquery:
+                // The subquery's parameters are the containing statement's: it renders inside it.
+                Add(subquery.Operand, names);
+                AddSelect(subquery.Subquery, names);
+                break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + expression.GetType().Name + ".");
         }

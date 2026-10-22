@@ -81,7 +81,7 @@ internal static class LinqQueryBinder
             return null;
         }
 
-        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias);
+        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias, maps);
         foreach (var join in select.Joins)
         {
             var joined = join.Source.EntityTypeFullName;
@@ -118,7 +118,7 @@ internal static class LinqQueryBinder
         return new EquatableArray<int>(ordinals.ToImmutable());
     }
 
-    private static EntityMapModel? FindMap(EquatableArray<EntityMapModel> maps, string entityTypeFullName)
+    internal static EntityMapModel? FindMap(EquatableArray<EntityMapModel> maps, string entityTypeFullName)
     {
         foreach (var map in maps)
         {
@@ -129,7 +129,7 @@ internal static class LinqQueryBinder
     }
 
     // `global::TestApp.TaskEntity` as a message shows it: `TestApp.TaskEntity`.
-    private static string DisplayName(string entityTypeFullName)
+    internal static string DisplayName(string entityTypeFullName)
         => entityTypeFullName.StartsWith("global::", StringComparison.Ordinal)
             ? entityTypeFullName.Substring("global::".Length)
             : entityTypeFullName;

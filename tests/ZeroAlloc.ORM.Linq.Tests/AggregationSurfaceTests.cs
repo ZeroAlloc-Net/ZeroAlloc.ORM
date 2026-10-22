@@ -99,4 +99,15 @@ public sealed class AggregationSurfaceTests
         Throws(() => avgNullable());
         Throws(() => avgInt());
     }
+
+    // IQuery<T>.Contains is read inside a predicate, as an IN subquery; it never runs.
+    [Fact]
+    public void Query_contains_throws()
+    {
+        IQuery<string> models = null!;
+
+        Func<bool> contains = () => models.Contains("gpt");
+
+        Throws(() => contains());
+    }
 }

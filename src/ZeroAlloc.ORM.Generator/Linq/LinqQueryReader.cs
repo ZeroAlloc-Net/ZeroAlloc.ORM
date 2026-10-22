@@ -239,6 +239,10 @@ internal static partial class LinqQueryReader
         // can; see TryReadRowMember. Also in NullableValues.
         public HashSet<SqlExpression> LiftedValues { get; } = new();
 
+        // The row parameters of the predicates an IN subquery is read inside, innermost last. A
+        // subquery that reads one of them would be correlated, which is not translated.
+        public List<IParameterSymbol> OuterRows { get; } = new();
+
         public List<DiagnosticInfo> Diagnostics { get; } = new();
 
         public void Report(DiagnosticInfo diagnostic) => Diagnostics.Add(diagnostic);

@@ -329,6 +329,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlAggregateCallExpression call:
                 RenderAggregateCall(sb, call, names);
                 break;
+            case SqlInSubqueryExpression subquery:
+                RenderInSubquery(sb, subquery, names);
+                break;
             case SqlDateTruncExpression dateTrunc:
                 sb.Append("date_trunc('day', ");
                 RenderExpression(sb, dateTrunc.Operand, names);
@@ -351,6 +354,30 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + expression.GetType().Name + ".");
         }
+    }
+
+    // `operand [NOT] IN (SELECT "Col" FROM ... WHERE ... ORDER BY ... LIMIT ... OFFSET ...)`. The
+    // subquery renders through its own scope, so its members resolve through its own sources and
+    // its aliases, s0, s1, ..., never meet the outer t0, t1, .... An enum constant as the operand
+    // takes the storage of the column the subquery selects, as it would in a comparison.
+    private static void RenderInSubquery(StringBuilder sb, SqlInSubqueryExpression test, SqlNameScope names)
+    {
+        var inner = names.Subquery(test.Subquery);
+        if (test.Operand is SqlEnumLiteralExpression enumLiteral)
+        {
+            var byName = enumLiteral.StoresName
+                || (test.Subquery.Projection.Length == 1
+                    && test.Subquery.Projection[0] is SqlMemberExpression column
+                    && inner.IsEnumAsString(column));
+            AppendEnumLiteral(sb, enumLiteral, byName, names);
+        }
+        else
+        {
+            RenderExpression(sb, test.Operand, names);
+        }
+        sb.Append(test.Negated ? " NOT IN (" : " IN (");
+        RenderSelect(sb, test.Subquery, inner);
+        sb.Append(')');
     }
 
     // `::type` after a parameter without a DbType facet. A name-bound enum gets the String facet

@@ -60,6 +60,7 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
         Assert.Contains(typeof(SqlDateTruncExpression), expressions);
         Assert.Contains(typeof(SqlOwnedIsNullExpression), expressions);
+        Assert.Contains(typeof(SqlInSubqueryExpression), expressions);
         Assert.Equal(
             [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
             Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));

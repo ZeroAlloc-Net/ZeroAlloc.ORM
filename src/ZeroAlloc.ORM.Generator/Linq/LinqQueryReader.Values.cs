@@ -71,6 +71,13 @@ internal static partial class LinqQueryReader
 
         expression = op.ConstantValue.HasValue ? ReadConstant(op) : ReadReference(op, row, context);
         if (expression is not null) return OperandRead.Read;
+        if (!op.ConstantValue.HasValue && ReadsOuterRow(op, context))
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + op.Syntax + "', a read of the outer row inside a subquery, which makes it a correlated subquery,",
+                op.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
         if (op.ConstantValue.HasValue || !IsCapture(op, row)) return OperandRead.Unsupported;
 
         context.Report(LinqDiagnostics.Capture(op.Syntax.ToString(), op.Syntax.GetLocation()));
