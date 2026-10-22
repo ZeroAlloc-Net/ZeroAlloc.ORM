@@ -118,12 +118,14 @@ public sealed class CodeAnalysisRequest
     public AnalysisOutcome? Outcome { get; private set; }                // optional
 }
 
-// HasColumnName gave Url and FilePath bare names; every other member keeps "{Owner}_{Property}".
+// Url, Branch and FilePath carry Daedalus' bare column names; every other owned member keeps
+// EF's {Owner}_{Property}, such as "Repository_Platform".
 [TableMap(typeof(CodeAnalysisRequest), "AnalysisRequests")]
 [OwnedMap(nameof(CodeAnalysisRequest.Repository))]
 [OwnedMap(nameof(CodeAnalysisRequest.Location))]
 [OwnedMap(nameof(CodeAnalysisRequest.Outcome))]
 [ColumnMap("Repository.Url", Column = "RepositoryUrl")]
+[ColumnMap("Repository.Branch", Column = "RepositoryBranch")]
 [ColumnMap("Location.FilePath", Column = "FilePath")]
 internal static class CodeAnalysisRequestMap;
 ```
@@ -136,8 +138,10 @@ column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join key
   every one of its columns is NULL, and `!= null` is its negation. That holds for a required owner
   too, so `r.Repository == null` is translated rather than taken as false.
 - A member of an object the map does not declare owned is not mapped, and reports ZAO105.
-- A dotted path has exactly two segments, `Owner.Property`; an owned type nested in an owned type is
-  not supported.
+- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106. An owned
+  type nested in an owned type is not supported: a member of it, such as
+  `r.Repository.Origin.FilePath`, reports ZAO102 in `Where` or an ordering and ZAO107 in `Select`,
+  and a null test on the nested object, `r.Repository.Origin == null`, reports ZAO105.
 - An optional owned object, a property annotated `?` such as `AnalysisOutcome? Outcome`, that is
   absent has every one of its columns NULL. Its members read NULL then, where C# would throw on
   the null owner, so each member of an optional owned object counts as nullable: a `bool` member
@@ -291,9 +295,9 @@ statement:
 
 ```csharp
 [LinqQuery(nameof(PageQuery))]
-public partial Task<(List<TaskHead> Tasks, List<ExecutionLine> Executions)> Page(int skip, int take, CancellationToken ct);
+public partial Task<(List<TaskHead> Tasks, List<ExecutionOfTask> Executions)> Page(int skip, int take, CancellationToken ct);
 
-private static (IQuery<TaskHead>, IQuery<ExecutionLine>) PageQuery(int skip, int take) =>
+private static (IQuery<TaskHead>, IQuery<ExecutionOfTask>) PageQuery(int skip, int take) =>
     (Sql.Table<TaskEntity>()
         .OrderByDescending(t => t.CreatedAt).ThenBy(t => t.Id)
         .Skip(skip).Take(take)
@@ -305,12 +309,15 @@ private static (IQuery<TaskHead>, IQuery<ExecutionLine>) PageQuery(int skip, int
             .Select(t => t.Id)
             .Contains(e.TaskId))
         .OrderBy(e => e.ExecutedAt).ThenBy(e => e.Id)
-        .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+        .Select(e => new ExecutionOfTask(e.Id, e.TaskId, e.InputTokens)));
 ```
+
+`ExecutionOfTask(Guid Id, Guid TaskId, int InputTokens)` carries the parent id, so the caller can
+group the children by task:
 
 ```sql
 SELECT "Id", "Title" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0);
-SELECT "Id", "InputTokens" FROM "Executions"
+SELECT "Id", "TaskId", "InputTokens" FROM "Executions"
 WHERE "TaskId" IN (SELECT "Id" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0))
 ORDER BY "ExecutedAt", "Id"
 ```
@@ -767,7 +774,9 @@ Also not supported today:
   assembles the graph.
 - Correlated subqueries, such as `EXISTS` or a subquery that reads the outer row (ZAO102). Join,
   or filter the subquery on companion parameters.
-- An owned type nested in an owned type, and owned collections, `OwnsMany` (ZAO106).
+- An owned type nested in an owned type: a deeper `[ColumnMap]` path reports ZAO106, and a read
+  of the nested object's members ZAO102, ZAO105 or ZAO107, see [Owned types](#owned-types).
+- Owned collections, `OwnsMany`: `[OwnedMap]` on a collection reports ZAO106.
 - A stream, `IAsyncEnumerable<T>`, as a tuple element (ZAO112), and a companion tuple of more than
   7 elements (ZAO100).
 - Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
