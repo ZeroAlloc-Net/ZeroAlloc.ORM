@@ -40,6 +40,7 @@ public class SqlAstExhaustivenessTests
         Walk(select);
         Walk(new SqlAggregateStatement(SqlAggregate.Count, select));
         Walk(new SqlScalarAggregateStatement(Call(expression), select));
+        Walk(new SqlDeleteStatement(From, new EquatableArray<SqlExpression>(ImmutableArray.Create(Unaliased(expression)))));
         _ = LinqQueryReader.MayBeNull(expression, new HashSet<SqlExpression>());
     }
 
@@ -62,7 +63,7 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlObjectIsNullExpression), expressions);
         Assert.Contains(typeof(SqlInSubqueryExpression), expressions);
         Assert.Equal(
-            [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
+            [typeof(SqlAggregateStatement), typeof(SqlDeleteStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
             Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
     }
 
@@ -72,11 +73,12 @@ public class SqlAstExhaustivenessTests
         {
             SqlAggregateStatement aggregate => aggregate.Source,
             SqlScalarAggregateStatement scalar => scalar.Source,
+            SqlDeleteStatement => null,
             _ => (SqlSelectStatement)statement,
         };
         var maps = new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map));
-        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias, maps);
-        foreach (var join in select.Joins)
+        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select?.Alias, maps);
+        foreach (var join in select?.Joins ?? default)
             names.AddSource(join.Alias, Map, "TestApp.TaskEntity");
         _ = EnumParameterStorage.Decide(statement, names);
         _ = PostgresSqlRenderer.Instance.Render(statement, names);
@@ -105,6 +107,14 @@ public class SqlAstExhaustivenessTests
             "t1",
             expression,
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)))));
+
+    // A DELETE's table takes no alias, so its members name none: the placeholder "x" goes.
+    private static SqlExpression Unaliased(SqlExpression expression) => expression switch
+    {
+        SqlMemberExpression member => member with { SourceAlias = null },
+        SqlObjectIsNullExpression test => test with { SourceAlias = null },
+        _ => expression,
+    };
 
     // The expression as an aggregate's argument, the position a scalar aggregate adds.
     private static SqlAggregateCallExpression Call(SqlExpression argument)

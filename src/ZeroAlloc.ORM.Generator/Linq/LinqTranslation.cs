@@ -26,6 +26,12 @@ internal enum LinqResultShape
     /// a list, a single row or a scalar.
     /// </summary>
     MultiResult,
+
+    /// <summary>
+    /// <c>Task</c> or <c>ValueTask</c>, or <c>Task&lt;int&gt;</c> or <c>ValueTask&lt;int&gt;</c> for the
+    /// rows affected: a <c>[LinqCommand]</c> write, run through the <c>[Command]</c> non-query path.
+    /// </summary>
+    NonQuery,
 }
 
 /// <summary>

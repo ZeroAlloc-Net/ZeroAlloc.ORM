@@ -42,14 +42,24 @@ internal static class EnumParameterStorage
         foreach (var (statement, scope) in statements)
         {
             names = scope;
-            var select = statement switch
+            switch (statement)
             {
-                SqlSelectStatement own => own,
-                SqlAggregateStatement aggregate => aggregate.Source,
-                SqlScalarAggregateStatement scalar => scalar.Source,
-                _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
-            };
-            VisitSelect(select);
+                case SqlSelectStatement own:
+                    VisitSelect(own);
+                    break;
+                case SqlAggregateStatement aggregate:
+                    VisitSelect(aggregate.Source);
+                    break;
+                case SqlScalarAggregateStatement scalar:
+                    VisitSelect(scalar.Source);
+                    break;
+                case SqlDeleteStatement delete:
+                    foreach (var predicate in delete.Predicates)
+                        Visit(predicate);
+                    break;
+                default:
+                    throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + ".");
+            }
         }
 
         // A parameter compared with a decided one binds the same way.

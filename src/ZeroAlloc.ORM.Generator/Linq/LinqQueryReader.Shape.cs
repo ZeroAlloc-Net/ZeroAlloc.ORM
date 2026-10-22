@@ -90,6 +90,25 @@ internal static partial class LinqQueryReader
     private static bool IsRow(ITypeSymbol candidate, ITypeSymbol rowType)
         => SymbolEqualityComparer.Default.Equals(candidate, rowType);
 
+    // A [LinqCommand] method's return type: Task or ValueTask, or Task<int> or ValueTask<int> for
+    // the rows affected, the shapes the [Command] non-query path runs.
+    private static bool IsNonQuery(ITypeSymbol returnType)
+    {
+        if (returnType is INamedTypeSymbol { IsGenericType: false } plain
+            && string.Equals(plain.ContainingNamespace?.ToDisplayString(), TasksNamespace, StringComparison.Ordinal)
+            && plain.Name is "Task" or "ValueTask")
+        {
+            return true;
+        }
+        return (IsGeneric(returnType, TasksNamespace, "Task`1", out var result)
+                || IsGeneric(returnType, TasksNamespace, "ValueTask`1", out result))
+            && result.SpecialType == SpecialType.System_Int32;
+    }
+
+    // What a [LinqCommand] method can return.
+    private const string CommandShapes =
+        "return Task or ValueTask, or Task<int> or ValueTask<int> for the number of rows affected";
+
     // The element shapes of a tuple companion's method: Task<(...)> or ValueTask<(...)>, the
     // tuple optionally nullable, with one element per companion element, each fitting its
     // element's IQuery<T>. Null with the ZAO112 that names what does not fit.

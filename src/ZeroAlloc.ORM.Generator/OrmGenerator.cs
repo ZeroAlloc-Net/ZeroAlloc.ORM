@@ -21,6 +21,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string LinqQueryAttributeFullName = "ZeroAlloc.ORM.Linq.LinqQueryAttribute";
+    private const string LinqCommandAttributeFullName = "ZeroAlloc.ORM.Linq.LinqCommandAttribute";
     private const string DialectAttributeFullName = "ZeroAlloc.ORM.DialectAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
@@ -133,6 +134,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // methods that bind join the union below. See OrmGenerator.Linq.cs.
         var linqQueryMethods = LinqQueryMethods(context, entityMaps);
 
+        // [LinqCommand] -- the same for a write: the SQL comes from a chain ending in
+        // ExecuteDelete, and the method takes the [Command] non-query path.
+        var linqCommandMethods = LinqCommandMethods(context, entityMaps);
+
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
         // location, etc.) — we take them from g.First() instead of duplicating them
@@ -155,8 +160,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             .Combine(commandMethods.Collect())
             .Combine(storedProcedureMethods.Collect())
             .Combine(linqQueryMethods.Collect())
-            .SelectMany(static (combined, _) =>
+            .Combine(linqCommandMethods.Collect())
+            .SelectMany(static (all, _) =>
             {
+                var combined = all.Left;
                 var pair = combined.Left.Left;
                 var sprocs = combined.Left.Right;
                 var linq = combined.Right;
@@ -178,6 +185,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in linq)
+                {
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
+                }
+                foreach (var m in all.Right)
                 {
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
@@ -553,7 +564,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // ZAO005 — multiple ORM attributes on one method.
         // v0.4 Phase D extends from the v0.4-A two-attribute check to a three-way
         // exclusivity rule: counts QueryAttribute + CommandAttribute +
-        // StoredProcedureAttribute, and since [LinqQuery] also LinqQueryAttribute.
+        // StoredProcedureAttribute, and since [LinqQuery] also LinqQueryAttribute and
+        // LinqCommandAttribute.
         // Counting every pipeline's attribute on the same method covers every pair
         // (Query+Command, Query+StoredProcedure, Command+StoredProcedure, any of
         // them with LinqQuery) and the all-of-them case via a single >1 threshold.
@@ -570,7 +582,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
                     || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal)
                     || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal)
-                    || string.Equals(fqn, LinqQueryAttributeFullName, StringComparison.Ordinal);
+                    || string.Equals(fqn, LinqQueryAttributeFullName, StringComparison.Ordinal)
+                    || string.Equals(fqn, LinqCommandAttributeFullName, StringComparison.Ordinal);
             });
         if (ormAttrCount > 1)
         {
@@ -1454,7 +1467,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()),
             HasNpgsql: hasNpgsql,
             PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
-            LinqSourceComment: linq?.SourceComment);
+            LinqSourceComment: linq?.SourceComment,
+            LinqNoRowsMessage: linq?.NoRowsMessage);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -5611,7 +5625,16 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
-        if (m.HasReturnValue)
+        if (m.LinqNoRowsMessage is { } noRows)
+        {
+            // [LinqCommand(ThrowOnNoRows = true)]: no rows affected means the row the write
+            // guards was changed or removed since it was read.
+            sb.AppendLine($"            var __rows = await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+            sb.Append("            if (__rows == 0) throw new global::ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException(")
+                .Append(SymbolDisplay.FormatLiteral(noRows, quote: true)).AppendLine(");");
+            if (m.HasReturnValue) sb.AppendLine("            return __rows;");
+        }
+        else if (m.HasReturnValue)
         {
             sb.AppendLine($"            return await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
         }

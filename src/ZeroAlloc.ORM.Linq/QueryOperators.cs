@@ -125,6 +125,17 @@ public static class QueryOperators
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static bool Contains<T>(this IQuery<T> source, T value) => throw Guidance.Exception();
 
+    /// <summary>
+    /// Deletes the rows the chain selects: <c>DELETE FROM table WHERE ...</c>. Only <c>Where</c> and
+    /// <c>WhereIf</c> may come before it; without either it deletes every row. Ends the chain of a
+    /// <see cref="LinqCommandAttribute"/> companion.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to delete.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static int ExecuteDelete<T>(this IQuery<T> source) => throw Guidance.Exception();
+
     /// <summary>Groups rows by a key; read the group's <c>Key</c> and aggregates in a following Select.</summary>
     /// <typeparam name="T">The element type of the query.</typeparam>
     /// <typeparam name="TKey">The grouping key type.</typeparam>

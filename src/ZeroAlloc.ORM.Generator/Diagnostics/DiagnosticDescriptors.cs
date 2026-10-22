@@ -658,10 +658,11 @@ internal static class DiagnosticDescriptors
     //   {0} = the companion name
     //   {1} = the [LinqQuery] method name
     //   {2} = what is wrong
+    //   {3} = the method's attribute, [LinqQuery] or [LinqCommand]; see LinqDiagnostics.ForAttribute
     public static readonly DiagnosticDescriptor ZAO100_InvalidLinqCompanion = new(
         id: "ZAO100",
         title: "Invalid LINQ companion",
-        messageFormat: "Companion '{0}' of [LinqQuery] method '{1}' is invalid: {2}",
+        messageFormat: "Companion '{0}' of {3} method '{1}' is invalid: {2}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -688,10 +689,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the construct, quoted
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO102_UnsupportedLinqConstruct = new(
         id: "ZAO102",
         title: "Unsupported LINQ construct",
-        messageFormat: "{0} is not supported in a [LinqQuery] chain",
+        messageFormat: "{0} is not supported in a {1} chain",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -702,10 +704,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the captured expression
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO103_LinqCapture = new(
         id: "ZAO103",
         title: "LINQ query captures a value",
-        messageFormat: "The [LinqQuery] chain reads '{0}'; pass it as a companion parameter instead",
+        messageFormat: "The {1} chain reads '{0}'; pass it as a companion parameter instead",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -746,10 +749,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = what is wrong
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO107_UnsupportedLinqProjection = new(
         id: "ZAO107",
         title: "Unsupported LINQ projection",
-        messageFormat: "Unsupported [LinqQuery] projection: {0}",
+        messageFormat: "Unsupported {1} projection: {0}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -761,10 +765,11 @@ internal static class DiagnosticDescriptors
     // MessageArgs:
     //   {0} = the [LinqQuery] method name
     //   {1} = what the repository declares
+    //   {2} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO108_LinqRequiresPostgreSql = new(
         id: "ZAO108",
         title: "LINQ query requires the PostgreSQL dialect",
-        messageFormat: "[LinqQuery] method '{0}' needs [Dialect(SqlDialect.PostgreSql)] on its type or assembly, but {1}",
+        messageFormat: "{2} method '{0}' needs [Dialect(SqlDialect.PostgreSql)] on its type or assembly, but {1}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -778,10 +783,11 @@ internal static class DiagnosticDescriptors
     // MessageArgs:
     //   {0} = the companion name
     //   {1} = the [LinqQuery] method that names it
+    //   {2} = that method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO109_LinqCompanionCalled = new(
         id: "ZAO109",
         title: "LINQ companion is called",
-        messageFormat: "'{0}' is a [LinqQuery] companion and is never run; call '{1}' instead",
+        messageFormat: "'{0}' is a {2} companion and is never run; call '{1}' instead",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -825,10 +831,11 @@ internal static class DiagnosticDescriptors
     //   {1} = the method's return type, quoted, or the tuple element that does not fit
     //   {2} = the companion's return type, or its tuple element, quoted
     //   {3} = the return types that fit
+    //   {4} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
         id: "ZAO112",
         title: "LINQ method return type does not fit the query",
-        messageFormat: "[LinqQuery] method '{0}' returns {1}, which does not fit {2}; {3}",
+        messageFormat: "{4} method '{0}' returns {1}, which does not fit {2}; {3}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,

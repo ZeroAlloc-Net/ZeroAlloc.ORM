@@ -30,7 +30,8 @@ internal static class LinqQueryBinder
         var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
         foreach (var statement in statements)
         {
-            var names = Scope(SelectOf(statement), maps, out var unmapped);
+            var (from, alias, joins) = SourcesOf(statement);
+            var names = Scope(from, alias, joins, maps, out var unmapped);
             if (names is null) return Failed(unmapped!);
             foreach (var subquery in SqlSubqueries.Collect(statement))
             {
@@ -78,29 +79,35 @@ internal static class LinqQueryBinder
         };
     }
 
-    // The statement's SELECT; a terminal's is its inner one.
-    private static SqlSelectStatement SelectOf(SqlStatement statement) => statement switch
+    // The statement's sources: a SELECT's FROM, alias and joins, a terminal's those of its inner
+    // SELECT, and a DELETE's table, which has neither an alias nor a join.
+    private static (SqlTableSource From, string? Alias, EquatableArray<SqlJoin> Joins) SourcesOf(SqlStatement statement) => statement switch
     {
-        SqlSelectStatement select => select,
-        SqlAggregateStatement aggregate => aggregate.Source,
-        SqlScalarAggregateStatement scalar => scalar.Source,
+        SqlSelectStatement select => (select.From, select.Alias, select.Joins),
+        SqlAggregateStatement aggregate => (aggregate.Source.From, aggregate.Source.Alias, aggregate.Source.Joins),
+        SqlScalarAggregateStatement scalar => (scalar.Source.From, scalar.Source.Alias, scalar.Source.Joins),
+        SqlDeleteStatement delete => (delete.Table, null, default),
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 
     // One name scope over every source: the FROM entity, under its alias when there is a join,
     // and each joined entity under its own. Null with ZAO104 for the first source without a map.
-    private static SqlNameScope? Scope(SqlSelectStatement select, EquatableArray<EntityMapModel> maps, out DiagnosticInfo? unmapped)
+    private static SqlNameScope? Scope(
+        SqlTableSource from,
+        string? alias,
+        EquatableArray<SqlJoin> joins,
+        EquatableArray<EntityMapModel> maps,
+        out DiagnosticInfo? unmapped)
     {
         unmapped = null;
-        var from = select.From;
         if (FindMap(maps, from.EntityTypeFullName) is not { } map)
         {
             unmapped = LinqDiagnostics.UnmappedEntity(DisplayName(from.EntityTypeFullName), from.Location);
             return null;
         }
 
-        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias, maps);
-        foreach (var join in select.Joins)
+        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), alias, maps);
+        foreach (var join in joins)
         {
             var joined = join.Source.EntityTypeFullName;
             if (FindMap(maps, joined) is not { } joinedMap)

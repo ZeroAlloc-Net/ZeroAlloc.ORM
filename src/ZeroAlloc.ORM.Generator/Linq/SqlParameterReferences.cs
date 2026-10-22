@@ -24,6 +24,9 @@ internal static class SqlParameterReferences
                 Add(scalar.Call, names);
                 AddSelect(scalar.Source, names);
                 break;
+            case SqlDeleteStatement delete:
+                foreach (var predicate in delete.Predicates) Add(predicate, names);
+                break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + statement.GetType().Name + ".");
         }

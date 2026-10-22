@@ -1,1 +1,7 @@
 #nullable enable
+static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteDelete<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> int
+ZeroAlloc.ORM.Linq.LinqCommandAttribute
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.Companion.get -> string!
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.LinqCommandAttribute(string! companion) -> void
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.get -> bool
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.init -> void

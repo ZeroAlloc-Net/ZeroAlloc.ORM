@@ -25,6 +25,9 @@ internal static class SqlSubqueries
                 Add(scalar.Call, subqueries);
                 AddSelect(scalar.Source, subqueries);
                 break;
+            case SqlDeleteStatement delete:
+                foreach (var predicate in delete.Predicates) Add(predicate, subqueries);
+                break;
             default:
                 throw new InvalidOperationException("No subquery walk for " + statement.GetType().Name + ".");
         }

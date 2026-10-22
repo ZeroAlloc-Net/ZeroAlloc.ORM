@@ -61,13 +61,25 @@ internal static partial class LinqQueryReader
 
         // The GroupBy key; the operators after it read groups.
         public GroupKey? Group { get; set; }
+
+        // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate. Only Where and
+        // WhereIf may come before it; null for a query's chain and for a subquery's.
+        public string? Write { get; init; }
     }
 
     private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
     {
         var operation = context.Model.GetOperation(body, context.CancellationToken);
-        var chain = new ChainBuilder { Alias = operation is not null && HasJoin(operation) ? "t0" : null };
+        var chain = new ChainBuilder
+        {
+            Alias = operation is not null && HasJoin(operation) ? "t0" : null,
+            Write = context.WriteTerminal,
+        };
         if (operation is null || !ReadChain(operation, chain, context)) return null;
+
+        // A write deletes the rows its conditions select; without any, every row, as EF's does.
+        if (chain.Write is not null)
+            return new SqlDeleteStatement(chain.From!, new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()));
 
         // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
         // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,
@@ -187,6 +199,13 @@ internal static partial class LinqQueryReader
     private static bool ReadOperator(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         var name = invocation.TargetMethod.Name;
+        // A write reads its rows from the table and its conditions alone.
+        if (chain.Write is { } write)
+        {
+            if (string.Equals(name, write, StringComparison.Ordinal)) return true;
+            if (name is not ("Where" or "WhereIf"))
+                return Unsupported(invocation, "'" + name + "' before '" + write + "'", context);
+        }
         if (chain.Group is not null && UnsupportedAfterGroupBy(name) is { } afterGroup)
             return Unsupported(invocation, afterGroup, context);
         if (TerminalOf(name) is { } terminal)

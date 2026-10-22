@@ -8,7 +8,7 @@ namespace ZeroAlloc.ORM.Linq.Tests;
 public sealed class AuthoringSurfaceTests
 {
     private const string Guidance = "read at build time";
-    private const string Call = "Call the [LinqQuery] method";
+    private const string Call = "Call the [LinqQuery] or [LinqCommand] method";
 
     [TableMap(typeof(Order), "orders", Schema = "sales")]
     [ColumnMap("Id", Column = "order_id")]

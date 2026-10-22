@@ -26,6 +26,10 @@ namespace ZeroAlloc.ORM.Generator;
 // for ZAO008, which needs a multi-result return type for several statements; for ZAO032/033,
 // which it skips for [LinqQuery], since the translator renders one statement per tuple element;
 // and for the batch strategy, which the bind recomputes from the bound SQL.
+//
+// [LinqCommand] is wired the same way, as LinqCommandReads and LinqCommandMethods. Its core runs
+// as [Command] with Kind NonQuery, the attribute declaring no Kind, so the method takes the
+// [Command] non-query emit; ThrowOnNoRows adds the zero-rows check to it.
 public sealed partial class OrmGenerator
 {
     private static IncrementalValuesProvider<QueryMethodWithTypeContext> LinqQueryMethods(
@@ -36,16 +40,41 @@ public sealed partial class OrmGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: LinqQueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, ct) => ReadLinqMethod(ctx, ct))
+                transform: static (ctx, ct) => ReadLinqMethod(ctx, isCommand: false, ct))
             .WithTrackingName("LinqQueryReads")
             .Combine(entityMaps)
             .Select(static (pair, _) => BindLinqMethod(pair.Left, pair.Right))
             .WithTrackingName("LinqQueryMethods");
+        return ReportAndKeepBound(context, bound, LinqDiagnostics.LinqQuery);
+    }
 
-        context.RegisterSourceOutput(bound, static (sourceCtx, result) =>
+    private static IncrementalValuesProvider<QueryMethodWithTypeContext> LinqCommandMethods(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<EquatableArray<EntityMapModel>> entityMaps)
+    {
+        var bound = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: LinqCommandAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, ct) => ReadLinqMethod(ctx, isCommand: true, ct))
+            .WithTrackingName("LinqCommandReads")
+            .Combine(entityMaps)
+            .Select(static (pair, _) => BindLinqMethod(pair.Left, pair.Right))
+            .WithTrackingName("LinqCommandMethods");
+        return ReportAndKeepBound(context, bound, LinqDiagnostics.LinqCommand);
+    }
+
+    // Reports each method's LINQ diagnostics, with the attribute their messages name, and keeps
+    // the methods that bound.
+    private static IncrementalValuesProvider<QueryMethodWithTypeContext> ReportAndKeepBound(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValuesProvider<LinqMethodResult> bound,
+        string attribute)
+    {
+        context.RegisterSourceOutput(bound, (sourceCtx, result) =>
         {
             foreach (var diagnostic in result.Diagnostics)
-                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
+                ReportStandaloneDiagnostic(sourceCtx, LinqDiagnostics.ForAttribute(diagnostic, attribute));
         });
 
         return bound
@@ -53,16 +82,19 @@ public sealed partial class OrmGenerator
             .Select(static (r, _) => r.Method!);
     }
 
-    private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, CancellationToken ct)
+    private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, bool isCommand, CancellationToken ct)
     {
-        var translation = LinqQueryReader.Read(ctx, ct);
+        var translation = LinqQueryReader.Read(ctx, isCommand, ct);
         if (!translation.Succeeded) return new LinqMethodRead(translation, null);
 
         var core = TransformMethodCore(
             ctx,
-            AttributePipelineKind.LinqQuery,
+            isCommand ? AttributePipelineKind.Command : AttributePipelineKind.LinqQuery,
             sql: string.Empty,
-            new LinqOverrides(translation.Facets, translation.SourceComment));
+            new LinqOverrides(translation.Facets, translation.SourceComment)
+            {
+                NoRowsMessage = isCommand && ThrowsOnNoRows(ctx) ? NoRowsMessage(ctx) : null,
+            });
         if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {
             var location = ((MethodDeclarationSyntax)ctx.TargetNode).ReturnType.GetLocation();
@@ -75,6 +107,22 @@ public sealed partial class OrmGenerator
         }
         return new LinqMethodRead(translation, core);
     }
+
+    // [LinqCommand(ThrowOnNoRows = true)].
+    private static bool ThrowsOnNoRows(GeneratorAttributeSyntaxContext ctx)
+    {
+        foreach (var named in ctx.Attributes[0].NamedArguments)
+        {
+            if (string.Equals(named.Key, "ThrowOnNoRows", System.StringComparison.Ordinal) && named.Value.Value is true)
+                return true;
+        }
+        return false;
+    }
+
+    // The ZeroAllocOrmConcurrencyException message, which names the type and the method.
+    private static string NoRowsMessage(GeneratorAttributeSyntaxContext ctx)
+        => "'" + ctx.TargetSymbol.ContainingType.Name + "." + ctx.TargetSymbol.Name
+            + "' affected no rows; the row was changed or removed since it was read";
 
     // A composite or [Materialize] factory member of the row expands to several reader columns,
     // while the projection gives it one. Every element of a tuple is checked, element i against

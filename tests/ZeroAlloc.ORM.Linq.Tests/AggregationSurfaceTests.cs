@@ -8,7 +8,7 @@ namespace ZeroAlloc.ORM.Linq.Tests;
 public sealed class AggregationSurfaceTests
 {
     private const string Guidance = "read at build time";
-    private const string Call = "Call the [LinqQuery] method";
+    private const string Call = "Call the [LinqQuery] or [LinqCommand] method";
 
     private sealed class Event
     {
@@ -32,6 +32,14 @@ public sealed class AggregationSurfaceTests
         Throws(() => group.Sum(e => e.InputTokens));
         Throws(() => group.Count());
         Throws(() => group.LongCount());
+    }
+
+    [Fact]
+    public void Execute_delete_throws()
+    {
+        IQuery<Event> table = null!;
+
+        Throws(() => table.ExecuteDelete());
     }
 
     [Fact]

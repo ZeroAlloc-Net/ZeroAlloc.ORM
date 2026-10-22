@@ -30,6 +30,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlScalarAggregateStatement scalar:
                 RenderScalarAggregate(sb, scalar, names);
                 break;
+            case SqlDeleteStatement delete:
+                RenderDelete(sb, delete, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -78,6 +81,14 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         RenderFromWhere(sb, source, names);
         RenderPaging(sb, source.Paging, names);
         sb.Append(") AS q");
+    }
+
+    // `DELETE FROM "schema"."table" [WHERE a AND b]`. The table takes no alias; see SqlDeleteStatement.
+    private static void RenderDelete(StringBuilder sb, SqlDeleteStatement delete, SqlNameScope names)
+    {
+        sb.Append("DELETE FROM ");
+        AppendTable(sb, names.Table, names.Schema, alias: null);
+        RenderWhere(sb, delete.Predicates, names);
     }
 
     // As a paged count, a paged aggregate reads a paged subquery. The subquery selects the
@@ -176,14 +187,18 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             }
         }
 
-        if (select.Predicates.Length > 0)
+        RenderWhere(sb, select.Predicates, names);
+    }
+
+    // ` WHERE a AND b`; nothing for no predicates.
+    private static void RenderWhere(StringBuilder sb, Model.EquatableArray<SqlExpression> predicates, SqlNameScope names)
+    {
+        if (predicates.Length == 0) return;
+        sb.Append(" WHERE ");
+        for (var i = 0; i < predicates.Length; i++)
         {
-            sb.Append(" WHERE ");
-            for (var i = 0; i < select.Predicates.Length; i++)
-            {
-                if (i > 0) sb.Append(" AND ");
-                RenderExpression(sb, select.Predicates[i], names);
-            }
+            if (i > 0) sb.Append(" AND ");
+            RenderExpression(sb, predicates[i], names);
         }
     }
 

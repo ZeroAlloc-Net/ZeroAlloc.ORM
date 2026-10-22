@@ -92,6 +92,21 @@ internal enum SqlAggregate
 /// </param>
 internal sealed record SqlScalarAggregateStatement(SqlAggregateCallExpression Call, SqlSelectStatement Source) : SqlStatement;
 
+/// <summary>
+/// <c>DELETE FROM table [WHERE predicates]</c>: an <c>ExecuteDelete()</c> terminal of a
+/// <c>[LinqCommand]</c> chain, whose rows affected the method returns. Without predicates it
+/// deletes every row, as EF Core's <c>ExecuteDelete</c> does; nothing is added.
+/// </summary>
+/// <param name="Table">The entity whose rows are deleted.</param>
+/// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
+/// <remarks>
+/// The table takes no alias. A command chain has no join, so every member names the table
+/// itself, and an IN subquery is uncorrelated: it binds through a scope of its own and aliases
+/// its sources s0, s1, ... only when it has a join, so nothing inside it names the outer table.
+/// An alias becomes needed only once a predicate can read the outer row from a subquery.
+/// </remarks>
+internal sealed record SqlDeleteStatement(SqlTableSource Table, EquatableArray<SqlExpression> Predicates) : SqlStatement;
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
