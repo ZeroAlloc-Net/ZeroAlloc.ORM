@@ -408,6 +408,43 @@ public class LinqOwnedTypeTests
         Assert.Contains("Repository", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
+    // An owned type nested in an owned type is not mapped: Repository's own CodeLocation and Spot
+    // members are no columns the chain can read. Each use is a build error, never a silent column,
+    // with the diagnostic of the position it is in.
+    [Theory]
+    [InlineData("Where(r => r.Repository.Origin.FilePath == \"x\")", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.FilePath")]
+    [InlineData("OrderBy(r => r.Repository.Origin.StartLine)", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.StartLine")]
+    [InlineData("Where(r => r.Repository.Origin == null)", "r.Id, r.Repository.Url", "ZAO105", "r.Repository.Origin")]
+    [InlineData("Where(r => true)", "r.Id, r.Repository.Origin.FilePath", "ZAO107", "r.Repository.Origin.FilePath")]
+    [InlineData("Where(r => true)", "r.Id, r.Repository.Spot.FilePath", "ZAO107", "r.Repository.Spot.FilePath")]
+    public void Member_of_a_type_nested_in_an_owned_type_is_a_build_error(
+        string filter, string projection, string expectedId, string expectedLocation)
+    {
+        var (d, located) = Single(Prelude.Replace(
+            "public RepositoryPlatform Platform { get; private set; }",
+            "public RepositoryPlatform Platform { get; private set; }\n"
+                + "    public CodeLocation Origin { get; private set; } = null!;\n"
+                + "    public Spot Spot { get; private set; } = null!;",
+            StringComparison.Ordinal) + """
+            public sealed record Spot(string FilePath, int Line);
+
+            public sealed record UrlLine(Guid Id, string Url);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class RequestStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(AllQuery))]
+                public partial Task<List<UrlLine>> All(CancellationToken ct);
+
+                private static IQuery<UrlLine> AllQuery() =>
+                    Sql.Table<CodeAnalysisRequest>().FILTER.Select(r => new UrlLine(PROJECTION));
+            }
+            """.Replace("FILTER", filter, StringComparison.Ordinal).Replace("PROJECTION", projection, StringComparison.Ordinal));
+
+        Assert.Equal(expectedId, d.Id);
+        Assert.Equal(expectedLocation, located);
+    }
+
     // The map declares only Repository owned: Location's members are not mapped.
     [Fact]
     public void Member_of_an_undeclared_owned_type_reports_ZAO105()
