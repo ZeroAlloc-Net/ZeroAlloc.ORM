@@ -45,8 +45,9 @@ internal static partial class LinqQueryReader
     }
 
     // C#'s `!`: NOT for a condition that is never NULL, IS NOT TRUE for one that can be.
-    // `!query.Contains(x)` is NOT IN when x cannot be null. A NULL x makes IN NULL, where C#'s
-    // Contains is false and its negation true, so a nullable x takes IS NOT TRUE like any condition.
+    // `!query.Contains(x)` is NOT IN when x cannot be null. A NULL x makes IN NULL, or false for an
+    // empty subquery, where C#'s Contains is false and its negation true, so a nullable x takes
+    // IS NOT TRUE like any condition.
     private static SqlExpression Negate(SqlExpression operand, ReaderContext context)
     {
         if (operand is SqlInSubqueryExpression subquery && !MayBeNull(subquery.Operand, context.NullableValues))
@@ -79,8 +80,8 @@ internal static partial class LinqQueryReader
             case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlOwnedIsNullExpression:
                 return false;
             case SqlInSubqueryExpression subquery:
-                // The selected column is never NULL, which the reader checks, so IN is NULL exactly
-                // when its operand is.
+                // The selected column is never NULL, which the reader checks, so IN can be NULL only
+                // when its operand can.
                 return MayBeNull(subquery.Operand, nullableValues);
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);

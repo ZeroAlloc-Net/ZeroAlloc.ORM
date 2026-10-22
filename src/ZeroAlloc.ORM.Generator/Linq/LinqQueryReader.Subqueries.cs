@@ -18,8 +18,8 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 // C#'s Contains never errs on a null, where SQL's NOT IN is NULL for every row once the subquery
 // selects one NULL. So the selected column must be non-nullable; a filter `p.Col != null` in the
 // subquery makes a nullable column eligible. The outer value may be null: over a set without
-// NULL, `NULL IN (...)` is NULL, which a WHERE drops as C#'s false, and its negation takes IS NOT
-// TRUE, true as in C#; see Negate. A subquery that reads the outer row would be correlated, ZAO102.
+// NULL, `NULL IN (...)` is NULL, or false for an empty set, which a WHERE drops alike as C#'s
+// false, and its negation takes IS NOT TRUE, true as in C#; see Negate. A subquery that reads the outer row would be correlated, ZAO102.
 internal static partial class LinqQueryReader
 {
     // `query.Select(p => p.Col).Contains(value)`: `value IN (SELECT "Col" ...)`. C#'s `!` over it
@@ -138,9 +138,13 @@ internal static partial class LinqQueryReader
 
     // `(Guid?)t.Id`: the column itself. The cast only widens the selected type to a nullable one,
     // so that Contains takes a nullable outer value; the column still selects no NULL.
+    // Only a pure lift, T to T? of the same T, such as a Guid, an enum or a typed id. A cast that
+    // also converts, such as (int?)t.LongCol, changes the value and stays, so it is reported.
     private static IOperation UnwrapNullableCast(IOperation op)
         => op is IConversionOperation { Conversion: { IsNullable: true, IsUserDefined: false }, Operand: var operand }
-            && op.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+            && op.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } lifted
+            && operand.Type is { } operandType
+            && SymbolEqualityComparer.Default.Equals(UnwrapNullable(operandType), lifted.TypeArguments[0])
                 ? Unwrap(operand)
                 : op;
 

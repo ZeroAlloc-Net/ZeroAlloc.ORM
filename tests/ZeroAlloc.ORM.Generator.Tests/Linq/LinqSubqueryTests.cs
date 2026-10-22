@@ -33,6 +33,7 @@ public class LinqSubqueryTests
             public string Title { get; private set; } = "";
             public DateTimeOffset CreatedAt { get; private set; }
             public Stage Stage { get; private set; }
+            public long Weight { get; private set; }
         }
 
         public enum Stage { Todo, Done }
@@ -350,10 +351,12 @@ public class LinqSubqueryTests
         Assert.Equal(expectedMessage, message);
     }
 
-    // The subquery projects exactly one column, a mapped one, and ends with that Select.
+    // The subquery projects exactly one column, a mapped one, and ends with that Select. A cast
+    // that converts the column, rather than only lifting it to its nullable type, is no column.
     [Theory]
     [InlineData("Sql.Table<TaskEntity>().Select(t => new TaskHead(t.Id, t.Title)).Contains(new TaskHead(e.TaskId, \"\"))", "new TaskHead(t.Id, t.Title)")]
     [InlineData("Sql.Table<TaskEntity>().Select(t => title).Contains(\"x\")", "title")]
+    [InlineData("Sql.Table<TaskEntity>().Select(t => (int?)t.Weight).Contains(e.InputTokens)", "(int?)t.Weight")]
     [InlineData("Sql.Table<TaskEntity>().Where(t => t.Title == title).Contains(null!)", "Sql.Table<TaskEntity>().Where(t => t.Title == title)")]
     public void Subquery_must_select_one_column(string predicate, string expectedLocation)
     {

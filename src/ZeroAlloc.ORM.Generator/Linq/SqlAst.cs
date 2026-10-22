@@ -241,8 +241,8 @@ internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Arr
 /// ... ORDER BY ... LIMIT ... OFFSET ...)</c>, or <c>NOT IN</c> when <paramref name="Negated"/>. The
 /// ordering and the paging stay inside the subquery, so a paged parent set selects exactly the
 /// parents' ids. The selected column is non-nullable, which the reader checks, so NOT IN has no
-/// NULL trap. The operand may be null: the test is then NULL, and C#'s <c>!</c> over it takes
-/// IS NOT TRUE rather than NOT IN.
+/// NULL trap. The operand may be null: the test is then NULL, or false for an empty subquery,
+/// which a WHERE drops alike, and C#'s <c>!</c> over it takes IS NOT TRUE rather than NOT IN.
 /// </summary>
 /// <param name="Operand">The outer value, a column or parameter of the outer query.</param>
 /// <param name="Subquery">
