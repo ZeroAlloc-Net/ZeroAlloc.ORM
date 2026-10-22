@@ -1,11 +1,51 @@
 #nullable enable
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, decimal>! selector) -> decimal
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, decimal?>! selector) -> decimal?
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, double>! selector) -> double
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, double?>! selector) -> double?
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, int>! selector) -> double
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, int?>! selector) -> double?
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, long>! selector) -> double
+static ZeroAlloc.ORM.Linq.GroupOperators.Average<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, long?>! selector) -> double?
+static ZeroAlloc.ORM.Linq.GroupOperators.Count<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source) -> int
+static ZeroAlloc.ORM.Linq.GroupOperators.LongCount<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source) -> long
+static ZeroAlloc.ORM.Linq.GroupOperators.Max<TKey, T, TValue>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, TValue>! selector) -> TValue
+static ZeroAlloc.ORM.Linq.GroupOperators.Min<TKey, T, TValue>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, TValue>! selector) -> TValue
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, decimal>! selector) -> decimal
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, decimal?>! selector) -> decimal?
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, double>! selector) -> double
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, double?>! selector) -> double?
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, int>! selector) -> int
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, int?>! selector) -> int?
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, long>! selector) -> long
+static ZeroAlloc.ORM.Linq.GroupOperators.Sum<TKey, T>(this ZeroAlloc.ORM.Linq.IGroup<TKey, T>! source, System.Func<T, long?>! selector) -> long?
 static ZeroAlloc.ORM.Linq.QueryOperators.Any<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<bool>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, decimal>! selector) -> ZeroAlloc.ORM.Linq.IQuery<decimal>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, decimal?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<decimal?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, double>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, double?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, int>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, int?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Count<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<int>!
+static ZeroAlloc.ORM.Linq.QueryOperators.GroupBy<T, TKey>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TKey>! key) -> ZeroAlloc.ORM.Linq.IQuery<ZeroAlloc.ORM.Linq.IGroup<TKey, T>!>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Join<TOuter, TInner, TKey, TResult>(this ZeroAlloc.ORM.Linq.IQuery<TOuter>! outer, ZeroAlloc.ORM.Linq.IQuery<TInner>! inner, System.Func<TOuter, TKey>! outerKey, System.Func<TInner, TKey>! innerKey, System.Func<TOuter, TInner, TResult>! result) -> ZeroAlloc.ORM.Linq.IQuery<TResult>!
 static ZeroAlloc.ORM.Linq.QueryOperators.LongCount<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<long>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Max<T, TValue>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TValue>! selector) -> ZeroAlloc.ORM.Linq.IQuery<TValue>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Min<T, TValue>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TValue>! selector) -> ZeroAlloc.ORM.Linq.IQuery<TValue>!
 static ZeroAlloc.ORM.Linq.QueryOperators.OrderBy<T, TKey>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TKey>! keySelector) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
 static ZeroAlloc.ORM.Linq.QueryOperators.OrderByDescending<T, TKey>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TKey>! keySelector) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Select<T, TResult>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TResult>! selector) -> ZeroAlloc.ORM.Linq.IQuery<TResult>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Skip<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, int count) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, decimal>! selector) -> ZeroAlloc.ORM.Linq.IQuery<decimal>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, decimal?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<decimal?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, double>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, double?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, int>! selector) -> ZeroAlloc.ORM.Linq.IQuery<int>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, int?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<int?>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long>! selector) -> ZeroAlloc.ORM.Linq.IQuery<long>!
+static ZeroAlloc.ORM.Linq.QueryOperators.Sum<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<long?>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Take<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, int count) -> ZeroAlloc.ORM.Linq.IQuery<T>!
 static ZeroAlloc.ORM.Linq.QueryOperators.ThenBy<T, TKey>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source, System.Func<T, TKey>! keySelector) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
 static ZeroAlloc.ORM.Linq.QueryOperators.ThenByDescending<T, TKey>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source, System.Func<T, TKey>! keySelector) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
@@ -23,6 +63,9 @@ static ZeroAlloc.ORM.Linq.SqlRow<T1, T2>.operator <(ZeroAlloc.ORM.Linq.SqlRow<T1
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2>.operator <=(ZeroAlloc.ORM.Linq.SqlRow<T1, T2> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2> right) -> bool
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2>.operator >(ZeroAlloc.ORM.Linq.SqlRow<T1, T2> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2> right) -> bool
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2>.operator >=(ZeroAlloc.ORM.Linq.SqlRow<T1, T2> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2> right) -> bool
+ZeroAlloc.ORM.Linq.GroupOperators
+ZeroAlloc.ORM.Linq.IGroup<TKey, T>
+ZeroAlloc.ORM.Linq.IGroup<TKey, T>.Key.get -> TKey
 ZeroAlloc.ORM.Linq.IOrderedQuery<T>
 ZeroAlloc.ORM.Linq.IQuery<T>
 ZeroAlloc.ORM.Linq.LinqQueryAttribute

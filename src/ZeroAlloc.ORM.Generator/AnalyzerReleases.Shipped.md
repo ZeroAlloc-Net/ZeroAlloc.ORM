@@ -152,3 +152,11 @@ ZAO109  | ZeroAlloc.ORM | Error    | LINQ companion is called
 ZAO110  | ZeroAlloc.ORM | Warning  | LINQ paging without OrderBy
 ZAO111  | ZeroAlloc.ORM | Error    | LINQ enum parameter compared with differently stored columns
 ZAO112  | ZeroAlloc.ORM | Error    | LINQ method return type does not fit the query
+
+## Release 2.6.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO084  | ZeroAlloc.ORM | Error    | PostgreSQL-only type on another dialect
