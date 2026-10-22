@@ -85,6 +85,14 @@ internal sealed class SqlNameScope
     public bool IsEnumAsString(SqlMemberExpression member)
         => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column) && column.EnumAsString;
 
+    /// <summary>
+    /// Whether the member maps to a <c>DateTime</c> column its map declares a <c>timestamptz</c>,
+    /// through the source its alias names.
+    /// </summary>
+    public bool IsTimestampTz(SqlMemberExpression member)
+        => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column)
+            && column.DateTimeStorage == DateTimeColumnStorage.TimestampTz;
+
     private Source SourceOf(string? alias)
     {
         if (alias is null) return _from;

@@ -281,14 +281,21 @@ internal sealed record SqlAggregateCallExpression(
 /// C#'s <c>.Date</c> is the UTC date: <c>date_trunc('day', col AT TIME ZONE 'UTC')</c>, a
 /// <c>timestamp</c> read with Kind Unspecified, as C#'s is. It does not depend on the session's
 /// <c>TimeZone</c>.</item>
-/// <item>A <c>DateTime</c> column may be a <c>timestamp</c> or a <c>timestamptz</c>, which the
-/// generator cannot tell apart: <c>date_trunc('day', col)</c>. Over a <c>timestamptz</c> its day
-/// boundary follows the session's <c>TimeZone</c>, so <c>Timezone=UTC</c> in the connection
-/// string matches C#'s <c>.Date</c> on the UTC values Npgsql reads.</item>
+/// <item>A <c>DateTime</c> column may be a <c>timestamp</c> or a <c>timestamptz</c>, which only
+/// its map tells apart, so the render decides from the column's
+/// <see cref="ColumnMapModel.DateTimeStorage"/>. A <c>timestamptz</c> Npgsql reads as a UTC
+/// <c>DateTime</c>, so C#'s <c>.Date</c> is the UTC day with Kind Utc:
+/// <c>date_trunc('day', col, 'UTC')</c>, a <c>timestamptz</c> read with Kind Utc, whatever the
+/// session's <c>TimeZone</c>. A <c>timestamp</c>, or a column whose map declares nothing:
+/// <c>date_trunc('day', col)</c>. Over an undeclared <c>timestamptz</c> its day boundary follows
+/// the session's <c>TimeZone</c>.</item>
 /// </list>
 /// </summary>
 /// <param name="Operand">The column.</param>
-/// <param name="AtUtc">Whether the column is a <c>timestamptz</c> cut at the UTC day.</param>
+/// <param name="AtUtc">
+/// Whether the column is a <c>DateTimeOffset</c>, a <c>timestamptz</c> cut at the UTC day as a
+/// <c>timestamp</c>. False for a <c>DateTime</c> column, whatever its storage.
+/// </param>
 internal sealed record SqlDateTruncExpression(SqlExpression Operand, bool AtUtc) : SqlExpression;
 
 internal enum SqlAggregateFunction

@@ -68,8 +68,8 @@ internal static class TaskMap;
   `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
 - A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
   leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
-  combined with `Column` or `EnumAsString`. Either way a wrong guess fails the build with ZAO105,
-  and one attribute fixes it:
+  combined with `Column`, `EnumAsString` or `DateTimeStorage`. Either way a wrong guess fails the
+  build with ZAO105, and one attribute fixes it:
 
   ```csharp
   [TableMap(typeof(Domain.Note), "Notes")]
@@ -81,6 +81,23 @@ internal static class TaskMap;
 - An enum type marked `[StoreAsString]` is stored by its member name everywhere. For an enum
   without the attribute, `[ColumnMap(nameof(E.P), EnumAsString = true)]` stores this one column by
   name; elsewhere the enum keeps its integer storage.
+- A `DateTime` column may be a `timestamp` or a `timestamptz`, and the entity does not say which.
+  Declare it so `.Date` is exact, see [GroupBy](#groupby): for every `DateTime` column in the
+  assembly with `[assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]`, or
+  for one with `[ColumnMap(nameof(E.P), DateTimeStorage = DateTimeStorage.TimestampTz)]`. A
+  column's own setting other than `Default` wins over the assembly default, so
+  `DateTimeStorage.Timestamp` marks one `timestamp` column under a `TimestampTz` default.
+  A `DateTimeStorage` of `Timestamp` or `TimestampTz` on a property that is not a `DateTime` or
+  `DateTime?` reports ZAO106.
+
+  ```csharp
+  // EF Core's Npgsql default
+  [assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]
+
+  [TableMap(typeof(Execution), "Executions")]
+  [ColumnMap(nameof(Execution.LocalDay), DateTimeStorage = DateTimeStorage.Timestamp)]
+  internal static class ExecutionMap;
+  ```
 
 An entity without a map reports [ZAO104](../diagnostics/ZAO104.md), a member that is not a mapped
 column [ZAO105](../diagnostics/ZAO105.md), and a map that contradicts itself
@@ -404,7 +421,9 @@ Any other key reports ZAO102.
 
 | Column | SQL | Day |
 |---|---|---|
-| `DateTime` | `date_trunc('day', "col")` | cut in the session's `TimeZone` for a `timestamptz` column. Connect with `Timezone=UTC` to match C# on UTC values |
+| `DateTime` declared `TimestampTz` | `date_trunc('day', "col", 'UTC')` | the UTC day whatever the session's `TimeZone`, as a `DateTime` of `Kind` `Utc`, as C#'s `.Date` is on the UTC value Npgsql reads. Needs PostgreSQL 12 or later |
+| `DateTime` declared `Timestamp` | `date_trunc('day', "col")` | the day of the stored value, exact |
+| `DateTime` not declared | `date_trunc('day', "col")` | for a `timestamptz` column, cut in the session's `TimeZone`. Declare the column `TimestampTz`, see [Map the entity](#map-the-entity), or connect with `Timezone=UTC` |
 | `DateTimeOffset` | `date_trunc('day', "col" AT TIME ZONE 'UTC')` | the UTC day, as a `DateTime` of `Kind` `Unspecified`, as `DateTimeOffset.UtcDateTime.Date` is |
 
 The group aggregates render like the [scalar ones](#scalar-aggregates), with the same casts and
@@ -518,7 +537,7 @@ compare by name.
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
-| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property, a shared column, or `EnumAsString` on a non-enum. |
+| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property, a shared column, `EnumAsString` on a non-enum, or `DateTimeStorage` on a non-`DateTime`. |
 | [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |

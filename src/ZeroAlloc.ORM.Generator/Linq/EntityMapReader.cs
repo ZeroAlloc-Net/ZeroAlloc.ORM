@@ -36,7 +36,7 @@ internal static class EntityMapReader
         var order = new List<string>();
         var properties = ReadableProperties(entity, order);
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore)>(StringComparer.Ordinal);
+        var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)>(StringComparer.Ordinal);
         var overrideLocations = new Dictionary<string, LocationInfo?>(StringComparer.Ordinal);
 
         foreach (var attribute in ctx.TargetSymbol.GetAttributes())
@@ -69,6 +69,7 @@ internal static class EntityMapReader
             var enumAsString = false;
             var ignore = false;
             var storageSet = false;
+            var dateTimeStorage = 0;
             foreach (var named in attribute.NamedArguments)
             {
                 if (string.Equals(named.Key, "Column", StringComparison.Ordinal))
@@ -86,9 +87,19 @@ internal static class EntityMapReader
                 {
                     ignore = named.Value.Value is true;
                 }
+                else if (string.Equals(named.Key, "DateTimeStorage", StringComparison.Ordinal))
+                {
+                    storageSet = true;
+                    dateTimeStorage = named.Value.Value is int value ? value : 0;
+                }
             }
 
-            overrides[propertyName] = (column, enumAsString && IsEnum(property.Type), ignore);
+            var isDateTime = IsDateTime(property.Type);
+            overrides[propertyName] = (
+                column,
+                enumAsString && IsEnum(property.Type),
+                ignore,
+                isDateTime ? StorageOf(dateTimeStorage) : DateTimeColumnStorage.None);
             overrideLocations[propertyName] = location;
 
             if (ignore)
@@ -97,15 +108,31 @@ internal static class EntityMapReader
                 if (storageSet)
                 {
                     diagnostics.Add(Invalid(
-                        $"Ignore is set on '{propertyName}' of {entityName} together with Column or EnumAsString; an ignored property has no column",
+                        $"Ignore is set on '{propertyName}' of {entityName} together with Column, EnumAsString or DateTimeStorage; an ignored property has no column",
                         location));
                 }
             }
-            else if (enumAsString && !IsEnum(property.Type))
+            else
             {
-                diagnostics.Add(Invalid(
-                    $"EnumAsString is set on '{propertyName}' of {entityName}, which is not an enum",
-                    location));
+                if (enumAsString && !IsEnum(property.Type))
+                {
+                    diagnostics.Add(Invalid(
+                        $"EnumAsString is set on '{propertyName}' of {entityName}, which is not an enum",
+                        location));
+                }
+
+                if (dateTimeStorage is < 0 or > 2)
+                {
+                    diagnostics.Add(Invalid(
+                        $"DateTimeStorage on '{propertyName}' of {entityName} is {dateTimeStorage}, which DateTimeStorage does not declare",
+                        location));
+                }
+                else if (dateTimeStorage != 0 && !isDateTime)
+                {
+                    diagnostics.Add(Invalid(
+                        $"DateTimeStorage is set on '{propertyName}' of {entityName}, which is not a DateTime",
+                        location));
+                }
             }
         }
 
@@ -117,11 +144,12 @@ internal static class EntityMapReader
             if (overrides.TryGetValue(name, out var o))
             {
                 if (!o.Ignore)
-                    columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString));
+                    columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString, o.DateTimeStorage));
             }
             else if (IsStored(properties[name]))
             {
-                columns.Add(new ColumnMapModel(name, name, EnumAsString: false));
+                var storage = IsDateTime(properties[name].Type) ? DateTimeColumnStorage.Default : DateTimeColumnStorage.None;
+                columns.Add(new ColumnMapModel(name, name, EnumAsString: false, storage));
             }
         }
 
@@ -161,10 +189,29 @@ internal static class EntityMapReader
     }
 
     /// <summary>
-    /// Orders the maps by file path then position, keeps the first map of each entity and reports
-    /// ZAO106 at the table attribute of every later one.
+    /// The DateTime storage an <c>[assembly: EntityMapDefaults]</c> attribute declares, as the storage
+    /// a DateTime column without its own setting takes: <see cref="DateTimeColumnStorage.Default"/>
+    /// when it sets none.
     /// </summary>
-    public static EntityMapSet Resolve(ImmutableArray<EntityMapReadResult> results)
+    public static DateTimeColumnStorage ReadDefaultDateTimeStorage(GeneratorAttributeSyntaxContext ctx)
+    {
+        foreach (var attribute in ctx.Attributes)
+        {
+            if (FindNamed(attribute, "DateTimeStorage") is int value)
+                return StorageOf(value);
+        }
+
+        return DateTimeColumnStorage.Default;
+    }
+
+    /// <summary>
+    /// Orders the maps by file path then position, keeps the first map of each entity and reports
+    /// ZAO106 at the table attribute of every later one. A DateTime column that declares no storage
+    /// of its own takes <paramref name="defaultDateTimeStorage"/>.
+    /// </summary>
+    public static EntityMapSet Resolve(
+        ImmutableArray<EntityMapReadResult> results,
+        DateTimeColumnStorage defaultDateTimeStorage)
     {
         var ordered = new List<EntityMapReadResult>(results);
         ordered.Sort(static (a, b) =>
@@ -191,7 +238,7 @@ internal static class EntityMapReader
 
             if (seen.Add(model.EntityTypeFullName))
             {
-                maps.Add(model);
+                maps.Add(WithDefaultDateTimeStorage(model, defaultDateTimeStorage));
             }
             else
             {
@@ -206,9 +253,47 @@ internal static class EntityMapReader
             new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
     }
 
+    // A DateTime column that declares no storage takes the assembly default; the model is kept
+    // as it is when no column changes.
+    private static EntityMapModel WithDefaultDateTimeStorage(EntityMapModel model, DateTimeColumnStorage storage)
+    {
+        if (storage == DateTimeColumnStorage.Default) return model;
+
+        var changed = false;
+        var columns = ImmutableArray.CreateBuilder<ColumnMapModel>(model.Columns.Count);
+        foreach (var column in model.Columns)
+        {
+            if (column.DateTimeStorage == DateTimeColumnStorage.Default)
+            {
+                columns.Add(column with { DateTimeStorage = storage });
+                changed = true;
+            }
+            else
+            {
+                columns.Add(column);
+            }
+        }
+
+        return changed ? model with { Columns = new EquatableArray<ColumnMapModel>(columns.MoveToImmutable()) } : model;
+    }
+
+    // ZeroAlloc.ORM.DateTimeStorage's value as a DateTime column's storage. A value the enum does
+    // not declare counts as Default; on a [ColumnMap] it is also ZAO106.
+    private static DateTimeColumnStorage StorageOf(int value) => value switch
+    {
+        1 => DateTimeColumnStorage.Timestamp,
+        2 => DateTimeColumnStorage.TimestampTz,
+        _ => DateTimeColumnStorage.Default,
+    };
+
     // Matches ZeroAlloc.ORM.ColumnMapAttribute by namespace and metadata name.
     private static bool IsColumnMap(INamedTypeSymbol? type) =>
         type is { MetadataName: "ColumnMapAttribute", ContainingNamespace: { Name: "ORM", ContainingNamespace: { Name: "ZeroAlloc", ContainingNamespace.IsGlobalNamespace: true } } };
+
+    private static bool IsDateTime(ITypeSymbol type) =>
+        type.SpecialType == SpecialType.System_DateTime
+        || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+            && nullable.TypeArguments[0].SpecialType == SpecialType.System_DateTime;
 
     private static DiagnosticInfo Invalid(string reason, LocationInfo? location) =>
         new(Zao106, location, new EquatableArray<string>(ImmutableArray.Create(reason)));

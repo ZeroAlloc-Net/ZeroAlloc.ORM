@@ -635,8 +635,9 @@ internal static class DiagnosticDescriptors
         helpLinkUri: HelpLink("ZAO083"));
 
     // ZAO106 — an entity map the LINQ translator cannot rely on: a second [TableMap] for an entity,
-    // a [ColumnMap] for a property the entity lacks, a property mapped twice, or EnumAsString on a
-    // property that is not an enum. Reported at the offending attribute.
+    // a [ColumnMap] for a property the entity lacks, a property mapped twice, EnumAsString on a
+    // property that is not an enum, or DateTimeStorage on one that is not a DateTime. Reported at
+    // the offending attribute.
     //
     // MessageArgs:
     //   {0} = what is wrong with the map
