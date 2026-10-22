@@ -10,7 +10,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // Repository, Location and optional Outcome are columns of the table: some under the bare names
 // Daedalus gives them with HasColumnName, the rest under EF's {Owner}_{Property} default.
 // "BrainstormSessions" and "BrainstormMessages" are Daedalus' brainstorm session and its
-// messages, which load together as a parent with its children.
+// messages, which load together as a parent with its children. "AnalysisIterations" are the
+// iterations of a code analysis request, which load with their request the same way.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -80,6 +81,12 @@ internal static class LinqSchema
             "Role" text NOT NULL,
             "Content" text NOT NULL,
             "CreatedAt" timestamptz NOT NULL
+        );
+        CREATE TABLE "AnalysisIterations" (
+            "Id" uuid PRIMARY KEY,
+            "RequestId" uuid NOT NULL,
+            "Number" int NOT NULL,
+            "Summary" text NOT NULL
         );
         """;
 }

@@ -6,4 +6,6 @@ public sealed class SmokeTask
     public Guid Id { get; private set; }
 
     public string Title { get; private set; } = "";
+
+    public SmokeOrigin? Origin { get; private set; }
 }

@@ -6,8 +6,9 @@ the method the same way it implements a `[Query]`. Nothing builds, compiles or r
 expression at run time, so the result is as AOT-clean as hand-written `[Query]` SQL. A chain the
 generator cannot translate is a build error, never a silent fallback to running it in memory.
 
-It is a second way to write the SQL, not an entity-graph ORM: there are no navigations, `Include`,
-change tracking or entity writes.
+It is a second way to write the SQL, not an entity-graph ORM: there are no navigations, change
+tracking or entity writes. In place of EF Core's `Include`, one method loads a parent and its
+children as a tuple in one round trip, see [Parents with children](#parents-with-children).
 
 ## Install
 
@@ -248,7 +249,7 @@ private static IQuery<int> CountOpenQuery(Guid projectId) =>
 an existence. Over a page they count the page:
 `SELECT count(*)::int FROM (SELECT 1 FROM ... LIMIT ... OFFSET ...) AS q`.
 
-## Parent with children
+## Parents with children
 
 A companion can return a tuple of 2 to 7 `IQuery<T>`, one per result set, with a tuple literal of
 complete chains as its body. The method returns the matching tuple. Each element becomes its own
@@ -281,7 +282,7 @@ SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "Exec
 - The caller assembles the object graph from the tuple. An element that does not fit its chain, or a
   tuple of another length, reports [ZAO112](../diagnostics/ZAO112.md), naming the element.
 
-### Children of a paged parent list
+### Children of a paged parent set
 
 For a page of parents, the child chain filters with `IQuery<T>.Contains`: a subquery that repeats the
 parent chain's order and page, and selects its id. It renders as an `IN` subquery, with the
@@ -352,6 +353,51 @@ ORDER BY "ExecutedAt", "Id"
 
 - A subquery with a join aliases its sources `s0`, `s1`, ..., which never meet the outer query's
   `t0`, `t1`, .... A subquery without one is not aliased.
+
+### A parent with owned columns
+
+A parent's [owned types](#owned-types) are columns of its table, so the head reads them like any
+other column. An optional owned object can get an element of its own, which is `null` when the
+object is absent:
+
+```csharp
+[LinqQuery(nameof(WithIterationsQuery))]
+public partial Task<(RequestHead? Request, OutcomeLine? Outcome, List<IterationLine> Iterations)> WithIterations(
+    Guid id, CancellationToken ct);
+
+private static (IQuery<RequestHead>, IQuery<OutcomeLine>, IQuery<IterationLine>) WithIterationsQuery(Guid id) =>
+    (Sql.Table<CodeAnalysisRequest>()
+        .Where(r => r.Id == id)
+        .Select(r => new RequestHead(r.Id, r.Repository.Url, r.Repository.Branch, r.Location.FilePath)),
+     Sql.Table<CodeAnalysisRequest>()
+        .Where(r => r.Id == id && r.Outcome != null)
+        .Select(r => new OutcomeLine(r.Outcome!.PullRequestUrl, r.Outcome!.HasFailedValidation)),
+     Sql.Table<CodeAnalysisIteration>()
+        .Where(i => i.RequestId == id)
+        .OrderBy(i => i.Number)
+        .Select(i => new IterationLine(i.Number, i.Summary)));
+```
+
+`OutcomeLine` takes `bool? HasFailedValidation`: a member of an optional owned object counts as
+nullable, even under the `!= null` filter.
+
+### Replacing EF Core's `Include`
+
+Each of Daedalus' seven `Include` queries maps to one tuple companion:
+
+| Site | Parents and children | `[LinqQuery]` pattern |
+|---|---|---|
+| `TaskRepository.cs:21` | one `Task` by id, its `Executions` | single tuple, see [Parents with children](#parents-with-children) |
+| `TaskQueryService.cs:17` | a page of `Task`s by `CreatedAt` descending, their `Executions` | tuple with an IN subquery, see [Children of a paged parent set](#children-of-a-paged-parent-set) |
+| `TaskQueryService.cs:36` | one `Task` by id, its `Executions` | single tuple, see [Parents with children](#parents-with-children) |
+| `ProjectQueryService.cs:16` | a page of `Project`s by name, their `Tasks` | tuple with an IN subquery, see [Children of a paged parent set](#children-of-a-paged-parent-set) |
+| `ProjectQueryService.cs:77` | one `Project` by id, its `Tasks` | single tuple, see [Parents with children](#parents-with-children) |
+| `CodeAnalysisRepository.cs:22` | one `CodeAnalysisRequest` by id with owned `Repository`, `Location` and `Outcome`, its `Iterations` | single tuple over owned columns, see [A parent with owned columns](#a-parent-with-owned-columns) and [Owned types](#owned-types) |
+| `BrainstormRepository.cs:37` | one `BrainstormSession` by id, its `Messages` by `CreatedAt` | single tuple with an ordered child chain, see [Parents with children](#parents-with-children) |
+
+The paged sites order by a column that need not be unique, so add `ThenBy(x => x.Id)` to both the
+page and its subquery. EF Core fills the navigation collections; here the caller groups the child
+rows by their parent id.
 
 ## Projection
 
@@ -429,7 +475,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 | `t.Title.StartsWith(text)`, `EndsWith(text)` | the same `LIKE`, with `%` on one side |
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
-| `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent list](#children-of-a-paged-parent-list) |
+| `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent set](#children-of-a-paged-parent-set) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
 
 - `Contains`, `StartsWith` and `EndsWith` match literally: `%`, `_` and `\` in the value are escaped,
@@ -717,6 +763,13 @@ Also not supported today:
 - Left joins: there is no left-join operator yet.
 - Composite join keys, an inner side other than `Sql.Table<T>()` with `Where`, and `Join` after
   `GroupBy`, `Select`, `Skip`, `Take` or `OrderBy` (ZAO102).
+- Navigations and object graphs: a tuple companion returns flat result sets, and the caller
+  assembles the graph.
+- Correlated subqueries, such as `EXISTS` or a subquery that reads the outer row (ZAO102). Join,
+  or filter the subquery on companion parameters.
+- An owned type nested in an owned type, and owned collections, `OwnsMany` (ZAO106).
+- A stream, `IAsyncEnumerable<T>`, as a tuple element (ZAO112), and a companion tuple of more than
+  7 elements (ZAO100).
 - Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
   (ZAO107). Project into a one-member record instead.
 - `Skip` and `Take` after `Select` (ZAO102). Put them before it.
