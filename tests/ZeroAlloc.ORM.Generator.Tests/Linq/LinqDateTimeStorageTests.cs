@@ -36,7 +36,6 @@ public class LinqDateTimeStorageTests
             public Guid RunId { get; private set; }
             public DateTime ExecutedAt { get; private set; }
             public DateTime StartedAt { get; private set; }
-            public DateTime? FinishedAt { get; private set; }
         }
 
         public sealed class Run

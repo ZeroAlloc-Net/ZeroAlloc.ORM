@@ -68,8 +68,8 @@ internal static class TaskMap;
   `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
 - A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
   leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
-  combined with `Column`, `EnumAsString` or `DateTimeStorage`. Either way a wrong guess fails the build with ZAO105,
-  and one attribute fixes it:
+  combined with `Column`, `EnumAsString` or `DateTimeStorage`. Either way a wrong guess fails the
+  build with ZAO105, and one attribute fixes it:
 
   ```csharp
   [TableMap(typeof(Domain.Note), "Notes")]
@@ -87,10 +87,12 @@ internal static class TaskMap;
   for one with `[ColumnMap(nameof(E.P), DateTimeStorage = DateTimeStorage.TimestampTz)]`. A
   column's own setting other than `Default` wins over the assembly default, so
   `DateTimeStorage.Timestamp` marks one `timestamp` column under a `TimestampTz` default.
-  `DateTimeStorage` on a property that is not a `DateTime` or `DateTime?` reports ZAO106.
+  A `DateTimeStorage` of `Timestamp` or `TimestampTz` on a property that is not a `DateTime` or
+  `DateTime?` reports ZAO106.
 
   ```csharp
-  [assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)] // EF Core's Npgsql default
+  // EF Core's Npgsql default
+  [assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]
 
   [TableMap(typeof(Execution), "Executions")]
   [ColumnMap(nameof(Execution.LocalDay), DateTimeStorage = DateTimeStorage.Timestamp)]

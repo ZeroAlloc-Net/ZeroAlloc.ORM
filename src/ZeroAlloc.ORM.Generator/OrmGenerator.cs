@@ -93,12 +93,18 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         // Entity maps — `[TableMap]` on a map class, with `[ColumnMap]` overrides beside it. One read
         // per map class, then a collect that orders them (file path, position), drops the second map
-        // of an entity and reports it as ZAO106. The assembly's `[EntityMapDefaults]` is read per
-        // compilation into a plain value, so only a change to it re-resolves the set, and no map is
-        // re-read for it. `entityMaps` is the provider the LINQ query pipeline combines with its
-        // methods; `entityMapSets` also carries the diagnostics.
-        var entityMapDefaults = context.CompilationProvider
-            .Select(static (compilation, _) => EntityMapReader.ReadDefaultDateTimeStorage(compilation.Assembly))
+        // of an entity and reports it as ZAO106. The assembly's `[EntityMapDefaults]` is found by
+        // ForAttributeWithMetadataName on compilation units and read into a plain value, so only a
+        // change to it re-resolves the set, and no map is re-read for it. The attribute allows one
+        // use per assembly; a second is already a compile error. `entityMaps` is the provider the
+        // LINQ query pipeline combines with its methods; `entityMapSets` also carries the diagnostics.
+        var entityMapDefaults = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: "ZeroAlloc.ORM.EntityMapDefaultsAttribute",
+                predicate: static (node, _) => node is CompilationUnitSyntax,
+                transform: static (ctx, _) => EntityMapReader.ReadDefaultDateTimeStorage(ctx))
+            .Collect()
+            .Select(static (defaults, _) => defaults.IsDefaultOrEmpty ? DateTimeColumnStorage.Default : defaults[0])
             .WithTrackingName("EntityMapDefaults");
 
         var entityMapSets = context.SyntaxProvider

@@ -121,7 +121,13 @@ internal static class EntityMapReader
                         location));
                 }
 
-                if (dateTimeStorage != 0 && !isDateTime)
+                if (dateTimeStorage is < 0 or > 2)
+                {
+                    diagnostics.Add(Invalid(
+                        $"DateTimeStorage on '{propertyName}' of {entityName} is {dateTimeStorage}, which DateTimeStorage does not declare",
+                        location));
+                }
+                else if (dateTimeStorage != 0 && !isDateTime)
                 {
                     diagnostics.Add(Invalid(
                         $"DateTimeStorage is set on '{propertyName}' of {entityName}, which is not a DateTime",
@@ -183,18 +189,16 @@ internal static class EntityMapReader
     }
 
     /// <summary>
-    /// The assembly's <c>[EntityMapDefaults]</c> DateTime storage, as the storage a DateTime column
-    /// without its own setting takes: <see cref="DateTimeColumnStorage.Default"/> without one.
+    /// The DateTime storage an <c>[assembly: EntityMapDefaults]</c> attribute declares, as the storage
+    /// a DateTime column without its own setting takes: <see cref="DateTimeColumnStorage.Default"/>
+    /// when it sets none.
     /// </summary>
-    public static DateTimeColumnStorage ReadDefaultDateTimeStorage(IAssemblySymbol assembly)
+    public static DateTimeColumnStorage ReadDefaultDateTimeStorage(GeneratorAttributeSyntaxContext ctx)
     {
-        foreach (var attribute in assembly.GetAttributes())
+        foreach (var attribute in ctx.Attributes)
         {
-            if (IsOrmAttribute(attribute.AttributeClass, "EntityMapDefaultsAttribute")
-                && FindNamed(attribute, "DateTimeStorage") is int value)
-            {
+            if (FindNamed(attribute, "DateTimeStorage") is int value)
                 return StorageOf(value);
-            }
         }
 
         return DateTimeColumnStorage.Default;
@@ -274,7 +278,7 @@ internal static class EntityMapReader
     }
 
     // ZeroAlloc.ORM.DateTimeStorage's value as a DateTime column's storage. A value the enum does
-    // not declare counts as Default.
+    // not declare counts as Default; on a [ColumnMap] it is also ZAO106.
     private static DateTimeColumnStorage StorageOf(int value) => value switch
     {
         1 => DateTimeColumnStorage.Timestamp,
@@ -283,11 +287,8 @@ internal static class EntityMapReader
     };
 
     // Matches ZeroAlloc.ORM.ColumnMapAttribute by namespace and metadata name.
-    private static bool IsColumnMap(INamedTypeSymbol? type) => IsOrmAttribute(type, "ColumnMapAttribute");
-
-    private static bool IsOrmAttribute(INamedTypeSymbol? type, string metadataName) =>
-        type is { ContainingNamespace: { Name: "ORM", ContainingNamespace: { Name: "ZeroAlloc", ContainingNamespace.IsGlobalNamespace: true } } }
-        && string.Equals(type.MetadataName, metadataName, StringComparison.Ordinal);
+    private static bool IsColumnMap(INamedTypeSymbol? type) =>
+        type is { MetadataName: "ColumnMapAttribute", ContainingNamespace: { Name: "ORM", ContainingNamespace: { Name: "ZeroAlloc", ContainingNamespace.IsGlobalNamespace: true } } };
 
     private static bool IsDateTime(ITypeSymbol type) =>
         type.SpecialType == SpecialType.System_DateTime

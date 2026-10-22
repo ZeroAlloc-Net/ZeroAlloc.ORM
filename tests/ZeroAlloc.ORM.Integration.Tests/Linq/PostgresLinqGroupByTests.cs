@@ -6,8 +6,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // [LinqQuery] GroupBy against a real PostgreSQL: each grouped result equals LINQ to Objects'.
 // The map declares the DateTime ExecutedAt a timestamptz, so its .Date renders
 // date_trunc('day', col, 'UTC') and cuts at UTC midnight, as C#'s .Date does on the UTC values
-// Npgsql reads, whatever the session's TimeZone. A DateTimeOffset column is cut at the UTC day too. Each case boots its own container, so related
-// checks share a case.
+// Npgsql reads, whatever the session's TimeZone. A DateTimeOffset column is cut at the UTC day
+// too. Each case boots its own container, so related checks share a case.
 [Trait("Provider", "Postgres")]
 public sealed class PostgresLinqGroupByTests
 {

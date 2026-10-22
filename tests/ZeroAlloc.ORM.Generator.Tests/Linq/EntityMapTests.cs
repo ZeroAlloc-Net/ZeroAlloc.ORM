@@ -668,6 +668,27 @@ public class EntityMapTests
             """));
     }
 
+    // A value the enum does not declare is a mistake whatever the property's type.
+    [Theory]
+    [InlineData("ExecutedAt")]
+    [InlineData("Id")]
+    public void Undeclared_DateTimeStorage_value_reports_ZAO106(string property)
+    {
+        var d = Assert.Single(Zao106(Times + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(
+            """ + "\"" + property + "\"" + """
+            , DateTimeStorage = (DateTimeStorage)7)]
+            internal static class ExecutionMap;
+            """));
+
+        var message = d.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains(property, message, StringComparison.Ordinal);
+        Assert.Contains("7", message, StringComparison.Ordinal);
+        var text = d.Location.SourceTree!.ToString();
+        Assert.StartsWith("ColumnMap(", text.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Ignore_with_DateTimeStorage_reports_ZAO106()
     {
