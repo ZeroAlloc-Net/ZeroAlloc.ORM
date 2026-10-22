@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.6.0...v2.7.0) (2026-10-22)
+
+
+### Features
+
+* bind float and double PostgreSQL arrays ([#397](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/397)) ([3becd6c](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/3becd6c7f00a205d91eb3c86e33ebb7cd8b37036))
+
 ## [2.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.5.0...v2.6.0) (2026-10-22)
 
 
