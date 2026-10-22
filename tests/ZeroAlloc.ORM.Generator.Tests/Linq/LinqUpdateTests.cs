@@ -292,6 +292,26 @@ public class LinqUpdateTests
         Assert.DoesNotContain("Jsonb", generated, StringComparison.Ordinal);
     }
 
+    // One parameter set into two [Json] columns binds as jsonb for both: nothing is reported.
+    [Fact]
+    public void Json_parameter_in_two_json_setters_is_accepted()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + Repo + """
+                [LinqCommand(nameof(StoreQuery))]
+                public partial Task<int> Store(string? doc, CancellationToken ct);
+
+                private static int StoreQuery(string? doc) =>
+                    Sql.Table<AgentSessionEntity>()
+                        .ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc).SetProperty(s => s.Snapshot, doc));
+            }
+            """, NpgsqlStub.Source);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString())).Replace("\\\"", "\"", StringComparison.Ordinal);
+        Assert.Contains("UPDATE \"AgentSessions\" SET \"Payload\" = @doc, \"Snapshot\" = @doc", generated, StringComparison.Ordinal);
+        Assert.Contains("NpgsqlDbType.Jsonb", generated, StringComparison.Ordinal);
+    }
+
     // What a setter cannot be, each reported at the construct with a message that names it.
     [Theory]
     [InlineData(
@@ -409,6 +429,21 @@ public class LinqUpdateTests
         "ZAO102",
         "s.Note",
         "'s.Note' set into the [Json] 'Payload', rather than a parameter, a constant, null or another [Json] column, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().Where(s => Sql.Table<SkillEntity>().Where(k => k.Id == doc).Select(k => k.Id).Contains(s.Note!)).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().WhereIf(doc != null, s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<AgentSessionEntity>().Where(s => s.Snapshot == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
     public void Setter_reports(string chain, string id, string located, string message)
     {
         var (d, at) = Single(Repo + """

@@ -30,6 +30,12 @@ internal static partial class LinqQueryReader
     // in a condition or in another setter too, it would meet a text or other column there as
     // jsonb, which PostgreSQL rejects at run time. The conditions are read already: they come
     // before the write.
+    //
+    // Conservative on purpose: a condition that compares the parameter with another [Json]
+    // column, `t.Snapshot == doc`, would bind as jsonb consistently and work, yet is rejected
+    // too. Telling it apart means knowing every column each use meets, nested subqueries and
+    // WhereIf included, which a jsonb document compared for equality does not justify; the
+    // predicate side is tracked as #402.
     private static bool CheckJsonParameters(ChainBuilder chain, ReaderContext context)
     {
         var elsewhere = SqlParameterReferences.Collect(chain.Predicates);

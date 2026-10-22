@@ -816,7 +816,7 @@ internal static class DiagnosticDescriptors
     //   {0} = the parameter's SQL name
     public static readonly DiagnosticDescriptor ZAO111_LinqEnumParameterStorageConflict = new(
         id: "ZAO111",
-        title: "LINQ enum parameter compared with differently stored columns",
+        title: "LINQ enum parameter compared with or set into differently stored columns",
         messageFormat: "Parameter '{0}' is compared with or set into columns that store its enum differently",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,

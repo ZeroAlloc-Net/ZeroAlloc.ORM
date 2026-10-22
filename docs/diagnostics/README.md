@@ -59,7 +59,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO108 | Error | LINQ query requires the PostgreSQL dialect | [ZAO108](ZAO108.md) |
 | ZAO109 | Error | LINQ companion is called | [ZAO109](ZAO109.md) |
 | ZAO110 | Warning | LINQ paging without OrderBy | [ZAO110](ZAO110.md) |
-| ZAO111 | Error | LINQ enum parameter compared with differently stored columns | [ZAO111](ZAO111.md) |
+| ZAO111 | Error | LINQ enum parameter compared with or set into differently stored columns | [ZAO111](ZAO111.md) |
 | ZAO112 | Error | LINQ method return type does not fit the query | [ZAO112](ZAO112.md) |
 
 ## Code-range conventions
