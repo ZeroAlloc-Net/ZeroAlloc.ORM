@@ -60,6 +60,19 @@ internal static partial class LinqQueryReader
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
     private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
+        // A whole owned object maps to several columns; the row reads one per parameter. A
+        // composite, which the [Query] path expands, keeps ReadOperand's ZAO102.
+        if (WholeObjectMemberType(Unwrap(value), row, context) is { } whole
+            && !IsComposite(whole, context.Conventions))
+        {
+            RejectProjection(
+                "'" + value.Syntax + "' reads a whole '" + whole.Name + "', which maps to several columns; "
+                    + "project its members, one per constructor parameter",
+                value,
+                context);
+            return null;
+        }
+
         switch (ReadOperand(value, row, context, out var expression))
         {
             case OperandRead.Read when Unwrap(value) is IParameterReferenceOperation { Parameter: var parameter }

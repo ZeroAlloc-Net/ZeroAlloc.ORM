@@ -107,13 +107,14 @@ internal sealed class SqlNameScope
             Map = map;
             EntityDisplay = entityDisplay;
             foreach (var column in map.Columns)
-                Columns[column.Property] = column;
+                Columns[column.Path] = column;
         }
 
         public EntityMapModel Map { get; }
 
         public string EntityDisplay { get; }
 
+        // By member path: the property name, or Owner.Member for a member of an owned object.
         public Dictionary<string, ColumnMapModel> Columns { get; } = new(StringComparer.Ordinal);
     }
 }

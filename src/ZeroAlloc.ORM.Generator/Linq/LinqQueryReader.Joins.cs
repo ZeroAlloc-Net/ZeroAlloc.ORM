@@ -276,8 +276,34 @@ internal static partial class LinqQueryReader
                 return false;
         }
 
-        if (row is null || owner is null || ShapeAt(owner, row, context.Row) is not { IsEntity: true } shape) return false;
-        alias = shape.Alias;
-        return true;
+        if (row is null || owner is null) return false;
+        if (ShapeAt(owner, row, context.Row) is { IsEntity: true } shape)
+        {
+            alias = shape.Alias;
+            return true;
+        }
+
+        // A member of an owned object, r.Repository.Url: the column the map keys by the path
+        // Repository.Url. Whether the map declares Repository owned is the binder's to check; a
+        // member it does not map is ZAO105 there.
+        if (op is IPropertyReferenceOperation
+            && owner is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } entity } ownedProperty
+            && ShapeAt(entity, row, context.Row) is { IsEntity: true } entityShape
+            && EntityMapReader.IsOwnable(ownedProperty.Property.Type, context.Conventions))
+        {
+            name = ownedProperty.Property.Name + "." + name;
+            alias = entityShape.Alias;
+            return true;
+        }
+
+        return false;
     }
+
+    // A row member that holds an object whose properties are columns, such as an owned
+    // r.Repository: a whole object, not one column. Null for any other operation.
+    private static ITypeSymbol? WholeObjectMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => TryReadRowMember(op, row, context, out _, out var type, out _)
+            && EntityMapReader.IsOwnable(type, context.Conventions)
+                ? type
+                : null;
 }

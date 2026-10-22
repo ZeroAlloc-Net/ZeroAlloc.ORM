@@ -5,7 +5,9 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // a nullable timestamptz, and nullable int, real and int-enum columns for the null semantics.
 // "Projects" lives in its own schema so the map's Schema is used. "Executions" is Daedalus'
 // task-execution log, which the aggregates read, and "Sessions" its chat sessions, which the
-// grouped token report reads.
+// grouped token report reads. "AnalysisRequests" is Daedalus' code analysis request, whose owned
+// Repository, Location and optional Outcome are columns of the table: some under the bare names
+// Daedalus gives them with HasColumnName, the rest under EF's {Owner}_{Property} default.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -49,6 +51,20 @@ internal static class LinqSchema
             "CreatedAt" timestamptz NOT NULL,
             "TotalInputTokens" bigint NOT NULL,
             "TotalOutputTokens" bigint NOT NULL
+        );
+        CREATE TABLE "AnalysisRequests" (
+            "Id" uuid PRIMARY KEY,
+            "Title" text NOT NULL,
+            "RepositoryUrl" text NOT NULL,
+            "RepositoryBranch" text NULL,
+            "Repository_CommitSha" text NULL,
+            "Repository_Platform" int NOT NULL,
+            "FilePath" text NOT NULL,
+            "Location_StartLine" int NULL,
+            "Location_EndLine" int NULL,
+            "Outcome_PullRequestUrl" text NULL,
+            "Outcome_ValidationResult" jsonb NULL,
+            "Outcome_HasFailedValidation" boolean NULL
         );
         """;
 }

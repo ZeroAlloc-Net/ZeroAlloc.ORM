@@ -99,6 +99,52 @@ internal static class TaskMap;
   internal static class ExecutionMap;
   ```
 
+### Owned types
+
+An EF Core owned type, `OwnsOne`, has no table of its own: its properties are columns of the
+owner's table. `[OwnedMap(nameof(E.P))]` declares one, and each public readable instance property
+of the owned type that holds a value becomes a column, by the same rules as the entity's own
+properties. The column name is EF Core's default, `{Owner}_{Property}`, such as `Location_StartLine`.
+A `[ColumnMap]` with a dotted path, `Owner.Property`, overrides it and sets `EnumAsString`,
+`DateTimeStorage` or `Ignore` for the member as for any column:
+
+```csharp
+public sealed class CodeAnalysisRequest
+{
+    public Guid Id { get; private set; }
+    public RepositoryReference Repository { get; private set; } = null!; // Url, Branch, Platform
+    public CodeLocation Location { get; private set; } = null!;          // FilePath, StartLine
+    public AnalysisOutcome? Outcome { get; private set; }                // optional
+}
+
+// HasColumnName gave Url and FilePath bare names; every other member keeps "{Owner}_{Property}".
+[TableMap(typeof(CodeAnalysisRequest), "AnalysisRequests")]
+[OwnedMap(nameof(CodeAnalysisRequest.Repository))]
+[OwnedMap(nameof(CodeAnalysisRequest.Location))]
+[OwnedMap(nameof(CodeAnalysisRequest.Outcome))]
+[ColumnMap("Repository.Url", Column = "RepositoryUrl")]
+[ColumnMap("Location.FilePath", Column = "FilePath")]
+internal static class CodeAnalysisRequestMap;
+```
+
+A query reads a member of an owned object, `r.Repository.Url`, as its column wherever it reads a
+column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join keys.
+
+- The owned object itself is no column. Projecting it whole, `new Row(r.Id, r.Repository)`,
+  reports ZAO107; project its members instead.
+- A member of an object the map does not declare owned is not mapped, and reports ZAO105.
+- A dotted path has exactly two segments, `Owner.Property`; an owned type nested in an owned type is
+  not supported.
+- An optional owned object that is absent has every one of its columns NULL. Its members read
+  NULL then, where C# would throw on the null owner: `r.Outcome!.PullRequestUrl` reads NULL, and a
+  comparison such as `r.Outcome!.HasFailedValidation == true` reads the column, so such a row
+  does not match. The null rules of [Nulls compare as in C#](#nulls-compare-as-in-c) follow each
+  member's own type, so a `bool` member counts as never NULL, and projecting it from a row without
+  the owned object fails at run time as a NULL in a non-nullable parameter does.
+- An owned type is a class or struct whose properties are the columns. `[OwnedMap]` on a property
+  that binds as one value, such as a `string`, an enum, a value object with a `Value` or a
+  single-argument record, or on a nullable value type or a collection, reports ZAO106.
+
 An entity without a map reports [ZAO104](../diagnostics/ZAO104.md), a member that is not a mapped
 column [ZAO105](../diagnostics/ZAO105.md), and a map that contradicts itself
 [ZAO106](../diagnostics/ZAO106.md).
@@ -537,7 +583,7 @@ compare by name.
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
-| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property, a shared column, `EnumAsString` on a non-enum, or `DateTimeStorage` on a non-`DateTime`. |
+| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, or an owned property whose type has no properties to map. |
 | [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |

@@ -23,20 +23,37 @@ internal sealed record EntityMapModel(
     string? Schema,
     EquatableArray<ColumnMapModel> Columns) : IEquatable<EntityMapModel>;
 
-/// <summary>One mapped property.</summary>
-/// <param name="Property">The C# property name.</param>
-/// <param name="Column">The column name: the property name unless a <c>[ColumnMap]</c> overrides it.</param>
+/// <summary>One mapped property, of the entity or of an object it owns.</summary>
+/// <param name="Property">
+/// The C# property name: of the entity, or of the owned type for a member of an owned object.
+/// </param>
+/// <param name="Column">
+/// The column name: the property name, or <c>{Owner}_{Property}</c> for a member of an owned
+/// object, unless a <c>[ColumnMap]</c> overrides it.
+/// </param>
 /// <param name="EnumAsString">Whether the enum property is stored as its member name.</param>
 /// <param name="DateTimeStorage">
 /// For a <c>DateTime</c> or <c>DateTime?</c> property, how it is stored: its <c>[ColumnMap]</c>
 /// setting, else the assembly's <c>[EntityMapDefaults]</c>, else <see cref="DateTimeColumnStorage.Default"/>.
 /// <see cref="DateTimeColumnStorage.None"/> for any other property.
 /// </param>
+/// <param name="Owner">
+/// For a member of an owned object, the entity property an <c>[OwnedMap]</c> declares owned, such
+/// as <c>Repository</c>; null for a property of the entity itself.
+/// </param>
 internal sealed record ColumnMapModel(
     string Property,
     string Column,
     bool EnumAsString,
-    DateTimeColumnStorage DateTimeStorage = DateTimeColumnStorage.None) : IEquatable<ColumnMapModel>;
+    DateTimeColumnStorage DateTimeStorage = DateTimeColumnStorage.None,
+    string? Owner = null) : IEquatable<ColumnMapModel>
+{
+    /// <summary>
+    /// The member path a query reads the column by: the property name, or <c>Owner.Property</c>
+    /// for a member of an owned object, such as <c>Repository.Url</c>.
+    /// </summary>
+    public string Path => Owner is null ? Property : Owner + "." + Property;
+}
 
 /// <summary>
 /// The generator's view of <c>ZeroAlloc.ORM.DateTimeStorage</c> for one column, with
