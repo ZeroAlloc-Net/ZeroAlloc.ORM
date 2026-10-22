@@ -142,11 +142,14 @@ column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join key
   is an object, such as `Uri? Website`, stays `"Website" IS NOT NULL`, and a composite column the
   map does not declare owned still reports ZAO102.
 - A member of an object the map does not declare owned is not mapped, and reports ZAO105.
-- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106. A type
-  nested in an owned type is not mapped: `[OwnedMap]` maps one level. Reading it, such as
-  `r.Repository.Origin.FilePath` or a null test on `r.Repository.Origin`, reports ZAO102 in `Where`
-  or an ordering and ZAO107 in `Select`, each with the reason "reads 'Origin', a type nested in
-  the owned 'Repository'".
+- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106.
+  `[OwnedMap]` maps one level: a member of an owned object is the column the map gives it, also
+  when its type is an object, such as a `Uri Link` in the column `Home_Link`, which a null test
+  reads as `"Home_Link" IS NOT NULL`. A member of a type nested in an owned type, such as
+  `r.Repository.Origin.FilePath`, is no column: it reports ZAO102 in `Where` or an ordering and
+  ZAO107 in `Select`, with the reason "reads 'Origin', a type nested in the owned 'Repository'".
+- Only the map declares an object owned. A navigation to another entity, such as `e.Task.Title`
+  or `e.Task.Owner == null`, is not mapped and reports ZAO105; read it through a `Join`.
 - An optional owned object, a property annotated `?` such as `AnalysisOutcome? Outcome`, that is
   absent has every one of its columns NULL. Its members read NULL then, where C# would throw on
   the null owner, so each member of an optional owned object counts as nullable: a `bool` member
