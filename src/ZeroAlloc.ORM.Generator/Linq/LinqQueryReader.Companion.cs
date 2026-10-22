@@ -92,6 +92,8 @@ internal static partial class LinqQueryReader
         (string Operator, Location Location)? write,
         Location? identifier)
     {
+        if (symbol.ReturnType is INamedTypeSymbol { IsTupleType: true })
+            return Invalid(name, method, "it must be one chain ending in ExecuteDelete or ExecuteUpdate, not a tuple", syntax.ReturnType.GetLocation());
         if (SingleExpression(syntax) is not { } body)
         {
             return Invalid(

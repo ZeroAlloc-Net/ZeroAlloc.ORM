@@ -35,7 +35,7 @@ internal enum LinqResultShape
 }
 
 /// <summary>
-/// What <see cref="LinqQueryReader.Read"/> makes of one <c>[LinqQuery]</c> method: the statements,
+/// What <see cref="LinqQueryReader.Read"/> makes of one <c>[LinqQuery]</c> or <c>[LinqCommand]</c> method: the statements,
 /// the result shape, the parameter facets and the source comment, or the diagnostics that stop
 /// the translation. Symbol-free, so the per-method read caches.
 /// </summary>

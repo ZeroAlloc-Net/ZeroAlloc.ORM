@@ -78,8 +78,15 @@ internal static partial class LinqQueryReader
         if (operation is null || !ReadChain(operation, chain, context)) return null;
 
         // A write deletes the rows its conditions select; without any, every row, as EF's does.
-        if (chain.Write is not null)
-            return new SqlDeleteStatement(chain.From!, new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()));
+        // Each write names its statement here, so a new one cannot fall through to a DELETE.
+        if (chain.Write is { } write)
+        {
+            return write switch
+            {
+                "ExecuteDelete" => new SqlDeleteStatement(chain.From!, new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable())),
+                _ => throw new InvalidOperationException("No statement for write " + write),
+            };
+        }
 
         // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
         // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,

@@ -145,7 +145,8 @@ public class LinqCommandTests
             "await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);");
     }
 
-    // Zero rows affected throws, whether the method returns the count or not.
+    // Zero rows affected throws, whether the method returns the count or not, and inside a
+    // caller's transaction as well: Task<int>, ValueTask, Task and ValueTask<int>.
     [Fact]
     public void Throw_on_no_rows_emits_the_check()
     {
@@ -156,6 +157,12 @@ public class LinqCommandTests
 
                 [LinqCommand(nameof(DeleteQuery), ThrowOnNoRows = true)]
                 public partial ValueTask Remove(Guid id, CancellationToken ct);
+
+                [LinqCommand(nameof(DeleteQuery), ThrowOnNoRows = true)]
+                public partial Task Drop(Guid id, CancellationToken ct);
+
+                [LinqCommand(nameof(DeleteQuery), ThrowOnNoRows = true)]
+                public partial ValueTask<int> Discard(Guid id, IAsyncDbTransaction tx, CancellationToken ct);
 
                 private static int DeleteQuery(Guid id) =>
                     Sql.Table<TaskEntity>().Where(t => t.Id == id).ExecuteDelete();
@@ -207,6 +214,25 @@ public class LinqCommandTests
         Assert.Equal("CountQuery", located);
         Assert.Equal(
             "Companion 'CountQuery' of [LinqCommand] method 'Count' is invalid: its chain must end in ExecuteDelete or ExecuteUpdate",
+            d.GetMessage(CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void Command_tuple_companion_reports_ZAO100()
+    {
+        var (d, located) = Single(Repo + """
+                [LinqCommand(nameof(DeleteQuery))]
+                public partial Task<int> Delete(CancellationToken ct);
+
+                private static (int, int) DeleteQuery() =>
+                    (Sql.Table<TaskEntity>().ExecuteDelete(), Sql.Table<RoleCharterEntity>().ExecuteDelete());
+            }
+            """);
+
+        Assert.Equal("ZAO100", d.Id);
+        Assert.Equal("(int, int)", located);
+        Assert.Equal(
+            "Companion 'DeleteQuery' of [LinqCommand] method 'Delete' is invalid: it must be one chain ending in ExecuteDelete or ExecuteUpdate, not a tuple",
             d.GetMessage(CultureInfo.InvariantCulture));
     }
 

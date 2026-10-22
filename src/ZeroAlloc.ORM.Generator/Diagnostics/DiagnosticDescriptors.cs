@@ -656,7 +656,7 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method name
+    //   {1} = the [LinqQuery] or [LinqCommand] method name
     //   {2} = what is wrong
     //   {3} = the method's attribute, [LinqQuery] or [LinqCommand]; see LinqDiagnostics.ForAttribute
     public static readonly DiagnosticDescriptor ZAO100_InvalidLinqCompanion = new(
@@ -674,7 +674,7 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method name
+    //   {1} = the [LinqQuery] or [LinqCommand] method name
     //   {2} = the expected parameter list
     public static readonly DiagnosticDescriptor ZAO101_LinqCompanionParameterMismatch = new(
         id: "ZAO101",
@@ -763,7 +763,7 @@ internal static class DiagnosticDescriptors
     // [Dialect], else the assembly's, is another dialect or missing. Reported at the method.
     //
     // MessageArgs:
-    //   {0} = the [LinqQuery] method name
+    //   {0} = the [LinqQuery] or [LinqCommand] method name
     //   {1} = what the repository declares
     //   {2} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO108_LinqRequiresPostgreSql = new(
@@ -782,7 +782,7 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method that names it
+    //   {1} = the [LinqQuery] or [LinqCommand] method that names it
     //   {2} = that method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO109_LinqCompanionCalled = new(
         id: "ZAO109",
@@ -827,7 +827,7 @@ internal static class DiagnosticDescriptors
     // that does not fit.
     //
     // MessageArgs:
-    //   {0} = the [LinqQuery] method name
+    //   {0} = the [LinqQuery] or [LinqCommand] method name
     //   {1} = the method's return type, quoted, or the tuple element that does not fit
     //   {2} = the companion's return type, or its tuple element, quoted
     //   {3} = the return types that fit

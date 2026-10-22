@@ -17,5 +17,7 @@ internal enum AttributePipelineKind
 
     // [LinqQuery]: the SQL is generated from the companion's LINQ chain and then
     // takes the [Query] path through TransformMethodCore, with LinqOverrides set.
+    // [LinqCommand] has no entry of its own: it deliberately runs as Command, with
+    // LinqOverrides set, so it takes the [Command] non-query path.
     LinqQuery,
 }

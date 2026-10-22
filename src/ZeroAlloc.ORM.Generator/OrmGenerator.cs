@@ -429,9 +429,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // or the SQL a [LinqQuery] chain was translated to. The core never reads it from
     // the attribute, so a [LinqQuery] companion name cannot be mistaken for SQL.
     //
-    // `linq` is non-null only for [LinqQuery]. Its facets are applied to the matching
-    // parameters, as `[Param(DbType = ...)]` would be, so ZAO015 checks them through
-    // a DbTypeCheck; its source comment becomes QueryMethodModel.LinqSourceComment.
+    // `linq` is non-null only for [LinqQuery] and [LinqCommand]. Its facets are applied to
+    // the matching parameters, as `[Param(DbType = ...)]` would be, so ZAO015 checks them
+    // through a DbTypeCheck; its source comment becomes QueryMethodModel.LinqSourceComment.
+    // A [LinqCommand] comes through with AttributePipelineKind.Command, so a check meant for
+    // [Command] alone that reads the SQL text or the attribute's arguments must also test
+    // `linq is null`: a [LinqCommand]'s text is empty here and its attribute is not [Command].
     private static QueryMethodWithTypeContext? TransformMethodCore(
         GeneratorAttributeSyntaxContext ctx,
         AttributePipelineKind pipelineKind,
