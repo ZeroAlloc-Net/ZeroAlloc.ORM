@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
@@ -90,27 +91,32 @@ internal static partial class LinqQueryReader
         }
     }
 
-    // One rule for every projected value, a column, g.Key or an aggregate: a value whose C# type
-    // cannot be null but whose SQL can be NULL goes to a parameter that takes a null. That value
-    // is a member of an optional owned object, which reads NULL when the object is absent, where
-    // C# would throw on the absent object. ZAO107 when the parameter cannot take it.
+    // One rule for every projected value, a column, g.Key or an aggregate over one: a member of
+    // an optional owned object, which reads NULL when the object is absent where C# would throw,
+    // goes to a parameter that takes a null. ZAO107 when the parameter cannot take it. Only
+    // values the owned branch lifted are checked; a plain nullable column keeps its old behaviour.
     private static bool RejectsNull(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
     {
-        if (CanBeNull(target)
-            || Unwrap(value).Type is not { } declared
-            || CanBeNull(declared)
-            || !MayBeNull(item, context.NullableValues))
-        {
-            return false;
-        }
+        if (CanBeNull(target) || !IsLifted(item, context.LiftedValues)) return false;
 
+        var declared = Unwrap(value).Type ?? target;
         RejectProjection(
             "'" + value.Syntax + "' reads NULL when its optional owned object is absent; declare the parameter '"
-                + declared.ToDisplayString() + "?'",
+                + declared.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() + "?'",
             value,
             context);
         return true;
     }
+
+    // A lifted member, or a Min, Max or Average over one, which is NULL when every value is.
+    private static bool IsLifted(SqlExpression item, HashSet<SqlExpression> lifted) => item switch
+    {
+        SqlAggregateCallExpression { Function: not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum), Argument: { } argument }
+            => IsLifted(argument, lifted),
+        SqlCastExpression cast => IsLifted(cast.Operand, lifted),
+        SqlDateTruncExpression dateTrunc => IsLifted(dateTrunc.Operand, lifted),
+        _ => lifted.Contains(item),
+    };
 
     private static bool RejectProjection(string reason, IOperation at, ReaderContext context)
     {

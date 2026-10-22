@@ -205,6 +205,10 @@ internal static partial class LinqQueryReader
         // The columns and parameters read so far whose declared type can be null.
         public HashSet<SqlExpression> NullableValues { get; } = new();
 
+        // Members of an optional owned object whose own type cannot be null, lifted to one that
+        // can; see TryReadRowMember. Also in NullableValues.
+        public HashSet<SqlExpression> LiftedValues { get; } = new();
+
         public List<DiagnosticInfo> Diagnostics { get; } = new();
 
         public void Report(DiagnosticInfo diagnostic) => Diagnostics.Add(diagnostic);

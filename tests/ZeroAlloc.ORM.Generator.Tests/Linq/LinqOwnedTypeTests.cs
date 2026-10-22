@@ -279,6 +279,47 @@ public class LinqOwnedTypeTests
         }
         """;
 
+    // The rule is for values the owned branch lifts. A plain `string?` column projected into a
+    // `string` parameter is accepted, as before owned types: nullable annotations decide only
+    // C# warnings there, and a NULL fails at run time as it always has.
+    [Fact]
+    public void Nullable_reference_column_into_a_non_nullable_parameter_is_still_accepted()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorOnFile(Prelude + """
+            public sealed class Note
+            {
+                public Guid Id { get; private set; }
+                public string? Text { get; private set; }
+            }
+
+            [TableMap(typeof(Note), "Notes")]
+            internal static class NoteMap;
+
+            public sealed record NoteLine(Guid Id, string Text);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class NoteStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(NotesQuery))]
+                public partial Task<List<NoteLine>> Notes(CancellationToken ct);
+
+                [LinqQuery(nameof(UnsuppressedQuery))]
+                public partial Task<List<NoteLine>> Unsuppressed(CancellationToken ct);
+
+                private static IQuery<NoteLine> NotesQuery() =>
+                    Sql.Table<Note>().Select(n => new NoteLine(n.Id, n.Text!));
+
+                private static IQuery<NoteLine> UnsuppressedQuery() =>
+                    Sql.Table<Note>().Select(n => new NoteLine(n.Id, n.Text));
+            }
+            """);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        Assert.Contains(
+            result.GeneratedTrees,
+            t => t.ToString().Contains("SELECT \\\"Id\\\", \\\"Text\\\" FROM \\\"Notes\\\"", StringComparison.Ordinal));
+    }
+
     // The same rule holds for a group key: an absent Outcome is a group of its own, whose key is
     // NULL, so g.Key needs a bool? parameter.
     [Fact]
