@@ -4,9 +4,9 @@ using Xunit;
 namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 
 // [LinqQuery] GroupBy against a real PostgreSQL: each grouped result equals LINQ to Objects'.
-// The container runs in UTC, so date_trunc('day', ...) of a DateTime column's timestamptz cuts at
-// UTC midnight, as C#'s .Date does on the UTC values Npgsql reads. A DateTimeOffset column is cut
-// at the UTC day whatever the session's TimeZone. Each case boots its own container, so related
+// The map declares the DateTime ExecutedAt a timestamptz, so its .Date renders
+// date_trunc('day', col, 'UTC') and cuts at UTC midnight, as C#'s .Date does on the UTC values
+// Npgsql reads, whatever the session's TimeZone. A DateTimeOffset column is cut at the UTC day too. Each case boots its own container, so related
 // checks share a case.
 [Trait("Provider", "Postgres")]
 public sealed class PostgresLinqGroupByTests
@@ -65,14 +65,24 @@ public sealed class PostgresLinqGroupByTests
         var rows = await repo.TokensPerModelAndDayAsync(Day1, CancellationToken.None).ConfigureAwait(false);
 
         // By day, then by input tokens, most first; the null model is a group of its own.
-        rows.Should().Equal(
+        var expected = new[]
+        {
             new ModelDayTokens("sonnet", Day1, 30, 3, 2),
             new ModelDayTokens(null, Day1, 7, 7, 1),
             new ModelDayTokens("opus", Day1, 5, 50, 1),
             new ModelDayTokens("opus", Day2, 200, 30, 2),
-            new ModelDayTokens("sonnet", Day2, 1, 1, 1));
+            new ModelDayTokens("sonnet", Day2, 1, 1, 1),
+        };
+        rows.Should().Equal(expected);
         // date_trunc over timestamptz is a timestamptz, which Npgsql reads as a UTC DateTime.
         rows.Should().AllSatisfy(r => r.Day.Kind.Should().Be(DateTimeKind.Utc));
+
+        // The map declares ExecutedAt a timestamptz, so .Date is cut at the UTC day whatever the
+        // session's TimeZone: 23:30 UTC on day 1, 01:30 on day 2 in Amsterdam, stays on day 1.
+        await fx.ExecuteDdlAsync("SET TIME ZONE 'Europe/Amsterdam'").ConfigureAwait(false);
+        var amsterdam = await repo.TokensPerModelAndDayAsync(Day1, CancellationToken.None).ConfigureAwait(false);
+        amsterdam.Should().Equal(expected);
+        amsterdam.Should().AllSatisfy(r => r.Day.Kind.Should().Be(DateTimeKind.Utc));
     }
 
     [Fact]

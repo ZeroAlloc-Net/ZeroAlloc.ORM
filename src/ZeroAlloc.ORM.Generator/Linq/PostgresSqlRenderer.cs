@@ -312,7 +312,12 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlDateTruncExpression dateTrunc:
                 sb.Append("date_trunc('day', ");
                 RenderExpression(sb, dateTrunc.Operand, names);
-                sb.Append(dateTrunc.AtUtc ? " AT TIME ZONE 'UTC')" : ")");
+                if (dateTrunc.AtUtc)
+                    sb.Append(" AT TIME ZONE 'UTC')");
+                else if (dateTrunc.Operand is SqlMemberExpression column && names.IsTimestampTz(column))
+                    sb.Append(", 'UTC')");
+                else
+                    sb.Append(')');
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

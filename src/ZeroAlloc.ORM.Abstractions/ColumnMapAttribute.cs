@@ -22,8 +22,16 @@ public sealed class ColumnMapAttribute(string property) : Attribute
     /// <summary>
     /// Gets or sets a value indicating whether the property is left out of the map: it has no column,
     /// and a LINQ query that uses it does not compile. Set it on a property that holds a value but is
-    /// not stored, such as a cached auto-property; it cannot be combined with <see cref="Column"/> or
-    /// <see cref="EnumAsString"/>.
+    /// not stored, such as a cached auto-property; it cannot be combined with <see cref="Column"/>,
+    /// <see cref="EnumAsString"/> or <see cref="DateTimeStorage"/>.
     /// </summary>
     public bool Ignore { get; init; }
+
+    /// <summary>
+    /// Gets or sets how a <see cref="System.DateTime"/> property is stored. A value other than
+    /// <see cref="ORM.DateTimeStorage.Default"/> wins over
+    /// <see cref="EntityMapDefaultsAttribute.DateTimeStorage"/> for this column; on a property
+    /// that is not a <see cref="System.DateTime"/> it is invalid.
+    /// </summary>
+    public DateTimeStorage DateTimeStorage { get; init; }
 }

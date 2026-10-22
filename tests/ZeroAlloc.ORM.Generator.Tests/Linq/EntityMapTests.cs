@@ -575,6 +575,113 @@ public class EntityMapTests
         Assert.Contains("column 'Id'", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
+    // ---- DateTime storage ----
+
+    private const string TimesUsings = """
+        using System;
+        using ZeroAlloc.ORM;
+
+        """;
+
+    private const string TimesBody = """
+        namespace TestApp;
+
+        public sealed class Execution
+        {
+            public int Id { get; private set; }
+            public DateTime ExecutedAt { get; private set; }
+            public DateTime StartedAt { get; private set; }
+            public DateTime? FinishedAt { get; private set; }
+            public DateTimeOffset LoggedAt { get; private set; }
+        }
+
+        """;
+
+    private const string Times = TimesUsings + TimesBody;
+
+    private const string TimesWithTzDefault = TimesUsings + """
+        [assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]
+
+        """ + TimesBody;
+
+    // A column's own setting wins; a DateTime column without one, nullable or not, takes the
+    // assembly default; a column that is not a DateTime has no DateTime storage.
+    [Fact]
+    public void Effective_DateTime_storage_is_the_column_setting_else_the_assembly_default()
+    {
+        var source = TimesWithTzDefault + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(nameof(Execution.StartedAt), DateTimeStorage = DateTimeStorage.Timestamp)]
+            internal static class ExecutionMap;
+            """;
+
+        Assert.Empty(Zao106(source));
+        var map = MapsOfSingle(source);
+        Assert.Equal(DateTimeColumnStorage.TimestampTz, Column(map, "ExecutedAt").DateTimeStorage);
+        Assert.Equal(DateTimeColumnStorage.Timestamp, Column(map, "StartedAt").DateTimeStorage);
+        Assert.Equal(DateTimeColumnStorage.TimestampTz, Column(map, "FinishedAt").DateTimeStorage);
+        Assert.Equal(DateTimeColumnStorage.None, Column(map, "LoggedAt").DateTimeStorage);
+        Assert.Equal(DateTimeColumnStorage.None, Column(map, "Id").DateTimeStorage);
+    }
+
+    [Fact]
+    public void DateTime_storage_without_assembly_default_is_the_column_setting_else_Default()
+    {
+        var map = MapsOfSingle(Times + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(nameof(Execution.FinishedAt), DateTimeStorage = DateTimeStorage.TimestampTz)]
+            internal static class ExecutionMap;
+            """);
+
+        Assert.Equal(DateTimeColumnStorage.Default, Column(map, "ExecutedAt").DateTimeStorage);
+        Assert.Equal(DateTimeColumnStorage.TimestampTz, Column(map, "FinishedAt").DateTimeStorage);
+        Assert.Equal(new ColumnMapModel("Id", "Id", false), Column(map, "Id"));
+    }
+
+    [Theory]
+    [InlineData("Id")]
+    [InlineData("LoggedAt")]
+    public void DateTimeStorage_on_a_property_that_is_not_a_DateTime_reports_ZAO106(string property)
+    {
+        var d = Assert.Single(Zao106(Times + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(
+            """ + "\"" + property + "\"" + """
+            , DateTimeStorage = DateTimeStorage.TimestampTz)]
+            internal static class ExecutionMap;
+            """));
+
+        var message = d.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains(property, message, StringComparison.Ordinal);
+        Assert.Contains("DateTimeStorage", message, StringComparison.Ordinal);
+        var text = d.Location.SourceTree!.ToString();
+        Assert.StartsWith("ColumnMap(", text.Substring(d.Location.SourceSpan.Start, d.Location.SourceSpan.Length), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Default_DateTimeStorage_on_a_property_that_is_not_a_DateTime_is_allowed()
+    {
+        Assert.Empty(Zao106(Times + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(nameof(Execution.Id), DateTimeStorage = DateTimeStorage.Default)]
+            internal static class ExecutionMap;
+            """));
+    }
+
+    [Fact]
+    public void Ignore_with_DateTimeStorage_reports_ZAO106()
+    {
+        var d = Assert.Single(Zao106(Times + """
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(nameof(Execution.ExecutedAt), Ignore = true, DateTimeStorage = DateTimeStorage.TimestampTz)]
+            internal static class ExecutionMap;
+            """));
+
+        var message = d.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains("ExecutedAt", message, StringComparison.Ordinal);
+        Assert.Contains("DateTimeStorage", message, StringComparison.Ordinal);
+    }
+
     // ---- ordering across files ----
 
     [Fact]
@@ -655,5 +762,32 @@ public class EntityMapTests
         var run = driver.GetRunResult().Results[0];
         AssertCached(run, "EntityMapSets");
         Assert.Equal("Tasks", Assert.Single(Maps(driver.GetRunResult())).Table);
+    }
+
+    // The assembly default is read once per compilation into a plain value: an edit that keeps it
+    // leaves the map set cached, and changing it re-resolves the set without re-reading any map.
+    [Fact]
+    public void Assembly_default_change_re_resolves_the_set_but_not_the_map_reads()
+    {
+        var map = CSharpSyntaxTree.ParseText(MapSource, path: "/src/Map.cs");
+        var defaults = CSharpSyntaxTree.ParseText("using ZeroAlloc.ORM;", path: "/src/Defaults.cs");
+        var compilation = GeneratorHarness.CreateCompilation(new[] { map, defaults });
+
+        var driver = CreateDriver().RunGenerators(compilation);
+        var withComment = compilation.ReplaceSyntaxTree(
+            defaults, defaults.WithChangedText(SourceText.From("using ZeroAlloc.ORM;\n// nothing changes\n")));
+        driver = driver.RunGenerators(withComment);
+        AssertCached(driver.GetRunResult().Results[0], "EntityMapDefaults", "EntityMapReads", "EntityMapSets");
+
+        driver = driver.RunGenerators(withComment.ReplaceSyntaxTree(
+            withComment.SyntaxTrees.Single(t => string.Equals(t.FilePath, "/src/Defaults.cs", StringComparison.Ordinal)),
+            CSharpSyntaxTree.ParseText(
+                "using ZeroAlloc.ORM;\n[assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]",
+                path: "/src/Defaults.cs")));
+        var run = driver.GetRunResult().Results[0];
+        AssertCached(run, "EntityMapReads");
+        Assert.Contains(
+            run.TrackedSteps["EntityMapDefaults"].SelectMany(s => s.Outputs),
+            o => o.Reason == IncrementalStepRunReason.Modified);
     }
 }
