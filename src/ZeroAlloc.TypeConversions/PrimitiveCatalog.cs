@@ -159,9 +159,7 @@ public static class PrimitiveCatalog
             SpecialType.System_Int64 => "bigint[]",
             SpecialType.System_Single => "real[]",
             SpecialType.System_Double => "double precision[]",
-            _ when element.MetadataName == "Guid"
-                   && element.ContainingNamespace is { Name: "System" } ns
-                   && ns.ContainingNamespace?.IsGlobalNamespace == true => "uuid[]",
+            _ when element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Guid" => "uuid[]",
             _ => null,
         };
 

@@ -214,15 +214,11 @@ internal static partial class LinqQueryReader
     private static string? NullTestCast(ITypeSymbol type, ConventionContext conventions)
     {
         var underlying = UnwrapNullable(type);
-        if (ConventionDiscovery.Resolve(underlying, conventions).Kind == ConventionKind.PrimitiveArray)
+        var resolved = ConventionDiscovery.Resolve(underlying, conventions);
+        if (resolved.Kind == ConventionKind.PrimitiveArray)
         {
-            var element = underlying switch
-            {
-                IArrayTypeSymbol array => array.ElementType,
-                INamedTypeSymbol { TypeArguments.Length: 1 } named => named.TypeArguments[0],
-                _ => null,
-            };
-            return element is null ? null : PrimitiveCatalog.GetPostgresArrayTypeName(element);
+            // Discovery sets ElementType on every PrimitiveArray result.
+            return PrimitiveCatalog.GetPostgresArrayTypeName(resolved.ElementType!);
         }
         return OrmGenerator.BoundReader(type, conventions) switch
         {

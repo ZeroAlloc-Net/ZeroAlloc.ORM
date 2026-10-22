@@ -121,6 +121,8 @@ public class PrimitiveArrayDiscoveryTests
     [InlineData("byte")]
     [InlineData("decimal")]
     [InlineData("CustomerRow")]
+    [InlineData("Lookalike.Guid")]
+    [InlineData("Outer.System.Guid")]
     public void Postgres_array_type_name_is_null_for_other_elements(string elementSyntax)
     {
         var (_, element) = TypeOf(elementSyntax);
@@ -145,6 +147,8 @@ public class PrimitiveArrayDiscoveryTests
             #nullable enable
             public sealed record CustomerRow(int Id);
             public sealed record Labels(string Name, string[] Tags);
+            namespace Lookalike { public struct Guid { } }
+            namespace Outer.System { public struct Guid { } }
             public class Anchor { public {{typeSyntax}} Value => default!; }
             """);
         var anchor = compilation.GetTypeByMetadataName("Anchor")!;
