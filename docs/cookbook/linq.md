@@ -136,12 +136,17 @@ column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join key
 - The owned object itself is no column. Projecting it whole, `new Row(r.Id, r.Repository)`,
   reports ZAO107; project its members instead. A null test on it, `r.Outcome == null`, tests that
   every one of its columns is NULL, and `!= null` is its negation. That holds for a required owner
-  too, so `r.Repository == null` is translated rather than taken as false.
+  too, so `r.Repository == null` is translated rather than taken as false. An owned type may be a
+  class or a positional record, `record Review(string? Reviewer, bool Approved)`, alike.
+- The map decides what is owned, not the type's shape. A null test on a plain column whose type
+  is an object, such as `Uri? Website`, stays `"Website" IS NOT NULL`, and a composite column the
+  map does not declare owned still reports ZAO102.
 - A member of an object the map does not declare owned is not mapped, and reports ZAO105.
-- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106. An owned
-  type nested in an owned type is not supported: a member of it, such as
-  `r.Repository.Origin.FilePath`, reports ZAO102 in `Where` or an ordering and ZAO107 in `Select`,
-  and a null test on the nested object, `r.Repository.Origin == null`, reports ZAO105.
+- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106. A type
+  nested in an owned type is not mapped: `[OwnedMap]` maps one level. Reading it, such as
+  `r.Repository.Origin.FilePath` or a null test on `r.Repository.Origin`, reports ZAO102 in `Where`
+  or an ordering and ZAO107 in `Select`, each with the reason "reads 'Origin', a type nested in
+  the owned 'Repository'".
 - An optional owned object, a property annotated `?` such as `AnalysisOutcome? Outcome`, that is
   absent has every one of its columns NULL. Its members read NULL then, where C# would throw on
   the null owner, so each member of an optional owned object counts as nullable: a `bool` member
@@ -775,7 +780,7 @@ Also not supported today:
 - Correlated subqueries, such as `EXISTS` or a subquery that reads the outer row (ZAO102). Join,
   or filter the subquery on companion parameters.
 - An owned type nested in an owned type: a deeper `[ColumnMap]` path reports ZAO106, and a read
-  of the nested object's members ZAO102, ZAO105 or ZAO107, see [Owned types](#owned-types).
+  of the nested object ZAO102 or ZAO107, see [Owned types](#owned-types).
 - Owned collections, `OwnsMany`: `[OwnedMap]` on a collection reports ZAO106.
 - A stream, `IAsyncEnumerable<T>`, as a tuple element (ZAO112), and a companion tuple of more than
   7 elements (ZAO100).
