@@ -7,8 +7,12 @@ ZeroAlloc.ORM.ColumnMapAttribute
 ZeroAlloc.ORM.ColumnMapAttribute.Column.get -> string?
 ZeroAlloc.ORM.ColumnMapAttribute.Column.init -> void
 ZeroAlloc.ORM.ColumnMapAttribute.ColumnMapAttribute(string! property) -> void
+ZeroAlloc.ORM.ColumnMapAttribute.DateTimeStorage.get -> ZeroAlloc.ORM.DateTimeStorage
+ZeroAlloc.ORM.ColumnMapAttribute.DateTimeStorage.init -> void
 ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.get -> bool
 ZeroAlloc.ORM.ColumnMapAttribute.EnumAsString.init -> void
+ZeroAlloc.ORM.ColumnMapAttribute.Ignore.get -> bool
+ZeroAlloc.ORM.ColumnMapAttribute.Ignore.init -> void
 ZeroAlloc.ORM.ColumnMapAttribute.Property.get -> string!
 ZeroAlloc.ORM.CommandAttribute
 ZeroAlloc.ORM.CommandAttribute.CommandAttribute(string! sql) -> void
@@ -22,9 +26,17 @@ ZeroAlloc.ORM.CommandKind.BulkInsert = 3 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Identity = 2 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.NonQuery = 0 -> ZeroAlloc.ORM.CommandKind
 ZeroAlloc.ORM.CommandKind.Scalar = 1 -> ZeroAlloc.ORM.CommandKind
+ZeroAlloc.ORM.DateTimeStorage
+ZeroAlloc.ORM.DateTimeStorage.Default = 0 -> ZeroAlloc.ORM.DateTimeStorage
+ZeroAlloc.ORM.DateTimeStorage.Timestamp = 1 -> ZeroAlloc.ORM.DateTimeStorage
+ZeroAlloc.ORM.DateTimeStorage.TimestampTz = 2 -> ZeroAlloc.ORM.DateTimeStorage
 ZeroAlloc.ORM.DialectAttribute
 ZeroAlloc.ORM.DialectAttribute.Dialect.get -> ZeroAlloc.ORM.SqlDialect
 ZeroAlloc.ORM.DialectAttribute.DialectAttribute(ZeroAlloc.ORM.SqlDialect dialect) -> void
+ZeroAlloc.ORM.EntityMapDefaultsAttribute
+ZeroAlloc.ORM.EntityMapDefaultsAttribute.DateTimeStorage.get -> ZeroAlloc.ORM.DateTimeStorage
+ZeroAlloc.ORM.EntityMapDefaultsAttribute.DateTimeStorage.init -> void
+ZeroAlloc.ORM.EntityMapDefaultsAttribute.EntityMapDefaultsAttribute() -> void
 ZeroAlloc.ORM.JsonAttribute
 ZeroAlloc.ORM.JsonAttribute.JsonAttribute() -> void
 ZeroAlloc.ORM.MaterializeAttribute

@@ -1,13 +1,1 @@
 #nullable enable
-ZeroAlloc.ORM.ColumnMapAttribute.Ignore.get -> bool
-ZeroAlloc.ORM.ColumnMapAttribute.Ignore.init -> void
-ZeroAlloc.ORM.ColumnMapAttribute.DateTimeStorage.get -> ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.ColumnMapAttribute.DateTimeStorage.init -> void
-ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.DateTimeStorage.Default = 0 -> ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.DateTimeStorage.Timestamp = 1 -> ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.DateTimeStorage.TimestampTz = 2 -> ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.EntityMapDefaultsAttribute
-ZeroAlloc.ORM.EntityMapDefaultsAttribute.DateTimeStorage.get -> ZeroAlloc.ORM.DateTimeStorage
-ZeroAlloc.ORM.EntityMapDefaultsAttribute.DateTimeStorage.init -> void
-ZeroAlloc.ORM.EntityMapDefaultsAttribute.EntityMapDefaultsAttribute() -> void
