@@ -120,7 +120,7 @@ internal static partial class LinqQueryReader
             ReportNotGrouped(value, context);
             return null;
         }
-        return ReadProjectionItem(value, row: null, context);
+        return ReadProjectionItem(value, row: null, context, target: null);
     }
 
     // g.Key, g.Key.Member, or a group aggregate. Unsupported for any other form, which the

@@ -197,6 +197,18 @@ internal sealed record SqlIsNotTrueExpression(SqlExpression Operand) : SqlExpres
 internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated, string? Cast) : SqlExpression;
 
 /// <summary>
+/// <c>r.Outcome == null</c> for an owned object: every column the map gives the owned members is
+/// NULL, <c>("Outcome_A" IS NULL AND "Outcome_B" IS NULL)</c>, or its NOT when
+/// <paramref name="Negated"/>. The binder expands the columns from the map, through
+/// <c>ColumnMapModel.Owner</c>.
+/// </summary>
+/// <param name="Owner">The entity property the map declares owned, such as <c>Outcome</c>.</param>
+/// <param name="Location">The tested member, where ZAO105 points when the map does not own it.</param>
+/// <param name="Negated">Whether the test is <c>!= null</c>.</param>
+/// <param name="SourceAlias">The alias of the owner's source in a query with a join, as on a member.</param>
+internal sealed record SqlOwnedIsNullExpression(string Owner, LocationInfo? Location, bool Negated, string? SourceAlias = null) : SqlExpression;
+
+/// <summary>
 /// <c>operand::type</c>: a parameter without a DbType facet in the SELECT list, so a null still has
 /// a type. PostgreSQL reads the SELECT list first and types a bare null parameter there as text,
 /// which clashes with a later use such as a comparison with a <c>timestamptz</c> column.

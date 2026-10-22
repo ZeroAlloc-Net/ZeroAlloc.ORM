@@ -73,6 +73,26 @@ internal sealed class SqlNameScope
     }
 
     /// <summary>
+    /// The columns of the owned object the test names, in map order; or, after recording ZAO105
+    /// once per owner and location, the owner's name alone when the map does not own it.
+    /// </summary>
+    public ImmutableArray<string> OwnedColumns(SqlOwnedIsNullExpression test)
+    {
+        var source = SourceOf(test.SourceAlias);
+        var columns = ImmutableArray.CreateBuilder<string>();
+        foreach (var column in source.Map.Columns)
+        {
+            if (string.Equals(column.Owner, test.Owner, StringComparison.Ordinal))
+                columns.Add(column.Column);
+        }
+        if (columns.Count > 0) return columns.ToImmutable();
+
+        var unmapped = LinqDiagnostics.UnmappedMember(test.Owner, source.EntityDisplay, test.Location);
+        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
+        return ImmutableArray.Create(test.Owner);
+    }
+
+    /// <summary>
     /// SQL names of the enum parameters that bind as their member name, decided by
     /// <see cref="EnumParameterStorage"/> before the render.
     /// </summary>

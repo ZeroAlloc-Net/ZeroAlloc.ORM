@@ -147,6 +147,151 @@ public class LinqOwnedTypeTests
             "SELECT t0.\"FilePath\", t1.\"Number\"");
     }
 
+    // A member of the optional Outcome is NULL when the request has none, so it is lifted to
+    // bool? and compensated as a nullable column: C# would throw on the null Outcome, SQL reads
+    // the row as not failed. A whole owner's null test checks every one of its columns, for a
+    // required owner too.
+    [Fact]
+    public void Optional_owned_member_and_owner_null_tests_are_compensated()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class RequestStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(NotFailedQuery))]
+                public partial Task<List<RequestLine>> NotFailed(CancellationToken ct);
+
+                [LinqQuery(nameof(NotTrueQuery))]
+                public partial Task<List<RequestLine>> NotTrue(CancellationToken ct);
+
+                [LinqQuery(nameof(WithoutOutcomeQuery))]
+                public partial Task<List<RequestLine>> WithoutOutcome(CancellationToken ct);
+
+                [LinqQuery(nameof(WithRepositoryQuery))]
+                public partial Task<List<RequestLine>> WithRepository(CancellationToken ct);
+
+                private static IQuery<RequestLine> NotFailedQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .Where(r => !r.Outcome!.HasFailedValidation)
+                        .Select(r => new RequestLine(r.Id, r.Repository.Url, r.Outcome!.PullRequestUrl, r.Location.StartLine));
+
+                private static IQuery<RequestLine> NotTrueQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .Where(r => r.Outcome!.HasFailedValidation != true)
+                        .Select(r => new RequestLine(r.Id, r.Repository.Url, r.Outcome!.PullRequestUrl, r.Location.StartLine));
+
+                private static IQuery<RequestLine> WithoutOutcomeQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .Where(r => r.Outcome == null)
+                        .Select(r => new RequestLine(r.Id, r.Repository.Url, r.Outcome!.PullRequestUrl, r.Location.StartLine));
+
+                private static IQuery<RequestLine> WithRepositoryQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .Where(r => r.Repository != null)
+                        .Select(r => new RequestLine(r.Id, r.Repository.Url, r.Outcome!.PullRequestUrl, r.Location.StartLine));
+            }
+            """,
+            "WHERE (\"Outcome_HasFailedValidation\") IS NOT TRUE",
+            "WHERE (\"Outcome_HasFailedValidation\" <> TRUE OR \"Outcome_HasFailedValidation\" IS NULL)",
+            "WHERE (\"Outcome_PullRequestUrl\" IS NULL AND \"Outcome_ValidationResult\" IS NULL AND \"Outcome_HasFailedValidation\" IS NULL)",
+            "WHERE NOT (\"RepositoryUrl\" IS NULL AND \"Repository_Branch\" IS NULL AND \"Repository_CommitSha\" IS NULL AND \"Repository_Platform\" IS NULL)");
+    }
+
+    // A non-nullable parameter cannot take the NULL an absent optional owned object reads.
+    [Fact]
+    public void Optional_owned_member_into_a_non_nullable_parameter_reports_ZAO107()
+    {
+        var (d, located) = Single(Prelude + """
+            public sealed record Flag(Guid Id, bool Failed);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class RequestStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(FlagsQuery))]
+                public partial Task<List<Flag>> Flags(CancellationToken ct);
+
+                private static IQuery<Flag> FlagsQuery() =>
+                    Sql.Table<CodeAnalysisRequest>().Select(r => new Flag(r.Id, r.Outcome!.HasFailedValidation));
+            }
+            """);
+
+        Assert.Equal("ZAO107", d.Id);
+        Assert.Equal("r.Outcome!.HasFailedValidation", located);
+        Assert.Contains("'bool?'", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    private const string Jobs = """
+        #nullable enable
+        using System;
+        using System.Collections.Generic;
+        using System.Data.Async;
+        using System.Linq;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+        using ZeroAlloc.ORM.Linq;
+
+        namespace TestApp;
+
+        public enum Cadence { Hourly, Daily }
+
+        public sealed class Schedule
+        {
+            public Cadence Cadence { get; private set; }
+            public DateTime NextRunAt { get; private set; }
+        }
+
+        public sealed class Job
+        {
+            public Guid Id { get; private set; }
+            public Schedule Schedule { get; private set; } = null!;
+        }
+
+        [TableMap(typeof(Job), "Jobs")]
+        [OwnedMap(nameof(Job.Schedule))]
+        [ColumnMap("Schedule.Cadence", EnumAsString = true)]
+        [ColumnMap("Schedule.NextRunAt", DateTimeStorage = DateTimeStorage.TimestampTz)]
+        internal static class JobMap;
+
+        public sealed record JobLine(Guid Id);
+
+        public sealed record DayCount(DateTime Day, int Count);
+
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class JobStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(DueQuery))]
+            public partial Task<List<JobLine>> Due(Cadence cadence, DateTime before, CancellationToken ct);
+
+            [LinqQuery(nameof(ByDayQuery))]
+            public partial Task<List<DayCount>> ByDay(DateTime before, CancellationToken ct);
+
+            private static IQuery<JobLine> DueQuery(Cadence cadence, DateTime before) =>
+                Sql.Table<Job>()
+                    .Where(j => j.Schedule.Cadence == cadence && j.Schedule.NextRunAt < before)
+                    .Select(j => new JobLine(j.Id));
+
+            private static IQuery<DayCount> ByDayQuery(DateTime before) =>
+                Sql.Table<Job>()
+                    .Where(j => j.Schedule.NextRunAt < before)
+                    .GroupBy(j => j.Schedule.NextRunAt.Date)
+                    .Select(g => new DayCount(g.Key, g.Count()));
+        }
+        """;
+
+    // An owned member's own [ColumnMap] settings apply as on a plain column: an EnumAsString
+    // member compared with an enum parameter binds the parameter by name, with no ZAO111, and a
+    // TimestampTz member's .Date, which only a GroupBy key reads, is cut at the UTC day.
+    [Fact]
+    public void Owned_EnumAsString_and_TimestampTz_members_follow_their_column_settings()
+    {
+        VerifyCompiled(Jobs,
+            "WHERE \"Schedule_Cadence\" = @cadence AND \"Schedule_NextRunAt\" < @before",
+            "date_trunc('day', \"Schedule_NextRunAt\", 'UTC')",
+            "__p_cadence.DbType = global::System.Data.DbType.String;",
+            "FROM \"Jobs\"");
+    }
+
     // A whole owned object maps to several columns, while a projected row reads one column per
     // constructor parameter.
     [Fact]

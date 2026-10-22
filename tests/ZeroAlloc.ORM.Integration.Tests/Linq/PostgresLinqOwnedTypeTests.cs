@@ -101,4 +101,26 @@ public sealed class PostgresLinqOwnedTypeTests
         (await repo.FailedAsync(RepositoryPlatform.GitHub, CancellationToken.None).ConfigureAwait(false))
             .Should().Equal(Delta);
     }
+
+    // A member of the optional Outcome is lifted to a nullable value: its negation keeps a
+    // request without an outcome, and a bool? reads its NULL. The whole Outcome is null when
+    // every one of its columns is.
+    [Fact]
+    public async Task Optional_owned_members_are_nullable_and_the_owner_tests_null()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqOwnedTypeRepo(fx.Connection);
+        var pending = Alpha with { Title = "pending", PullRequestUrl = null, ValidationResult = null };
+        await InsertAsync(repo, pending, hasFailedValidation: null).ConfigureAwait(false);
+        await InsertAsync(repo, Beta, hasFailedValidation: false).ConfigureAwait(false);
+        await InsertAsync(repo, Delta, hasFailedValidation: true).ConfigureAwait(false);
+
+        var none = new OutcomeFlag("pending", null);
+        var passed = new OutcomeFlag("beta", false);
+        var failed = new OutcomeFlag("delta", true);
+        (await repo.NotFailedAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(passed, none);
+        (await repo.NotTrueAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(passed, none);
+        (await repo.WithoutOutcomeAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(none);
+        (await repo.WithOutcomeAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(passed, failed);
+    }
 }

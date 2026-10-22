@@ -231,6 +231,23 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
+    // (a IS NULL AND b IS NULL ...) over every column of the owned object, NOT (...) for != null.
+    // An owner the map does not declare owned has no columns: ZAO105, and its name stands in.
+    private static void RenderOwnedIsNull(StringBuilder sb, SqlOwnedIsNullExpression test, SqlNameScope names)
+    {
+        var columns = names.OwnedColumns(test);
+        if (test.Negated) sb.Append("NOT ");
+        sb.Append('(');
+        for (var i = 0; i < columns.Length; i++)
+        {
+            if (i > 0) sb.Append(" AND ");
+            if (test.SourceAlias is { } alias && names.QualifyColumns) sb.Append(alias).Append('.');
+            AppendIdentifier(sb, columns[i]);
+            sb.Append(" IS NULL");
+        }
+        sb.Append(')');
+    }
+
     // One case per SqlExpression record. A new expression form adds its case here.
     // AND and OR are parenthesised, and NOT wraps its operand, so the tree's grouping
     // survives whatever PostgreSQL's precedence would make of the flat text.
@@ -287,6 +304,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 RenderExpression(sb, isNull.Operand, names);
                 AppendCast(sb, isNull.Operand, isNull.Cast, names);
                 sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
+                break;
+            case SqlOwnedIsNullExpression ownedIsNull:
+                RenderOwnedIsNull(sb, ownedIsNull, names);
                 break;
             case SqlCastExpression cast:
                 RenderExpression(sb, cast.Operand, names);

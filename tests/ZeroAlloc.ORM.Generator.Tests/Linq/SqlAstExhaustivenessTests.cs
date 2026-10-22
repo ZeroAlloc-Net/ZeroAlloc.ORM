@@ -59,6 +59,7 @@ public class SqlAstExhaustivenessTests
         Assert.True(expressions.Count >= 15, "found " + expressions.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
         Assert.Contains(typeof(SqlDateTruncExpression), expressions);
+        Assert.Contains(typeof(SqlOwnedIsNullExpression), expressions);
         Assert.Equal(
             [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
             Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));

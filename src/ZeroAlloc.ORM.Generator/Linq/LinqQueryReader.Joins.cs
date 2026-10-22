@@ -285,7 +285,11 @@ internal static partial class LinqQueryReader
 
         // A member of an owned object, r.Repository.Url: the column the map keys by the path
         // Repository.Url. Whether the map declares Repository owned is the binder's to check; a
-        // member it does not map is ZAO105 there.
+        // member it does not map is ZAO105 there. A member of an optional owned object, one
+        // annotated `?`, is NULL when the object is absent, so its type is lifted: bool becomes
+        // bool? and string becomes string?, and the null rules compensate for it. This differs
+        // on purpose from the Value of a nullable value object, which is rejected: a member of an
+        // optional owned object would otherwise be unusable.
         if (op is IPropertyReferenceOperation
             && owner is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } entity } ownedProperty
             && ShapeAt(entity, row, context.Row) is { IsEntity: true } entityShape
@@ -293,11 +297,30 @@ internal static partial class LinqQueryReader
         {
             name = ownedProperty.Property.Name + "." + name;
             alias = entityShape.Alias;
+            if (ownedProperty.Property.NullableAnnotation == NullableAnnotation.Annotated)
+                type = Lifted(type, context);
             return true;
         }
 
         return false;
     }
+
+    // The type as one that can be null: Nullable<T> for a value type, annotated for a reference type.
+    private static ITypeSymbol Lifted(ITypeSymbol type, ReaderContext context)
+    {
+        if (CanBeNull(type)) return type;
+        return type.IsValueType
+            ? context.Conventions.Compilation.GetSpecialType(SpecialType.System_Nullable_T).Construct(type)
+            : type.WithNullableAnnotation(NullableAnnotation.Annotated);
+    }
+
+    // A member of an optional owned object whose own type cannot be null, such as
+    // r.Outcome!.HasFailedValidation: its column reads NULL when the object is absent.
+    private static bool IsLiftedOwnedMember(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => op.Type is { } declared
+            && !CanBeNull(declared)
+            && TryReadRowMember(op, row, context, out _, out var type, out _)
+            && CanBeNull(type);
 
     // A row member that holds an object whose properties are columns, such as an owned
     // r.Repository: a whole object, not one column. Null for any other operation.

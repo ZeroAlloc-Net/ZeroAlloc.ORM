@@ -70,7 +70,7 @@ internal static partial class LinqQueryReader
                 return nullableValues.Contains(expression);
             case SqlLiteralExpression literal:
                 return literal.Kind == SqlLiteralKind.Null;
-            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression:
+            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlOwnedIsNullExpression:
                 return false;
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);

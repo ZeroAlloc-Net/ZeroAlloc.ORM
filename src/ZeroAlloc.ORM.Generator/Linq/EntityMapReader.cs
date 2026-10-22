@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using ZeroAlloc.ORM.Generator.Model;
@@ -40,7 +41,8 @@ internal static class EntityMapReader
         var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)>(StringComparer.Ordinal);
         var overrideLocations = new Dictionary<string, LocationInfo?>(StringComparer.Ordinal);
         var entityName = entity.ToDisplayString();
-        var owned = ReadOwned(ctx, entityName, properties, diagnostics, ct);
+        var rejectedOwners = new HashSet<string>(StringComparer.Ordinal);
+        var owned = ReadOwned(ctx, entityName, properties, diagnostics, rejectedOwners, ct);
 
         foreach (var attribute in ctx.TargetSymbol.GetAttributes())
         {
@@ -52,7 +54,7 @@ internal static class EntityMapReader
             }
 
             var location = LocationInfo.From(attribute.ApplicationSyntaxReference?.GetSyntax(ct).GetLocation());
-            if (ResolveColumnMapTarget(propertyName, entityName, properties, owned, location, diagnostics) is not { } property)
+            if (ResolveColumnMapTarget(propertyName, entityName, properties, owned, rejectedOwners, location, diagnostics) is not { } property)
                 continue;
 
             if (overrides.ContainsKey(propertyName))
@@ -152,6 +154,17 @@ internal static class EntityMapReader
             }
         }
 
+        // An owned object without a column has nothing to read, and `r.Outcome == null` nothing to test.
+        foreach (var pair in owned)
+        {
+            if (!columns.Any(c => string.Equals(c.Owner, pair.Key, StringComparison.Ordinal)))
+            {
+                diagnostics.Add(Invalid(
+                    $"'{pair.Key}' of {entityName} is declared owned, but none of its properties is a column",
+                    pair.Value.Location));
+            }
+        }
+
         // Two properties may not share a column. At least one of the pair carries an override, since
         // property names are unique; the later property's override is the one reported, else the earlier's.
         var columnOwners = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -210,21 +223,28 @@ internal static class EntityMapReader
         }
     }
 
-    /// <summary>One owned property's type: its readable properties, base type first.</summary>
-    private sealed class OwnedType(Dictionary<string, IPropertySymbol> properties, List<string> order)
+    /// <summary>
+    /// One owned property's type: its readable properties, base type first, and where its
+    /// <c>[OwnedMap]</c> is.
+    /// </summary>
+    private sealed class OwnedType(Dictionary<string, IPropertySymbol> properties, List<string> order, LocationInfo? location)
     {
         public Dictionary<string, IPropertySymbol> Properties { get; } = properties;
 
         public List<string> Order { get; } = order;
+
+        public LocationInfo? Location { get; } = location;
     }
 
     // The map's [OwnedMap] properties, by name, each with its type's readable properties. A name
-    // that is no property, a type with no members to map, or a second declaration is ZAO106.
+    // that is no property, a type with no members to map, or a second declaration is ZAO106. The
+    // names of the first two go into `rejected`, so a dotted [ColumnMap] on them adds no second error.
     private static Dictionary<string, OwnedType> ReadOwned(
         GeneratorAttributeSyntaxContext ctx,
         string entityName,
         Dictionary<string, IPropertySymbol> properties,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        HashSet<string> rejected,
         CancellationToken ct)
     {
         var owned = new Dictionary<string, OwnedType>(StringComparer.Ordinal);
@@ -244,6 +264,7 @@ internal static class EntityMapReader
                 diagnostics.Add(Invalid(
                     $"[OwnedMap] names '{propertyName}', which is not a public readable instance property of {entityName}",
                     location));
+                rejected.Add(propertyName);
                 continue;
             }
 
@@ -254,6 +275,7 @@ internal static class EntityMapReader
                     $"[OwnedMap] names '{propertyName}' of {entityName}, whose type '{property.Type.ToDisplayString()}' "
                         + "is a single value, an enum or a collection rather than a type whose properties are columns",
                     location));
+                rejected.Add(propertyName);
                 continue;
             }
 
@@ -264,7 +286,7 @@ internal static class EntityMapReader
             }
 
             var order = new List<string>();
-            owned[propertyName] = new OwnedType(ReadableProperties(ownedType, order), order);
+            owned[propertyName] = new OwnedType(ReadableProperties(ownedType, order), order, location);
         }
 
         return owned;
@@ -278,6 +300,7 @@ internal static class EntityMapReader
         string entityName,
         Dictionary<string, IPropertySymbol> properties,
         Dictionary<string, OwnedType> owned,
+        HashSet<string> rejectedOwners,
         LocationInfo? location,
         ImmutableArray<DiagnosticInfo>.Builder diagnostics)
     {
@@ -310,6 +333,9 @@ internal static class EntityMapReader
                 location));
             return null;
         }
+
+        // Its [OwnedMap] is already reported.
+        if (rejectedOwners.Contains(segments[0])) return null;
 
         if (!owned.TryGetValue(segments[0], out var ownedType))
         {

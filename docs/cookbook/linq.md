@@ -131,16 +131,22 @@ A query reads a member of an owned object, `r.Repository.Url`, as its column whe
 column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join keys.
 
 - The owned object itself is no column. Projecting it whole, `new Row(r.Id, r.Repository)`,
-  reports ZAO107; project its members instead.
+  reports ZAO107; project its members instead. A null test on it, `r.Outcome == null`, tests that
+  every one of its columns is NULL, and `!= null` is its negation. That holds for a required owner
+  too, so `r.Repository == null` is translated rather than taken as false.
 - A member of an object the map does not declare owned is not mapped, and reports ZAO105.
 - A dotted path has exactly two segments, `Owner.Property`; an owned type nested in an owned type is
   not supported.
-- An optional owned object that is absent has every one of its columns NULL. Its members read
-  NULL then, where C# would throw on the null owner: `r.Outcome!.PullRequestUrl` reads NULL, and a
-  comparison such as `r.Outcome!.HasFailedValidation == true` reads the column, so such a row
-  does not match. The null rules of [Nulls compare as in C#](#nulls-compare-as-in-c) follow each
-  member's own type, so a `bool` member counts as never NULL, and projecting it from a row without
-  the owned object fails at run time as a NULL in a non-nullable parameter does.
+- An optional owned object, a property annotated `?` such as `AnalysisOutcome? Outcome`, that is
+  absent has every one of its columns NULL. Its members read NULL then, where C# would throw on
+  the null owner, so each member of an optional owned object counts as nullable: a `bool` member
+  as `bool?`, a `string` as `string?`. The rules of [Nulls compare as in C#](#nulls-compare-as-in-c)
+  apply to it as to a nullable column: `r.Outcome!.HasFailedValidation == true` does not match a
+  request without an outcome, while `!r.Outcome!.HasFailedValidation` and `!= true` do. Projecting
+  such a member needs a parameter that takes the NULL, such as `bool?`; a `bool` parameter reports
+  ZAO107. This differs on purpose from the `Value` of a nullable value object, which is rejected:
+  without the lift a member of an optional owned object could not be used at all. Without nullable
+  annotations, an owned object counts as present, as everywhere.
 - An owned type is a class or struct whose properties are the columns. `[OwnedMap]` on a property
   that binds as one value, such as a `string`, an enum, a value object with a `Value` or a
   single-argument record, or on a nullable value type or a collection, reports ZAO106.

@@ -804,7 +804,9 @@ public class EntityMapTests
         Assert.Equal(DateTimeColumnStorage.Timestamp, At(map, "Repository.PushedAt").DateTimeStorage);
     }
 
-    // Each invalid owned declaration reports one ZAO106, at the attribute, naming the property or path.
+    // Each invalid owned declaration reports one ZAO106, at the attribute, naming the property or
+    // path. A dotted ColumnMap on an owner whose [OwnedMap] is already reported adds no second
+    // error, and an owned object whose members are all ignored has no column, so it is invalid.
     [Theory]
     [InlineData("[OwnedMap(\"Nope\")]", "Nope")]
     [InlineData("[OwnedMap(nameof(Request.Title))]", "Title")]
@@ -818,6 +820,9 @@ public class EntityMapTests
     [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(nameof(Request.Location), Column = \"x\")]", "Location")]
     [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Column = \"Title\")]", "Title")]
     [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Column = \"a\")]\n[ColumnMap(\"Location.FilePath\", Column = \"b\")]", "Location.FilePath")]
+    [InlineData("[OwnedMap(nameof(Request.Title))]\n[ColumnMap(\"Title.Length\", Column = \"x\")]", "Title")]
+    [InlineData("[OwnedMap(\"Nope\")]\n[ColumnMap(\"Nope.Member\", Column = \"x\")]", "Nope")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Ignore = true)]\n[ColumnMap(\"Location.StartLine\", Ignore = true)]\n[ColumnMap(\"Location.EndLine\", Ignore = true)]", "Location")]
     public void Invalid_owned_map_reports_ZAO106(string attributes, string named)
     {
         var d = Assert.Single(Zao106(Owned + "[TableMap(typeof(Request), \"Requests\")]\n" + attributes + "\ninternal static class RequestMap;\n"));

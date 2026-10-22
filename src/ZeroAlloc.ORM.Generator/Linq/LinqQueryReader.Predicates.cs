@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using ZeroAlloc.ORM.Generator.Model;
 using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
@@ -171,14 +172,23 @@ internal static partial class LinqQueryReader
                 ? reference
                 : null;
 
-    // `tested IS [NOT] NULL`, reported at `at`.
-    private static SqlIsNullExpression? ReadNullTestOf(
+    // `tested IS [NOT] NULL`, reported at `at`. A whole owned object, r.Outcome, is NULL when
+    // every one of its columns is; that is tested even for a required owner, as C# would.
+    private static SqlExpression? ReadNullTestOf(
         IOperation testedOperation,
         bool negated,
         IOperation at,
         IParameterSymbol? row,
         ReaderContext context)
     {
+        var unwrapped = Unwrap(testedOperation);
+        if (WholeObjectMemberType(unwrapped, row, context) is { } whole
+            && !IsComposite(whole, context.Conventions)
+            && TryReadRowMember(unwrapped, row, context, out var owner, out _, out var alias))
+        {
+            return new SqlOwnedIsNullExpression(owner, LocationInfo.From(unwrapped.Syntax.GetLocation()), negated, alias);
+        }
+
         var tested = ReadComparand(testedOperation, row, context);
         if (tested is null) return null;
 

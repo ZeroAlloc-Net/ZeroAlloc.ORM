@@ -47,7 +47,7 @@ internal static partial class LinqQueryReader
                 return RejectProjection("a params argument is not supported", argument, context);
             var item = chain.Group is { } group
                 ? ReadGroupedItem(argument.Value, row, group, context)
-                : ReadProjectionItem(argument.Value, row, context);
+                : ReadProjectionItem(argument.Value, row, context, parameter.Type);
             if (item is null) return false;
             items[parameter.Ordinal] = item;
         }
@@ -58,16 +58,35 @@ internal static partial class LinqQueryReader
 
     // A parameter that can be null and has no DbType facet is cast, so that a null still has a
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
-    private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
+    private static SqlExpression? ReadProjectionItem(
+        IOperation value,
+        IParameterSymbol? row,
+        ReaderContext context,
+        ITypeSymbol? target)
     {
+        // A member of an optional owned object is NULL when the object is absent, so the row's
+        // parameter must take a null; C# would throw on the absent object instead.
+        if (target is not null
+            && !CanBeNull(target)
+            && Unwrap(value) is var member
+            && IsLiftedOwnedMember(member, row, context))
+        {
+            RejectProjection(
+                "'" + value.Syntax + "' is NULL when its owned object is absent; declare the parameter '"
+                    + member.Type!.ToDisplayString() + "?'",
+                value,
+                context);
+            return null;
+        }
+
         // A whole owned object maps to several columns; the row reads one per parameter. A
         // composite, which the [Query] path expands, keeps ReadOperand's ZAO102.
         if (WholeObjectMemberType(Unwrap(value), row, context) is { } whole
             && !IsComposite(whole, context.Conventions))
         {
             RejectProjection(
-                "'" + value.Syntax + "' reads a whole '" + whole.Name + "', which maps to several columns; "
-                    + "project its members, one per constructor parameter",
+                "'" + value.Syntax + "' reads a whole '" + whole.Name + "', an object rather than one column; "
+                    + "project the columns it holds, which needs [OwnedMap] for an owned type",
                 value,
                 context);
             return null;

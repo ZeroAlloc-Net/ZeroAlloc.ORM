@@ -41,6 +41,44 @@ internal sealed partial class LinqOwnedTypeRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(WithoutPullRequestQuery))]
     public partial Task<List<AnalysisRequestLine>> WithoutPullRequestAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(NotFailedQuery))]
+    public partial Task<List<OutcomeFlag>> NotFailedAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(NotTrueQuery))]
+    public partial Task<List<OutcomeFlag>> NotTrueAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(WithoutOutcomeQuery))]
+    public partial Task<List<OutcomeFlag>> WithoutOutcomeAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(WithOutcomeQuery))]
+    public partial Task<List<OutcomeFlag>> WithOutcomeAsync(CancellationToken ct);
+
+    // HasFailedValidation reads NULL without an outcome, and C#'s `!` of it keeps the row.
+    private static IQuery<OutcomeFlag> NotFailedQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => !r.Outcome!.HasFailedValidation)
+            .OrderBy(r => r.Title)
+            .Select(r => new OutcomeFlag(r.Title, r.Outcome!.HasFailedValidation));
+
+    private static IQuery<OutcomeFlag> NotTrueQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => r.Outcome!.HasFailedValidation != true)
+            .OrderBy(r => r.Title)
+            .Select(r => new OutcomeFlag(r.Title, r.Outcome!.HasFailedValidation));
+
+    // An absent outcome has every one of its columns NULL.
+    private static IQuery<OutcomeFlag> WithoutOutcomeQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => r.Outcome == null)
+            .OrderBy(r => r.Title)
+            .Select(r => new OutcomeFlag(r.Title, r.Outcome!.HasFailedValidation));
+
+    private static IQuery<OutcomeFlag> WithOutcomeQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => r.Outcome != null)
+            .OrderBy(r => r.Title)
+            .Select(r => new OutcomeFlag(r.Title, r.Outcome!.HasFailedValidation));
+
     private static IQuery<AnalysisRequestLine> AllQuery() =>
         Sql.Table<AnalysisRequestEntity>()
             .OrderBy(r => r.Title)
