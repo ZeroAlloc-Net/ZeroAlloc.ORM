@@ -47,8 +47,8 @@ internal static partial class LinqQueryReader
                 return RejectProjection("a params argument is not supported", argument, context);
             var item = chain.Group is { } group
                 ? ReadGroupedItem(argument.Value, row, group, context)
-                : ReadProjectionItem(argument.Value, row, context, parameter.Type);
-            if (item is null) return false;
+                : ReadProjectionItem(argument.Value, row, context);
+            if (item is null || RejectsNull(item, argument.Value, parameter.Type, context)) return false;
             items[parameter.Ordinal] = item;
         }
 
@@ -58,27 +58,8 @@ internal static partial class LinqQueryReader
 
     // A parameter that can be null and has no DbType facet is cast, so that a null still has a
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
-    private static SqlExpression? ReadProjectionItem(
-        IOperation value,
-        IParameterSymbol? row,
-        ReaderContext context,
-        ITypeSymbol? target)
+    private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
-        // A member of an optional owned object is NULL when the object is absent, so the row's
-        // parameter must take a null; C# would throw on the absent object instead.
-        if (target is not null
-            && !CanBeNull(target)
-            && Unwrap(value) is var member
-            && IsLiftedOwnedMember(member, row, context))
-        {
-            RejectProjection(
-                "'" + value.Syntax + "' is NULL when its owned object is absent; declare the parameter '"
-                    + member.Type!.ToDisplayString() + "?'",
-                value,
-                context);
-            return null;
-        }
-
         // A whole owned object maps to several columns; the row reads one per parameter. A
         // composite, which the [Query] path expands, keeps ReadOperand's ZAO102.
         if (WholeObjectMemberType(Unwrap(value), row, context) is { } whole
@@ -107,6 +88,28 @@ internal static partial class LinqQueryReader
             default:
                 return null;
         }
+    }
+
+    // One rule for every projected value, a column, g.Key or an aggregate: a value whose C# type
+    // cannot be null but whose SQL can be NULL goes to a parameter that takes a null. That value
+    // is a member of an optional owned object, which reads NULL when the object is absent, where
+    // C# would throw on the absent object. ZAO107 when the parameter cannot take it.
+    private static bool RejectsNull(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
+    {
+        if (CanBeNull(target)
+            || Unwrap(value).Type is not { } declared
+            || CanBeNull(declared)
+            || !MayBeNull(item, context.NullableValues))
+        {
+            return false;
+        }
+
+        RejectProjection(
+            "'" + value.Syntax + "' reads NULL when its optional owned object is absent; declare the parameter '"
+                + declared.ToDisplayString() + "?'",
+            value,
+            context);
+        return true;
     }
 
     private static bool RejectProjection(string reason, IOperation at, ReaderContext context)

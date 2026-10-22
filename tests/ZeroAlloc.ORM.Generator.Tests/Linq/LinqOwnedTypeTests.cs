@@ -279,6 +279,57 @@ public class LinqOwnedTypeTests
         }
         """;
 
+    // The same rule holds for a group key: an absent Outcome is a group of its own, whose key is
+    // NULL, so g.Key needs a bool? parameter.
+    [Fact]
+    public void Optional_owned_group_key_into_a_non_nullable_parameter_reports_ZAO107()
+    {
+        var (d, located) = Single(Prelude + """
+            public sealed record FailedCount(bool Failed, int Count);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class RequestStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(CountsQuery))]
+                public partial Task<List<FailedCount>> Counts(CancellationToken ct);
+
+                private static IQuery<FailedCount> CountsQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .GroupBy(r => r.Outcome!.HasFailedValidation)
+                        .Select(g => new FailedCount(g.Key, g.Count()));
+            }
+            """);
+
+        Assert.Equal("ZAO107", d.Id);
+        Assert.Equal("g.Key", located);
+        Assert.Contains("'bool?'", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Optional_owned_group_key_into_a_nullable_parameter_translates()
+    {
+        VerifyCompiled(Prelude + """
+            public sealed record FailedCount(bool? Failed, int Count);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class RequestStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(CountsQuery))]
+                public partial Task<List<FailedCount>> Counts(CancellationToken ct);
+
+                private static IQuery<FailedCount> CountsQuery() =>
+                    Sql.Table<CodeAnalysisRequest>()
+                        .GroupBy(r => r.Outcome!.HasFailedValidation)
+                        .OrderBy(g => g.Key)
+                        .Select(g => new FailedCount(g.Key, g.Count()));
+            }
+            """,
+            "SELECT \"Outcome_HasFailedValidation\", count(*)::int",
+            "GROUP BY \"Outcome_HasFailedValidation\"",
+            "ORDER BY \"Outcome_HasFailedValidation\" NULLS FIRST",
+            "FROM \"AnalysisRequests\"");
+    }
+
     // An owned member's own [ColumnMap] settings apply as on a plain column: an EnumAsString
     // member compared with an enum parameter binds the parameter by name, with no ZAO111, and a
     // TimestampTz member's .Date, which only a GroupBy key reads, is cut at the UTC day.

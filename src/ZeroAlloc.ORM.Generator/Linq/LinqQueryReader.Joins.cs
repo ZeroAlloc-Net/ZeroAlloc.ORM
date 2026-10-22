@@ -314,14 +314,6 @@ internal static partial class LinqQueryReader
             : type.WithNullableAnnotation(NullableAnnotation.Annotated);
     }
 
-    // A member of an optional owned object whose own type cannot be null, such as
-    // r.Outcome!.HasFailedValidation: its column reads NULL when the object is absent.
-    private static bool IsLiftedOwnedMember(IOperation op, IParameterSymbol? row, ReaderContext context)
-        => op.Type is { } declared
-            && !CanBeNull(declared)
-            && TryReadRowMember(op, row, context, out _, out var type, out _)
-            && CanBeNull(type);
-
     // A row member that holds an object whose properties are columns, such as an owned
     // r.Repository: a whole object, not one column. Null for any other operation.
     private static ITypeSymbol? WholeObjectMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
