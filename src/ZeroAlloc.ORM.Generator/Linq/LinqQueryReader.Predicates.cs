@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using ZeroAlloc.ORM.Generator.Model;
 using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
@@ -171,14 +172,30 @@ internal static partial class LinqQueryReader
                 ? reference
                 : null;
 
-    // `tested IS [NOT] NULL`, reported at `at`.
-    private static SqlIsNullExpression? ReadNullTestOf(
+    // `tested IS [NOT] NULL`, reported at `at`. A row member whose type is an object goes to the
+    // binder, where the map decides: an owned object, r.Outcome, is NULL when every one of its
+    // columns is, tested even for a required owner as C# would; a plain column, such as a
+    // Uri? Website, is tested as itself.
+    private static SqlExpression? ReadNullTestOf(
         IOperation testedOperation,
         bool negated,
         IOperation at,
         IParameterSymbol? row,
         ReaderContext context)
     {
+        var unwrapped = Unwrap(testedOperation);
+        if (WholeObjectMemberType(unwrapped, row, context) is { } whole
+            && TryReadRowMember(unwrapped, row, context, out var member, out _, out var alias))
+        {
+            return new SqlObjectIsNullExpression(
+                member,
+                unwrapped.Syntax.ToString(),
+                IsComposite(whole, context.Conventions) ? whole.ToDisplayString() : null,
+                LocationInfo.From(unwrapped.Syntax.GetLocation()),
+                negated,
+                alias);
+        }
+
         var tested = ReadComparand(testedOperation, row, context);
         if (tested is null) return null;
 
@@ -249,7 +266,8 @@ internal static partial class LinqQueryReader
         return op.ConstantValue.HasValue && op.ConstantValue.Value is null;
     }
 
-    // Sql.ILike, string.Contains / StartsWith / EndsWith, and Contains on an array parameter.
+    // Sql.ILike, string.Contains / StartsWith / EndsWith, Contains on an array parameter, and
+    // IQuery Contains, an IN subquery.
     private static SqlExpression? ReadPredicateCall(IInvocationOperation invocation, IParameterSymbol? row, ReaderContext context)
     {
         var method = invocation.TargetMethod;
@@ -282,6 +300,9 @@ internal static partial class LinqQueryReader
             var value = ReadComparand(invocation.Arguments[0].Value, row, context);
             return value is null ? null : new SqlLikeExpression(operand, value, match);
         }
+
+        if (IsLinqMember(method, QueryOperatorsTypeName, "Contains") && invocation.Arguments.Length == 2)
+            return ReadSubqueryContains(invocation, row, context);
 
         if (string.Equals(method.Name, "Contains", StringComparison.Ordinal) && CollectionContains(invocation) is { } membership)
             return ReadArrayContains(invocation, membership.Collection, membership.Item, row, context);

@@ -913,7 +913,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // tuple arity"; we can't verify that at compile time without parsing the
         // sproc body. Defer arity validation to runtime (the materializer's
         // NextResultAsync call will throw a clear error if a result set is missing).
-        if (shape == EmitShape.MultiResultSet && multiResultMaterialization is not null && !isStoredProcedureAttribute)
+        //
+        // [LinqQuery] — suppressed too. The core runs before the SQL is bound, with an empty
+        // command text, and the translator renders exactly one statement per tuple element,
+        // which ZAO112 has already matched against the companion's tuple.
+        if (shape == EmitShape.MultiResultSet
+            && multiResultMaterialization is not null
+            && !isStoredProcedureAttribute
+            && pipelineKind != AttributePipelineKind.LinqQuery)
         {
             var tupleArity = multiResultMaterialization.Elements.Values.Length;
             var statementCount = SqlStatementSplitter.CountStatements(methodSql);
@@ -5449,10 +5456,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // generated file. BuildCommandTextAssignment uses the constant as CommandText.
     // A no-op for every other method, which keeps their output byte-identical.
     //
-    // The constant assumes a single-command shape, whose CommandText is set by
-    // BuildCommandTextAssignment. The BulkInsert and batch-split multi-result paths
-    // write CommandText themselves and would not use it; the [LinqQuery] translator
-    // produces neither shape.
+    // The constant is the CommandText BuildCommandTextAssignment sets on a single
+    // command. A tuple companion's multi-result method runs its statements as a batch,
+    // which writes each statement's CommandText itself, as the batch-split emit does
+    // for [Query]; the constant then serves the ;-joined fallback for a provider
+    // without batches, and documents the SQL.
     private static void EmitLinqSqlConstant(StringBuilder sb, QueryMethodModel m)
     {
         if (m.LinqSourceComment is not { } comment || m.LinqSqlConstantName is not { } name) return;
@@ -8044,7 +8052,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -8098,7 +8106,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // (Auto, sharing try/finally) can re-use the same body shape.
     private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
         EmitBatchSetupWithIndent(sb, m, statements, indent);
         sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -8116,6 +8124,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
     }
+
+    // The statements a multi-result batch runs, one command each. A [LinqQuery] tuple
+    // companion carries the statements it rendered; [Query] SQL is split on `;`.
+    private static ImmutableArray<string> BatchStatements(QueryMethodModel m)
+        => m.LinqStatements.Length > 0 ? m.LinqStatements.Values : SqlStatementSplitter.Split(m.Sql);
 
     // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
     // top-level BatchAlways path still calls the no-indent version through its
@@ -8143,6 +8156,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
+            if (!IsBoundByStatement(m, p, cmdIndex)) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramName = p.ParamNameOverride ?? p.Name;
             var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
@@ -8378,6 +8392,20 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine();
     }
 
+    // [LinqQuery] — a tuple companion's batch command binds only the parameters its own
+    // statement renders; see QueryMethodModel.LinqStatementParameters. Every other batch binds
+    // every parameter on every command.
+    private static bool IsBoundByStatement(QueryMethodModel m, ParameterInfo p, int cmdIndex)
+    {
+        if (m.LinqStatementParameters.Length == 0 || cmdIndex >= m.LinqStatementParameters.Length) return true;
+        var sqlName = p.ParamNameOverride ?? p.Name;
+        foreach (var name in m.LinqStatementParameters[cmdIndex])
+        {
+            if (string.Equals(name, sqlName, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
     // Per-statement parameter binding. Identical to EmitParameterBinding apart from
     // (a) targeting a specific `__cmdN` local instead of the implicit `__cmd` and
     // (b) suffixing the per-parameter local with the command index so two commands
@@ -8387,6 +8415,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
+            if (!IsBoundByStatement(m, p, cmdIndex)) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
@@ -8494,6 +8523,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var finderName = "__NullColumn" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
         switch (el.Kind)
         {
+            case MultiResultElementKind.Row when el.NullWhenNoRow && !(returnsNullable && index == 0):
+                EmitNullableRowElement(sb, el, localName, finderName, ct, indent, declareLocal);
+                break;
             case MultiResultElementKind.Row:
                 {
                     sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -8560,6 +8592,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         sb.AppendLine($"{indent}    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(\"Expected at least one row in result set " + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".\");");
                     }
                     var readExpr = ApplyReadConvention(el.Convention, $"__reader.{el.GetterMethod}(0)");
+                    if (el.ThrowsOnNoElements && !el.IsNullable)
+                    {
+                        // Outside the NULL-column guard, whose finder would claim the exception.
+                        sb.AppendLine($"{indent}if (__reader.IsDBNull(0)) throw new global::System.InvalidOperationException(\"Sequence contains no elements\");");
+                    }
                     if (el.IsNullable)
                     {
                         sb.AppendLine($"{indent}{declarePrefix}{localName} = __reader.IsDBNull(0) ? ({el.ElementTypeName}?)null : {readExpr};");
@@ -8577,6 +8614,32 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     break;
                 }
         }
+    }
+
+    // [LinqQuery] — a Row element read as a single-row LINQ method reads it: the first row, or
+    // null for an empty result set. MultiResultElement.NullWhenNoRow selects it.
+    private static void EmitNullableRowElement(
+        StringBuilder sb,
+        MultiResultElement el,
+        string localName,
+        string finderName,
+        string ct,
+        string indent,
+        bool declareLocal)
+    {
+        var declaration = declareLocal ? el.ElementTypeName + "? " : string.Empty;
+        sb.AppendLine($"{indent}{declaration}{localName} = null;");
+        sb.AppendLine($"{indent}if (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine($"{indent}{{");
+        var inner = indent + "    ";
+        var rowBody = new StringBuilder();
+        var hoists = HasAnyColumnName(el.Columns)
+            ? EmitOrdinalHoistsForColumns(rowBody, el.Columns, inner, localPrefix: localName + "_")
+            : null;
+        rowBody.AppendLine($"{inner}{localName} = new {el.ElementTypeName}(");
+        EmitColumnReads(rowBody, el.Columns, inner + "    ", trailing: ");", hoists);
+        EmitNullGuarded(sb, inner, CollectNullChecks(el.Columns, el.ElementTypeName), finderName, rowBody.ToString());
+        sb.AppendLine($"{indent}}}");
     }
 
     // Render the ordered column-read expressions for a Row / List element. Mirrors

@@ -23,6 +23,16 @@ internal static partial class LinqQueryReader
         // The FROM source's alias, t0, when the chain has a join; null without one.
         public string? Alias { get; set; }
 
+        // The letter of the sources' aliases: t for a statement, s for an IN subquery, so the
+        // subquery's s0, s1, ... never meet the outer t0, t1, ....
+        public string AliasPrefix { get; init; } = "t";
+
+        // The chain is the source of an IQuery Contains: it ends in a Select of one column.
+        public bool IsSubquery { get; init; }
+
+        // That Select's column, where a column that can be null is reported.
+        public IOperation? SubqueryColumn { get; set; }
+
         public ImmutableArray<SqlJoin>.Builder Joins { get; } = ImmutableArray.CreateBuilder<SqlJoin>();
 
         public ImmutableArray<SqlExpression>? Projection { get; set; }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
@@ -21,8 +22,10 @@ namespace ZeroAlloc.ORM.Generator;
 //
 // The SQL is the one input of TransformMethodCore that depends on the maps, and the core needs
 // the attribute context, which must not enter a combined step. So the core runs with an empty
-// command text and the bound SQL replaces it. That is equivalent because the core reads the text
-// only to count statements, and the translator always renders exactly one.
+// command text and the bound SQL replaces it. The core reads the text only to count statements:
+// for ZAO008, which needs a multi-result return type for several statements; for ZAO032/033,
+// which it skips for [LinqQuery], since the translator renders one statement per tuple element;
+// and for the batch strategy, which the bind recomputes from the bound SQL.
 public sealed partial class OrmGenerator
 {
     private static IncrementalValuesProvider<QueryMethodWithTypeContext> LinqQueryMethods(
@@ -53,14 +56,14 @@ public sealed partial class OrmGenerator
     private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, CancellationToken ct)
     {
         var translation = LinqQueryReader.Read(ctx, ct);
-        if (translation.Statement is null) return new LinqMethodRead(translation, null);
+        if (!translation.Succeeded) return new LinqMethodRead(translation, null);
 
         var core = TransformMethodCore(
             ctx,
             AttributePipelineKind.LinqQuery,
             sql: string.Empty,
             new LinqOverrides(translation.Facets, translation.SourceComment));
-        if (core?.Method.Materialization is { } materialization && ReadsSeveralColumns(materialization) is { } member)
+        if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {
             var location = ((MethodDeclarationSyntax)ctx.TargetNode).ReturnType.GetLocation();
             var error = LinqDiagnostics.UnsupportedProjection(
@@ -74,33 +77,125 @@ public sealed partial class OrmGenerator
     }
 
     // A composite or [Materialize] factory member of the row expands to several reader columns,
-    // while the projection gives it one.
-    private static string? ReadsSeveralColumns(MaterializationModel materialization)
+    // while the projection gives it one. Every element of a tuple is checked, element i against
+    // statement i. A parameter fed a row member whose type is an object is left to the binder,
+    // where the map decides at the member: an owned object is ZAO107, a composite column ZAO102.
+    private static string? ReadsSeveralColumns(QueryMethodModel method, LinqTranslation translation)
     {
-        foreach (var column in materialization.Columns)
+        if (method.Materialization is { } materialization
+            && ReadsSeveralColumns(materialization.Columns, WholeObjectItems(translation, 0)) is { } member)
         {
-            if (column.InnerColumns.Length > 0) return column.CtorArgName ?? column.TypeName;
+            return member;
+        }
+        if (method.MultiResultMaterialization is { } multi)
+        {
+            for (var i = 0; i < multi.Elements.Length; i++)
+            {
+                if (ReadsSeveralColumns(multi.Elements[i].Columns, WholeObjectItems(translation, i)) is { } elementMember)
+                    return elementMember;
+            }
         }
         return null;
     }
 
+    private static string? ReadsSeveralColumns(EquatableArray<ColumnBinding> columns, HashSet<int> skipped)
+    {
+        for (var i = 0; i < columns.Length; i++)
+        {
+            if (columns[i].InnerColumns.Length > 0 && !skipped.Contains(i))
+                return columns[i].CtorArgName ?? columns[i].TypeName;
+        }
+        return null;
+    }
+
+    // The SELECT positions of statement `index` that read a row member whose type is an object.
+    private static HashSet<int> WholeObjectItems(LinqTranslation translation, int index)
+    {
+        var positions = new HashSet<int>();
+        if (index < translation.Statements.Length && translation.Statements[index] is SqlSelectStatement select)
+        {
+            for (var i = 0; i < select.Projection.Length; i++)
+            {
+                if (select.Projection[i] is SqlMemberExpression { WholeObject: not null }) positions.Add(i);
+            }
+        }
+        return positions;
+    }
+
     private static LinqMethodResult BindLinqMethod(LinqMethodRead read, EquatableArray<EntityMapModel> maps)
     {
-        if (read.Translation.Statement is not { } statement || read.Core is not { } core)
+        if (!read.Translation.Succeeded || read.Core is not { } core)
             return new LinqMethodResult(null, read.Translation.Diagnostics);
 
-        var bound = LinqQueryBinder.Bind(statement, maps);
+        var statements = read.Translation.Statements;
+        var bound = LinqQueryBinder.Bind(statements, maps, read.Translation.LiftedProjections);
         if (bound.Diagnostics.Length > 0) return new LinqMethodResult(null, bound.Diagnostics);
 
         var method = core.Method with
         {
             Sql = bound.Sql,
-            Materialization = ReadEnumsAsStrings(core.Method.Materialization, bound.EnumAsStringOrdinals),
-            LinqThrowsOnNoElements = HasNoValueForNoRows(statement),
+            // BatchMode.Auto: one statement runs as a single command, several as one batch
+            // with the ;-joined fallback, as for [Query].
+            Strategy = ResolveBatchStrategy(bound.Sql, batchMode: 0),
         };
+        method = statements.Length == 1
+            ? method with
+            {
+                Materialization = ReadEnumsAsStrings(method.Materialization, bound.EnumAsStringOrdinals[0]),
+                LinqThrowsOnNoElements = HasNoValueForNoRows(statements[0]),
+            }
+            : method with
+            {
+                MultiResultMaterialization = BindElements(method.MultiResultMaterialization, statements, bound.EnumAsStringOrdinals),
+                LinqStatementParameters = StatementParameters(statements),
+                LinqStatements = bound.Statements,
+            };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
-        method = UnbindUnreferenced(method, SqlParameterReferences.Collect(statement));
+        method = UnbindUnreferenced(method, ReferencedParameters(statements));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
+    }
+
+    // Each tuple element reads its own statement's columns: enums stored by name, a missing row
+    // as null, and no value from an Average, Min or Max over no rows as LINQ's exception.
+    private static MultiResultMaterializationModel? BindElements(
+        MultiResultMaterializationModel? materialization,
+        EquatableArray<SqlStatement> statements,
+        EquatableArray<EquatableArray<int>> ordinals)
+    {
+        if (materialization is null) return null;
+        var elements = materialization.Elements.Values.ToBuilder();
+        for (var i = 0; i < elements.Count && i < statements.Length; i++)
+        {
+            var element = elements[i];
+            elements[i] = element with
+            {
+                Columns = ReadEnumsAsStrings(element.Columns, ordinals[i]),
+                NullWhenNoRow = element.Kind == MultiResultElementKind.Row,
+                ThrowsOnNoElements = element.Kind == MultiResultElementKind.Scalar && HasNoValueForNoRows(statements[i]),
+            };
+        }
+        return materialization with { Elements = new EquatableArray<MultiResultElement>(elements.MoveToImmutable()) };
+    }
+
+    // The SQL names each statement renders, so each batch command binds only its own.
+    private static EquatableArray<EquatableArray<string>> StatementParameters(EquatableArray<SqlStatement> statements)
+    {
+        var perStatement = ImmutableArray.CreateBuilder<EquatableArray<string>>(statements.Length);
+        foreach (var statement in statements)
+        {
+            var names = SqlParameterReferences.Collect(statement).ToImmutableArray().Sort(System.StringComparer.Ordinal);
+            perStatement.Add(new EquatableArray<string>(names));
+        }
+        return new EquatableArray<EquatableArray<string>>(perStatement.MoveToImmutable());
+    }
+
+    // Every SQL name any statement renders.
+    private static System.Collections.Generic.HashSet<string> ReferencedParameters(EquatableArray<SqlStatement> statements)
+    {
+        var referenced = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+        foreach (var statement in statements)
+            referenced.UnionWith(SqlParameterReferences.Collect(statement));
+        return referenced;
     }
 
     // A scalar Average, Min or Max is NULL over no rows, where LINQ's non-nullable overload
@@ -193,7 +288,13 @@ public sealed partial class OrmGenerator
     private static MaterializationModel? ReadEnumsAsStrings(MaterializationModel? materialization, EquatableArray<int> ordinals)
     {
         if (materialization is null || ordinals.Length == 0) return materialization;
-        var columns = materialization.Columns.Values.ToBuilder();
+        return materialization with { Columns = ReadEnumsAsStrings(materialization.Columns, ordinals) };
+    }
+
+    private static EquatableArray<ColumnBinding> ReadEnumsAsStrings(EquatableArray<ColumnBinding> bindings, EquatableArray<int> ordinals)
+    {
+        if (ordinals.Length == 0) return bindings;
+        var columns = bindings.Values.ToBuilder();
         foreach (var ordinal in ordinals)
         {
             if (ordinal >= columns.Count) continue;
@@ -205,6 +306,6 @@ public sealed partial class OrmGenerator
                 Convention = convention with { Kind = (int)ConventionKind.EnumAsString, UnderlyingReader = "GetString" },
             };
         }
-        return materialization with { Columns = new EquatableArray<ColumnBinding>(columns.MoveToImmutable()) };
+        return new EquatableArray<ColumnBinding>(columns.MoveToImmutable());
     }
 }

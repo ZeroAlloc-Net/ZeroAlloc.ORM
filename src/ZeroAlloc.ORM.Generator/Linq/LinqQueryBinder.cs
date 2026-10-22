@@ -13,27 +13,69 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal static class LinqQueryBinder
 {
     public static LinqBoundQuery Bind(SqlStatement statement, EquatableArray<EntityMapModel> maps)
+        => Bind(new EquatableArray<SqlStatement>(ImmutableArray.Create(statement)), maps);
+
+    // Several statements, a tuple companion's, bind as one: each in its own name scope, and an
+    // enum parameter binds one way for all of them, since every batch command binds it alike.
+    public static LinqBoundQuery Bind(EquatableArray<SqlStatement> statements, EquatableArray<EntityMapModel> maps)
+        => Bind(statements, maps, default);
+
+    // `lifted` are the translation's projected members of possibly optional owned objects: ZAO107
+    // for each whose owner the map declares owned.
+    public static LinqBoundQuery Bind(
+        EquatableArray<SqlStatement> statements,
+        EquatableArray<EntityMapModel> maps,
+        EquatableArray<LinqLiftedProjection> lifted)
     {
-        var names = Scope(SelectOf(statement), maps, out var unmapped);
-        if (names is null) return Failed(unmapped!);
+        var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
+        foreach (var statement in statements)
+        {
+            var names = Scope(SelectOf(statement), maps, out var unmapped);
+            if (names is null) return Failed(unmapped!);
+            foreach (var subquery in SqlSubqueries.Collect(statement))
+            {
+                if (UnmappedSource(subquery, maps) is { } missing) return Failed(missing);
+            }
+            builder.Add((statement, names));
+        }
+        var scopes = builder.MoveToImmutable();
 
         // Enum storage first: the render writes an enum constant by name next to a name-bound
         // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
-        var storage = EnumParameterStorage.Decide(statement, names);
-        names.NameBoundParameters = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
-        var sql = PostgresSqlRenderer.Instance.Render(statement, names);
-        var diagnostics = names.Diagnostics;
-        if (!diagnostics.IsEmpty)
-            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics));
+        var storage = EnumParameterStorage.Decide(scopes);
+        var byName = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
+        var sql = new string[statements.Length];
+        var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        for (var i = 0; i < statements.Length; i++)
+        {
+            var names = scopes[i].Names;
+            names.NameBoundParameters = byName;
+            if (statements[i] is SqlSelectStatement select) names.Projected(select.Projection);
+            sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
+            diagnostics.AddRange(names.Diagnostics);
+        }
+        foreach (var projection in lifted)
+        {
+            if (scopes[projection.Statement].Names.IsOwned(projection.Owner, projection.SourceAlias))
+                diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(projection.Reason, projection.Location));
+        }
+        if (diagnostics.Count > 0)
+            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
 
         if (!storage.Conflicts.IsEmpty)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(storage.Conflicts));
 
+        var ordinals = ImmutableArray.CreateBuilder<EquatableArray<int>>(statements.Length);
+        for (var i = 0; i < statements.Length; i++)
+            ordinals.Add(EnumAsStringOrdinals(statements[i], scopes[i].Names, storage.ByName));
         return new LinqBoundQuery(
-            sql,
-            EnumAsStringOrdinals(statement, names, storage.ByName),
+            string.Join(";\n", sql),
+            new EquatableArray<EquatableArray<int>>(ordinals.MoveToImmutable()),
             new EquatableArray<string>(storage.ByName),
-            default);
+            default)
+        {
+            Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
+        };
     }
 
     // The statement's SELECT; a terminal's is its inner one.
@@ -57,7 +99,7 @@ internal static class LinqQueryBinder
             return null;
         }
 
-        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias);
+        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias, maps);
         foreach (var join in select.Joins)
         {
             var joined = join.Source.EntityTypeFullName;
@@ -69,6 +111,20 @@ internal static class LinqQueryBinder
             names.AddSource(join.Alias, joinedMap, DisplayName(joined));
         }
         return names;
+    }
+
+    // ZAO104 for the first source of an IN subquery without a map, its FROM or a joined one, as
+    // Scope reports it for the statement's own; null when every source has one.
+    private static DiagnosticInfo? UnmappedSource(SqlSelectStatement subquery, EquatableArray<EntityMapModel> maps)
+    {
+        if (FindMap(maps, subquery.From.EntityTypeFullName) is null)
+            return LinqDiagnostics.UnmappedEntity(DisplayName(subquery.From.EntityTypeFullName), subquery.From.Location);
+        foreach (var join in subquery.Joins)
+        {
+            if (FindMap(maps, join.Source.EntityTypeFullName) is null)
+                return LinqDiagnostics.UnmappedEntity(DisplayName(join.Source.EntityTypeFullName), join.Source.Location);
+        }
+        return null;
     }
 
     // SELECT positions that read a member name: an EnumAsString column, or an enum parameter
@@ -94,7 +150,7 @@ internal static class LinqQueryBinder
         return new EquatableArray<int>(ordinals.ToImmutable());
     }
 
-    private static EntityMapModel? FindMap(EquatableArray<EntityMapModel> maps, string entityTypeFullName)
+    internal static EntityMapModel? FindMap(EquatableArray<EntityMapModel> maps, string entityTypeFullName)
     {
         foreach (var map in maps)
         {
@@ -105,7 +161,7 @@ internal static class LinqQueryBinder
     }
 
     // `global::TestApp.TaskEntity` as a message shows it: `TestApp.TaskEntity`.
-    private static string DisplayName(string entityTypeFullName)
+    internal static string DisplayName(string entityTypeFullName)
         => entityTypeFullName.StartsWith("global::", StringComparison.Ordinal)
             ? entityTypeFullName.Substring("global::".Length)
             : entityTypeFullName;

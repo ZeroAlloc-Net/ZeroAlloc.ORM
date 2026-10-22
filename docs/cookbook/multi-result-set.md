@@ -93,6 +93,14 @@ The generator emits compile-time diagnostics when they don't:
 
 Both fire at build time, so the wrong shape never ships.
 
+## The LINQ form
+
+On PostgreSQL, a `[LinqQuery]` companion can return a tuple of `IQuery<T>` instead of
+`;`-separated SQL. Each element is a LINQ chain that becomes one statement, and the method
+runs through this same multi-result path, `IAsyncDbBatch` included. It also loads the children
+of a page of parents, through an `IN` subquery. See
+[Parents with children](linq.md#parents-with-children) in the LINQ recipe.
+
 ## Procedure-driven head + lines
 
 The same tuple shape works for stored procedures — wrap the multi-result
@@ -133,6 +141,8 @@ procedure with `[StoredProcedure]` instead of `[Query]`. See Recipe 4 in
 - [`streaming.md`](streaming.md) — `IAsyncEnumerable<T>` for unbounded result
   sets.
 - [`commands.md`](commands.md) — `[Command]` for non-result-set writes.
+- [`linq.md`](linq.md#parents-with-children) — the same tuple returned from a
+  `[LinqQuery]` companion, written as LINQ chains.
 - [`stored-procedures.md`](stored-procedures.md) — same tuple shape, but the
   procedure body produces the result sets.
 - [`provider-quirks.md`](provider-quirks.md) — per-provider notes on

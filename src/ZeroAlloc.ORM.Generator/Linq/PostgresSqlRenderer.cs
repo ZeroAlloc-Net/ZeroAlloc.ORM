@@ -231,6 +231,36 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
+    // An object member's null test, as the map decides: (a IS NULL AND b IS NULL ...) over every
+    // column of an owned object, NOT (...) for != null; "Col" IS [NOT] NULL for a plain column.
+    // Anything else was reported, and the SQL is not used.
+    private static void RenderObjectIsNull(StringBuilder sb, SqlObjectIsNullExpression test, SqlNameScope names)
+    {
+        var owned = names.ObjectColumns(test, out var plain);
+        if (owned.IsEmpty)
+        {
+            AppendQualified(sb, test.SourceAlias, plain ?? test.Member, names);
+            sb.Append(test.Negated ? " IS NOT NULL" : " IS NULL");
+            return;
+        }
+
+        if (test.Negated) sb.Append("NOT ");
+        sb.Append('(');
+        for (var i = 0; i < owned.Length; i++)
+        {
+            if (i > 0) sb.Append(" AND ");
+            AppendQualified(sb, test.SourceAlias, owned[i], names);
+            sb.Append(" IS NULL");
+        }
+        sb.Append(')');
+    }
+
+    private static void AppendQualified(StringBuilder sb, string? alias, string column, SqlNameScope names)
+    {
+        if (alias is not null && names.QualifyColumns) sb.Append(alias).Append('.');
+        AppendIdentifier(sb, column);
+    }
+
     // One case per SqlExpression record. A new expression form adds its case here.
     // AND and OR are parenthesised, and NOT wraps its operand, so the tree's grouping
     // survives whatever PostgreSQL's precedence would make of the flat text.
@@ -288,6 +318,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 AppendCast(sb, isNull.Operand, isNull.Cast, names);
                 sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
                 break;
+            case SqlObjectIsNullExpression objectIsNull:
+                RenderObjectIsNull(sb, objectIsNull, names);
+                break;
             case SqlCastExpression cast:
                 RenderExpression(sb, cast.Operand, names);
                 AppendCast(sb, cast.Operand, cast.Type, names);
@@ -308,6 +341,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 break;
             case SqlAggregateCallExpression call:
                 RenderAggregateCall(sb, call, names);
+                break;
+            case SqlInSubqueryExpression subquery:
+                RenderInSubquery(sb, subquery, names);
                 break;
             case SqlDateTruncExpression dateTrunc:
                 sb.Append("date_trunc('day', ");
@@ -331,6 +367,30 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + expression.GetType().Name + ".");
         }
+    }
+
+    // `operand [NOT] IN (SELECT "Col" FROM ... WHERE ... ORDER BY ... LIMIT ... OFFSET ...)`. The
+    // subquery renders through its own scope, so its members resolve through its own sources and
+    // its aliases, s0, s1, ..., never meet the outer t0, t1, .... An enum constant as the operand
+    // takes the storage of the column the subquery selects, as it would in a comparison.
+    private static void RenderInSubquery(StringBuilder sb, SqlInSubqueryExpression test, SqlNameScope names)
+    {
+        var inner = names.Subquery(test.Subquery);
+        if (test.Operand is SqlEnumLiteralExpression enumLiteral)
+        {
+            var byName = enumLiteral.StoresName
+                || (test.Subquery.Projection.Length == 1
+                    && test.Subquery.Projection[0] is SqlMemberExpression column
+                    && inner.IsEnumAsString(column));
+            AppendEnumLiteral(sb, enumLiteral, byName, names);
+        }
+        else
+        {
+            RenderExpression(sb, test.Operand, names);
+        }
+        sb.Append(test.Negated ? " NOT IN (" : " IN (");
+        RenderSelect(sb, test.Subquery, inner);
+        sb.Append(')');
     }
 
     // `::type` after a parameter without a DbType facet. A name-bound enum gets the String facet

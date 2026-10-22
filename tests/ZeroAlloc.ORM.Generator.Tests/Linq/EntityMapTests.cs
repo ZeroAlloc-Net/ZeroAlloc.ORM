@@ -703,6 +703,132 @@ public class EntityMapTests
         Assert.Contains("DateTimeStorage", message, StringComparison.Ordinal);
     }
 
+    // ---- owned types ----
+
+    // Daedalus' CodeAnalysisRequest in miniature: two owned objects, a value object, a
+    // collection, an enum and a primitive beside them.
+    private const string Owned = """
+        #nullable enable
+        using System;
+        using System.Collections.Generic;
+        using ZeroAlloc.ORM;
+
+        namespace TestApp;
+
+        public enum Platform { GitHub, GitLab }
+
+        public readonly record struct ProjectId(Guid Value);
+
+        public sealed class RepositoryReference
+        {
+            public string Url { get; private set; } = "";
+            public string? Branch { get; private set; }
+            public Platform Platform { get; private set; }
+            public DateTime? PushedAt { get; private set; }
+            public string Display => Url + "!";
+        }
+
+        public sealed class CodeLocation
+        {
+            public string FilePath { get; private set; } = "";
+            public int? StartLine { get; private set; }
+            public int? EndLine { get; private set; }
+        }
+
+        public sealed class Request
+        {
+            public Guid Id { get; private set; }
+            public RepositoryReference Repository { get; private set; } = null!;
+            public CodeLocation Location { get; private set; } = null!;
+            public string Title { get; private set; } = "";
+            public ProjectId Project { get; private set; }
+            public List<CodeLocation> History { get; private set; } = [];
+            public Platform Platform { get; private set; }
+        }
+
+        """;
+
+    private static ColumnMapModel At(EntityMapModel map, string path) =>
+        Assert.Single(map.Columns, c => string.Equals(c.Path, path, StringComparison.Ordinal));
+
+    private static readonly string[] OwnedOrder =
+    [
+        "Id", "Repository.Url", "Repository.Branch", "Repository.Platform", "Repository.PushedAt",
+        "Repository.Display", "Location.FilePath", "Location.StartLine", "Title", "Project", "History", "Platform",
+    ];
+
+    // Each owned member is a column named {Owner}_{Property}, at the owned property's position; a
+    // dotted ColumnMap renames it or sets its storage, forces a computed member in, or leaves one out.
+    [Fact]
+    public void Owned_members_map_to_owner_property_columns_with_dotted_overrides()
+    {
+        var source = Owned + """
+            [TableMap(typeof(Request), "Requests")]
+            [OwnedMap(nameof(Request.Repository))]
+            [OwnedMap(nameof(Request.Location))]
+            [ColumnMap("Repository.Url", Column = "RepositoryUrl")]
+            [ColumnMap("Repository.Platform", EnumAsString = true)]
+            [ColumnMap("Repository.PushedAt", DateTimeStorage = DateTimeStorage.TimestampTz)]
+            [ColumnMap("Repository.Display")]
+            [ColumnMap("Location.EndLine", Ignore = true)]
+            internal static class RequestMap;
+            """;
+
+        Assert.Empty(Zao106(source));
+        var map = MapsOfSingle(source);
+        Assert.Equal(OwnedOrder, map.Columns.Select(c => c.Path).ToArray());
+        Assert.Equal(new ColumnMapModel("Url", "RepositoryUrl", false, DateTimeColumnStorage.None, "Repository"), At(map, "Repository.Url"));
+        Assert.Equal(new ColumnMapModel("Branch", "Repository_Branch", false, DateTimeColumnStorage.None, "Repository"), At(map, "Repository.Branch"));
+        Assert.Equal(new ColumnMapModel("Platform", "Repository_Platform", true, DateTimeColumnStorage.None, "Repository"), At(map, "Repository.Platform"));
+        Assert.Equal(new ColumnMapModel("PushedAt", "Repository_PushedAt", false, DateTimeColumnStorage.TimestampTz, "Repository"), At(map, "Repository.PushedAt"));
+        Assert.Equal(new ColumnMapModel("FilePath", "Location_FilePath", false, DateTimeColumnStorage.None, "Location"), At(map, "Location.FilePath"));
+        Assert.Equal(new ColumnMapModel("Platform", "Platform", false), At(map, "Platform"));
+    }
+
+    // An owned DateTime member that declares no storage takes the assembly default, as a plain
+    // column does.
+    [Fact]
+    public void Owned_DateTime_member_takes_the_assembly_default()
+    {
+        var withDefault = Owned.Replace(
+            "using ZeroAlloc.ORM;\n",
+            "using ZeroAlloc.ORM;\n\n[assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.Timestamp)]\n",
+            StringComparison.Ordinal);
+        Assert.NotEqual(Owned, withDefault, StringComparer.Ordinal);
+        var map = MapsOfSingle(withDefault + """
+            [TableMap(typeof(Request), "Requests")]
+            [OwnedMap(nameof(Request.Repository))]
+            internal static class RequestMap;
+            """);
+
+        Assert.Equal(DateTimeColumnStorage.Timestamp, At(map, "Repository.PushedAt").DateTimeStorage);
+    }
+
+    // Each invalid owned declaration reports one ZAO106, at the attribute, naming the property or
+    // path. A dotted ColumnMap on an owner whose [OwnedMap] is already reported adds no second
+    // error, and an owned object whose members are all ignored has no column, so it is invalid.
+    [Theory]
+    [InlineData("[OwnedMap(\"Nope\")]", "Nope")]
+    [InlineData("[OwnedMap(nameof(Request.Title))]", "Title")]
+    [InlineData("[OwnedMap(nameof(Request.Project))]", "Project")]
+    [InlineData("[OwnedMap(nameof(Request.History))]", "History")]
+    [InlineData("[OwnedMap(nameof(Request.Platform))]", "Platform")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[OwnedMap(nameof(Request.Location))]", "Location")]
+    [InlineData("[ColumnMap(\"Location.FilePath\", Column = \"x\")]", "Location.FilePath")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.Nope\", Column = \"x\")]", "Location.Nope")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath.Length\", Column = \"x\")]", "Location.FilePath.Length")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(nameof(Request.Location), Column = \"x\")]", "Location")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Column = \"Title\")]", "Title")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Column = \"a\")]\n[ColumnMap(\"Location.FilePath\", Column = \"b\")]", "Location.FilePath")]
+    [InlineData("[OwnedMap(nameof(Request.Title))]\n[ColumnMap(\"Title.Length\", Column = \"x\")]", "Title")]
+    [InlineData("[OwnedMap(\"Nope\")]\n[ColumnMap(\"Nope.Member\", Column = \"x\")]", "Nope")]
+    [InlineData("[OwnedMap(nameof(Request.Location))]\n[ColumnMap(\"Location.FilePath\", Ignore = true)]\n[ColumnMap(\"Location.StartLine\", Ignore = true)]\n[ColumnMap(\"Location.EndLine\", Ignore = true)]", "Location")]
+    public void Invalid_owned_map_reports_ZAO106(string attributes, string named)
+    {
+        var d = Assert.Single(Zao106(Owned + "[TableMap(typeof(Request), \"Requests\")]\n" + attributes + "\ninternal static class RequestMap;\n"));
+        Assert.Contains("'" + named + "'", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // ---- ordering across files ----
 
     [Fact]

@@ -27,26 +27,30 @@ internal static class EnumParameterStorage
     public static (ImmutableArray<string> ByName, ImmutableArray<DiagnosticInfo> Conflicts) Decide(
         SqlStatement statement,
         SqlNameScope names)
+        => Decide(ImmutableArray.Create((statement, names)));
+
+    // The statements of one method, each with its own name scope. A parameter binds one way in
+    // every statement, so the votes and links of all of them decide it together.
+    public static (ImmutableArray<string> ByName, ImmutableArray<DiagnosticInfo> Conflicts) Decide(
+        ImmutableArray<(SqlStatement Statement, SqlNameScope Names)> statements)
     {
         var votes = new Dictionary<string, bool>(StringComparer.Ordinal);
         var links = new List<(SqlParameterExpression Left, SqlParameterExpression Right)>();
         var conflicted = new HashSet<string>(StringComparer.Ordinal);
         var conflicts = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        var select = statement switch
+        SqlNameScope names = null!;
+        foreach (var (statement, scope) in statements)
         {
-            SqlSelectStatement own => own,
-            SqlAggregateStatement aggregate => aggregate.Source,
-            SqlScalarAggregateStatement scalar => scalar.Source,
-            _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
-        };
-        foreach (var join in select.Joins)
-        {
-            Visit(join.On);
-            foreach (var predicate in join.SourcePredicates)
-                Visit(predicate);
+            names = scope;
+            var select = statement switch
+            {
+                SqlSelectStatement own => own,
+                SqlAggregateStatement aggregate => aggregate.Source,
+                SqlScalarAggregateStatement scalar => scalar.Source,
+                _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
+            };
+            VisitSelect(select);
         }
-        foreach (var predicate in select.Predicates)
-            Visit(predicate);
 
         // A parameter compared with a decided one binds the same way.
         for (var changed = true; changed;)
@@ -81,10 +85,25 @@ internal static class EnumParameterStorage
         byName.Sort(StringComparer.Ordinal);
         return (byName.ToImmutable(), conflicts.ToImmutable());
 
+        void VisitSelect(SqlSelectStatement select)
+        {
+            foreach (var join in select.Joins)
+            {
+                Visit(join.On);
+                foreach (var predicate in join.SourcePredicates)
+                    Visit(predicate);
+            }
+            foreach (var predicate in select.Predicates)
+                Visit(predicate);
+        }
+
         void Visit(SqlExpression expression)
         {
             switch (expression)
             {
+                case SqlInSubqueryExpression subquery:
+                    VisitSubquery(subquery);
+                    break;
                 case SqlBinaryExpression { Operator: SqlBinaryOperator.And or SqlBinaryOperator.Or } logical:
                     Visit(logical.Left);
                     Visit(logical.Right);
@@ -111,11 +130,41 @@ internal static class EnumParameterStorage
                 case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
                     or SqlIsNullExpression or SqlCastExpression or SqlLikeExpression or SqlILikeExpression
                     or SqlAnyExpression or SqlPagingCountExpression or SqlAggregateCallExpression
-                    or SqlDateTruncExpression:
+                    or SqlDateTruncExpression or SqlObjectIsNullExpression:
                     break;
                 default:
                     throw new InvalidOperationException("No enum storage walk for " + expression.GetType().Name + ".");
             }
+        }
+
+        // The operand against the column the subquery selects, which resolves through the
+        // subquery's scope; then the subquery's own conditions, through that scope too.
+        void VisitSubquery(SqlInSubqueryExpression subquery)
+        {
+            var outer = names;
+            var inner = outer.Subquery(subquery.Subquery);
+            if (subquery.Subquery.Projection.Length == 1
+                && subquery.Subquery.Projection[0] is SqlMemberExpression { ColumnPicksEnumStorage: true } column)
+            {
+                var columnByName = inner.IsEnumAsString(column);
+                switch (subquery.Operand)
+                {
+                    case SqlParameterExpression { ColumnPicksEnumStorage: true } parameter:
+                        Vote(parameter, columnByName);
+                        break;
+                    case SqlMemberExpression { ColumnPicksEnumStorage: true } member
+                        when outer.IsEnumAsString(member) != columnByName:
+                        conflicts.Add(LinqDiagnostics.UnsupportedAt(
+                            "Testing '" + member.Member + "' against a subquery's '" + column.Member
+                                + "', whose columns store the enum differently, one by name and one as an integer,",
+                            member.Location));
+                        break;
+                }
+            }
+
+            names = inner;
+            VisitSelect(subquery.Subquery);
+            names = outer;
         }
 
         void Compare(SqlExpression left, SqlExpression right)

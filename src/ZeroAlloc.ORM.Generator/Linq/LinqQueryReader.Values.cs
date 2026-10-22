@@ -71,6 +71,13 @@ internal static partial class LinqQueryReader
 
         expression = op.ConstantValue.HasValue ? ReadConstant(op) : ReadReference(op, row, context);
         if (expression is not null) return OperandRead.Read;
+        if (!op.ConstantValue.HasValue && ReadsOuterRow(op, context))
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + op.Syntax + "', a read of the outer row inside a subquery, which makes it a correlated subquery,",
+                op.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
         if (op.ConstantValue.HasValue || !IsCapture(op, row)) return OperandRead.Unsupported;
 
         context.Report(LinqDiagnostics.Capture(op.Syntax.ToString(), op.Syntax.GetLocation()));
@@ -85,6 +92,7 @@ internal static partial class LinqQueryReader
         if (TryReadRowMember(op, row, context, out var name, out type, out var alias))
         {
             expression = Member(name, op, type, alias);
+            if (IsLiftedOwnedMember(op, type)) context.LiftedValues.Add(expression);
         }
         else if (op is IParameterReferenceOperation p && context.SqlNames.TryGetValue(p.Parameter, out var sqlName))
         {
@@ -103,6 +111,13 @@ internal static partial class LinqQueryReader
         if (CanBeNull(type)) context.NullableValues.Add(expression);
         return expression;
     }
+
+    // A member of an optional owned object whose declared type cannot be null, read with the
+    // lifted type TryReadRowMember gave it, such as r.Outcome!.HasFailedValidation as bool?.
+    private static bool IsLiftedOwnedMember(IOperation op, ITypeSymbol readType)
+        => op is IPropertyReferenceOperation { Property: var property, Instance: IPropertyReferenceOperation { Property.NullableAnnotation: NullableAnnotation.Annotated } }
+            && !CanBeNull(property.Type)
+            && CanBeNull(readType);
 
     // The type of a row member that is a composite, such as Money(decimal Amount, string
     // Currency): the [Query] path maps it to one column per constructor argument, so it is not

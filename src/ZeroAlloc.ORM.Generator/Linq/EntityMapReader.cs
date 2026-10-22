@@ -1,15 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using ZeroAlloc.ORM.Generator.Model;
+using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
 /// <summary>
-/// Reads <c>[TableMap]</c> and <c>[ColumnMap]</c> from a map class into an <see cref="EntityMapModel"/>
-/// and reports ZAO106 for an invalid map.
+/// Reads <c>[TableMap]</c>, <c>[OwnedMap]</c> and <c>[ColumnMap]</c> from a map class into an
+/// <see cref="EntityMapModel"/> and reports ZAO106 for an invalid map.
 /// </summary>
 internal static class EntityMapReader
 {
@@ -38,6 +40,9 @@ internal static class EntityMapReader
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
         var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)>(StringComparer.Ordinal);
         var overrideLocations = new Dictionary<string, LocationInfo?>(StringComparer.Ordinal);
+        var entityName = entity.ToDisplayString();
+        var rejectedOwners = new HashSet<string>(StringComparer.Ordinal);
+        var owned = ReadOwned(ctx, entityName, properties, diagnostics, rejectedOwners, ct);
 
         foreach (var attribute in ctx.TargetSymbol.GetAttributes())
         {
@@ -49,15 +54,8 @@ internal static class EntityMapReader
             }
 
             var location = LocationInfo.From(attribute.ApplicationSyntaxReference?.GetSyntax(ct).GetLocation());
-            var entityName = entity.ToDisplayString();
-
-            if (!properties.TryGetValue(propertyName, out var property))
-            {
-                diagnostics.Add(Invalid(
-                    $"[ColumnMap] names '{propertyName}', which is not a public readable instance property of {entityName}",
-                    location));
+            if (ResolveColumnMapTarget(propertyName, entityName, properties, owned, rejectedOwners, location, diagnostics) is not { } property)
                 continue;
-            }
 
             if (overrides.ContainsKey(propertyName))
             {
@@ -65,7 +63,8 @@ internal static class EntityMapReader
                 continue;
             }
 
-            var column = propertyName;
+            // A member of an owned object defaults to EF Core's {Owner}_{Member}.
+            var column = propertyName.Replace('.', '_');
             var enumAsString = false;
             var ignore = false;
             var storageSet = false;
@@ -136,20 +135,33 @@ internal static class EntityMapReader
             }
         }
 
-        // A [ColumnMap] decides: Ignore leaves the property out, anything else makes it a column. A
-        // property without one is a column when it holds a value.
+        // An owned property is no column itself: its members are, in their declaration order, at
+        // its position, each by its path, Owner.Member, under the same rules.
         var columns = ImmutableArray.CreateBuilder<ColumnMapModel>(properties.Count);
         foreach (var name in order)
         {
-            if (overrides.TryGetValue(name, out var o))
+            if (owned.TryGetValue(name, out var ownedType))
             {
-                if (!o.Ignore)
-                    columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString, o.DateTimeStorage));
+                foreach (var memberName in ownedType.Order)
+                {
+                    var member = ownedType.Properties[memberName];
+                    AddColumn(columns, overrides, owner: name, memberName, member, name + "_" + memberName);
+                }
             }
-            else if (IsStored(properties[name]))
+            else
             {
-                var storage = IsDateTime(properties[name].Type) ? DateTimeColumnStorage.Default : DateTimeColumnStorage.None;
-                columns.Add(new ColumnMapModel(name, name, EnumAsString: false, storage));
+                AddColumn(columns, overrides, owner: null, name, properties[name], name);
+            }
+        }
+
+        // An owned object without a column has nothing to read, and `r.Outcome == null` nothing to test.
+        foreach (var pair in owned)
+        {
+            if (!columns.Any(c => string.Equals(c.Owner, pair.Key, StringComparison.Ordinal)))
+            {
+                diagnostics.Add(Invalid(
+                    $"'{pair.Key}' of {entityName} is declared owned, but none of its properties is a column",
+                    pair.Value.Location));
             }
         }
 
@@ -160,18 +172,18 @@ internal static class EntityMapReader
         {
             if (!columnOwners.TryGetValue(column.Column, out var owner))
             {
-                columnOwners.Add(column.Column, column.Property);
+                columnOwners.Add(column.Column, column.Path);
                 continue;
             }
 
-            if (!overrideLocations.TryGetValue(column.Property, out var at)
+            if (!overrideLocations.TryGetValue(column.Path, out var at)
                 && !overrideLocations.TryGetValue(owner, out at))
             {
                 at = tableLocation;
             }
 
             diagnostics.Add(Invalid(
-                $"properties '{owner}' and '{column.Property}' of {entity.ToDisplayString()} both map to column '{column.Column}'",
+                $"properties '{owner}' and '{column.Path}' of {entityName} both map to column '{column.Column}'",
                 at));
         }
 
@@ -186,6 +198,190 @@ internal static class EntityMapReader
             model,
             new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
             tableLocation);
+    }
+
+    // A [ColumnMap] decides: Ignore leaves the property out, anything else makes it a column. A
+    // property without one is a column when it holds a value.
+    private static void AddColumn(
+        ImmutableArray<ColumnMapModel>.Builder columns,
+        Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)> overrides,
+        string? owner,
+        string name,
+        IPropertySymbol property,
+        string defaultColumn)
+    {
+        var path = owner is null ? name : owner + "." + name;
+        if (overrides.TryGetValue(path, out var o))
+        {
+            if (!o.Ignore)
+                columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString, o.DateTimeStorage, owner));
+        }
+        else if (IsStored(property))
+        {
+            var storage = IsDateTime(property.Type) ? DateTimeColumnStorage.Default : DateTimeColumnStorage.None;
+            columns.Add(new ColumnMapModel(name, defaultColumn, EnumAsString: false, storage, owner));
+        }
+    }
+
+    /// <summary>
+    /// One owned property's type: its readable properties, base type first, and where its
+    /// <c>[OwnedMap]</c> is.
+    /// </summary>
+    private sealed class OwnedType(Dictionary<string, IPropertySymbol> properties, List<string> order, LocationInfo? location)
+    {
+        public Dictionary<string, IPropertySymbol> Properties { get; } = properties;
+
+        public List<string> Order { get; } = order;
+
+        public LocationInfo? Location { get; } = location;
+    }
+
+    // The map's [OwnedMap] properties, by name, each with its type's readable properties. A name
+    // that is no property, a type with no members to map, or a second declaration is ZAO106. The
+    // names of the first two go into `rejected`, so a dotted [ColumnMap] on them adds no second error.
+    private static Dictionary<string, OwnedType> ReadOwned(
+        GeneratorAttributeSyntaxContext ctx,
+        string entityName,
+        Dictionary<string, IPropertySymbol> properties,
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics,
+        HashSet<string> rejected,
+        CancellationToken ct)
+    {
+        var owned = new Dictionary<string, OwnedType>(StringComparer.Ordinal);
+        ConventionContext? conventions = null;
+        foreach (var attribute in ctx.TargetSymbol.GetAttributes())
+        {
+            if (!IsOwnedMap(attribute.AttributeClass)
+                || attribute.ConstructorArguments.Length != 1
+                || attribute.ConstructorArguments[0].Value is not string propertyName)
+            {
+                continue;
+            }
+
+            var location = LocationInfo.From(attribute.ApplicationSyntaxReference?.GetSyntax(ct).GetLocation());
+            if (!properties.TryGetValue(propertyName, out var property))
+            {
+                diagnostics.Add(Invalid(
+                    $"[OwnedMap] names '{propertyName}', which is not a public readable instance property of {entityName}",
+                    location));
+                rejected.Add(propertyName);
+                continue;
+            }
+
+            conventions ??= new ConventionContext(ctx.SemanticModel.Compilation);
+            if (!IsOwnable(property.Type, conventions) || property.Type is not INamedTypeSymbol ownedType)
+            {
+                diagnostics.Add(Invalid(
+                    $"[OwnedMap] names '{propertyName}' of {entityName}, whose type '{property.Type.ToDisplayString()}' "
+                        + "is a single value, an enum or a collection rather than a type whose properties are columns",
+                    location));
+                rejected.Add(propertyName);
+                continue;
+            }
+
+            if (owned.ContainsKey(propertyName))
+            {
+                diagnostics.Add(Invalid($"property '{propertyName}' of {entityName} is declared owned twice", location));
+                continue;
+            }
+
+            var order = new List<string>();
+            owned[propertyName] = new OwnedType(ReadableProperties(ownedType, order), order, location);
+        }
+
+        return owned;
+    }
+
+    // The property a [ColumnMap] names: one of the entity, or a member of an owned property by its
+    // dotted path, Owner.Member. Null after ZAO106 for a name or path that resolves to none, and for
+    // the owned property itself, whose members are its columns.
+    private static IPropertySymbol? ResolveColumnMapTarget(
+        string path,
+        string entityName,
+        Dictionary<string, IPropertySymbol> properties,
+        Dictionary<string, OwnedType> owned,
+        HashSet<string> rejectedOwners,
+        LocationInfo? location,
+        ImmutableArray<DiagnosticInfo>.Builder diagnostics)
+    {
+        var segments = path.Split('.');
+        if (segments.Length == 1)
+        {
+            if (!properties.TryGetValue(path, out var property))
+            {
+                diagnostics.Add(Invalid(
+                    $"[ColumnMap] names '{path}', which is not a public readable instance property of {entityName}",
+                    location));
+                return null;
+            }
+
+            if (owned.ContainsKey(path))
+            {
+                diagnostics.Add(Invalid(
+                    $"[ColumnMap] names '{path}' of {entityName}, which is declared owned; map each member by its path, such as '{path}.Member'",
+                    location));
+                return null;
+            }
+
+            return property;
+        }
+
+        if (segments.Length > 2)
+        {
+            diagnostics.Add(Invalid(
+                $"[ColumnMap] names '{path}', a path deeper than Owner.Member, which is not supported",
+                location));
+            return null;
+        }
+
+        // Its [OwnedMap] is already reported.
+        if (rejectedOwners.Contains(segments[0])) return null;
+
+        if (!owned.TryGetValue(segments[0], out var ownedType))
+        {
+            diagnostics.Add(Invalid(
+                $"[ColumnMap] names '{path}', but '{segments[0]}' of {entityName} is not declared with [OwnedMap]",
+                location));
+            return null;
+        }
+
+        if (!ownedType.Properties.TryGetValue(segments[1], out var member))
+        {
+            diagnostics.Add(Invalid(
+                $"[ColumnMap] names '{path}', and '{segments[1]}' is not a public readable instance property of the owned type",
+                location));
+            return null;
+        }
+
+        return member;
+    }
+
+    /// <summary>
+    /// Whether a property of type <paramref name="type"/> can be an owned object: a class or struct
+    /// whose properties are columns. A type that binds as one value is not, nor is an enum, a
+    /// nullable value type or a collection: a primitive, a value object with a <c>Value</c>, a
+    /// <c>From</c> factory or a single-argument record.
+    /// </summary>
+    internal static bool IsOwnable(ITypeSymbol type, ConventionContext conventions)
+    {
+        if (type is not INamedTypeSymbol { TypeKind: TypeKind.Class or TypeKind.Struct, SpecialType: SpecialType.None } named
+            || named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            return false;
+        }
+
+        foreach (var implemented in named.AllInterfaces)
+        {
+            if (implemented.SpecialType == SpecialType.System_Collections_IEnumerable) return false;
+        }
+
+        var convention = ConventionDiscovery.Resolve(named, conventions);
+        return convention.Kind switch
+        {
+            ConventionKind.Unknown or ConventionKind.MultiArgCtor => true,
+            ConventionKind.ValueObject => convention.Value is null,
+            _ => false,
+        };
     }
 
     /// <summary>
@@ -289,6 +485,10 @@ internal static class EntityMapReader
     // Matches ZeroAlloc.ORM.ColumnMapAttribute by namespace and metadata name.
     private static bool IsColumnMap(INamedTypeSymbol? type) =>
         type is { MetadataName: "ColumnMapAttribute", ContainingNamespace: { Name: "ORM", ContainingNamespace: { Name: "ZeroAlloc", ContainingNamespace.IsGlobalNamespace: true } } };
+
+    // Matches ZeroAlloc.ORM.OwnedMapAttribute by namespace and metadata name.
+    private static bool IsOwnedMap(INamedTypeSymbol? type) =>
+        type is { MetadataName: "OwnedMapAttribute", ContainingNamespace: { Name: "ORM", ContainingNamespace: { Name: "ZeroAlloc", ContainingNamespace.IsGlobalNamespace: true } } };
 
     private static bool IsDateTime(ITypeSymbol type) =>
         type.SpecialType == SpecialType.System_DateTime

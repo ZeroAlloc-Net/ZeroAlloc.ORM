@@ -1,6 +1,8 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
@@ -16,6 +18,8 @@ internal static partial class LinqQueryReader
         {
             return Unsupported(invocation, "'Select' without a lambda", context);
         }
+
+        if (chain.IsSubquery) return ReadSubquerySelect(invocation, returned, row, chain, context);
 
         if (Unwrap(returned) is not IObjectCreationOperation creation)
             return RejectProjection("Select must construct a positional record with 'new'", returned, context);
@@ -49,6 +53,7 @@ internal static partial class LinqQueryReader
                 ? ReadGroupedItem(argument.Value, row, group, context)
                 : ReadProjectionItem(argument.Value, row, context);
             if (item is null) return false;
+            RecordLiftedProjection(item, argument.Value, parameter.Type, context);
             items[parameter.Ordinal] = item;
         }
 
@@ -60,6 +65,24 @@ internal static partial class LinqQueryReader
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
     private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
+        var op = Unwrap(value);
+
+        // A member whose type is an object: the map decides what it is when the query is bound,
+        // an owned object, ZAO107, a composite column, ZAO102, or a plain column.
+        if (WholeObjectMemberType(op, row, context) is { } whole
+            && TryReadRowMember(op, row, context, out var name, out var type, out var alias))
+        {
+            var composite = IsComposite(whole, context.Conventions) ? whole.ToDisplayString() : null;
+            var member = new SqlMemberExpression(
+                name,
+                LocationInfo.From(op.Syntax.GetLocation()),
+                ColumnPicksEnumStorage(type),
+                alias,
+                new SqlWholeObject(op.Syntax.ToString(), whole.ToDisplayString(), composite));
+            if (CanBeNull(type)) context.NullableValues.Add(member);
+            return member;
+        }
+
         switch (ReadOperand(value, row, context, out var expression))
         {
             case OperandRead.Read when Unwrap(value) is IParameterReferenceOperation { Parameter: var parameter }
@@ -76,6 +99,39 @@ internal static partial class LinqQueryReader
                 return null;
         }
     }
+
+    // One rule for every projected value, a column, g.Key or an aggregate over one: a member of
+    // an optional owned object, which reads NULL when the object is absent where C# would throw,
+    // goes to a parameter that takes a null. Whether its owner is owned is the map's to say, so
+    // the check is recorded here and decided when the query is bound: ZAO107 there when the map
+    // owns it. Only values the owned branch lifted are recorded; a plain nullable column keeps its
+    // old behaviour.
+    private static void RecordLiftedProjection(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
+    {
+        if (CanBeNull(target) || LiftedMember(item, context.LiftedValues) is not { } member) return;
+
+        var declared = Unwrap(value).Type ?? target;
+        var dot = member.Member.IndexOf('.');
+        context.LiftedProjections.Add(new LinqLiftedProjection(
+            context.StatementIndex,
+            dot < 0 ? member.Member : member.Member.Substring(0, dot),
+            member.SourceAlias,
+            "'" + value.Syntax + "' reads NULL when its optional owned object is absent; declare the parameter '"
+                + declared.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() + "?'",
+            LocationInfo.From(value.Syntax.GetLocation())));
+    }
+
+    // The lifted member a value reads: itself, or under a Min, Max or Average, which is NULL when
+    // every value is, a cast or a date_trunc.
+    private static SqlMemberExpression? LiftedMember(SqlExpression item, HashSet<SqlExpression> lifted) => item switch
+    {
+        SqlAggregateCallExpression { Function: not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum), Argument: { } argument }
+            => LiftedMember(argument, lifted),
+        SqlCastExpression cast => LiftedMember(cast.Operand, lifted),
+        SqlDateTruncExpression dateTrunc => LiftedMember(dateTrunc.Operand, lifted),
+        SqlMemberExpression member when lifted.Contains(member) => member,
+        _ => null,
+    };
 
     private static bool RejectProjection(string reason, IOperation at, ReaderContext context)
     {

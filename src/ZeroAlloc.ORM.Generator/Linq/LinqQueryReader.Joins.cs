@@ -68,7 +68,7 @@ internal static partial class LinqQueryReader
         if (chain.Ordering.Count > 0) return Unsupported(invocation, "'Join' after 'OrderBy'", context);
         if (invocation.Arguments.Length != 5) return Unsupported(invocation, "'Join'", context);
 
-        var alias = "t" + (chain.Joins.Count + 1).ToString(CultureInfo.InvariantCulture);
+        var alias = chain.AliasPrefix + (chain.Joins.Count + 1).ToString(CultureInfo.InvariantCulture);
         var outer = context.Row;
         var inner = RowShape.Entity(alias);
         var outerKey = ReadJoinKey(ArgumentFor(invocation, 2), invocation, context);
@@ -276,8 +276,78 @@ internal static partial class LinqQueryReader
                 return false;
         }
 
-        if (row is null || owner is null || ShapeAt(owner, row, context.Row) is not { IsEntity: true } shape) return false;
-        alias = shape.Alias;
-        return true;
+        if (row is null || owner is null) return false;
+        if (ShapeAt(owner, row, context.Row) is { IsEntity: true } shape)
+        {
+            alias = shape.Alias;
+            return true;
+        }
+
+        // A member of an owned object, r.Repository.Url: the column the map keys by the path
+        // Repository.Url. Whether the map declares Repository owned is the binder's to check; a
+        // member it does not map is ZAO105 there. A member of an optional owned object, one
+        // annotated `?`, is NULL when the object is absent, so its type is lifted: bool becomes
+        // bool? and string becomes string?, and the null rules compensate for it. This differs
+        // on purpose from the Value of a nullable value object, which is rejected: a member of an
+        // optional owned object would otherwise be unusable.
+        //
+        // A longer path through object members, r.Repository.Origin.FilePath or a navigation
+        // e.Task.Owner, reads the same way, as one dotted path. The map decides when the query
+        // is bound: a path it does not map is ZAO105, and one through a type nested in an owned
+        // type gets that reason. The lift is a guess the map confirms: a path whose first member
+        // the map does not own fails the build there, so its lifted SQL is never used.
+        if (op is IPropertyReferenceOperation && ObjectPath(owner, row, context) is { } path)
+        {
+            name = path.Prefix + "." + name;
+            alias = path.Alias;
+            if (path.Depth == 1 && path.FirstOptional) type = Lifted(type, context);
+            return true;
+        }
+
+        return false;
     }
+
+    // A chain of object members from an entity row, such as r.Repository or e.Task.Owner: its
+    // dotted path, its depth, whether its first member is annotated `?`, and the entity's alias.
+    private static (string Prefix, int Depth, bool FirstOptional, string? Alias)? ObjectPath(
+        IOperation op,
+        IParameterSymbol row,
+        ReaderContext context)
+    {
+        if (op is not IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } instance } property
+            || !IsObjectType(property.Property.Type, context))
+        {
+            return null;
+        }
+
+        if (ShapeAt(instance, row, context.Row) is { IsEntity: true } shape)
+        {
+            return (property.Property.Name, 1, property.Property.NullableAnnotation == NullableAnnotation.Annotated, shape.Alias);
+        }
+
+        return ObjectPath(instance, row, context) is { } inner
+            ? (inner.Prefix + "." + property.Property.Name, inner.Depth + 1, inner.FirstOptional, inner.Alias)
+            : null;
+    }
+
+    // The type as one that can be null: Nullable<T> for a value type, annotated for a reference type.
+    private static ITypeSymbol Lifted(ITypeSymbol type, ReaderContext context)
+    {
+        if (CanBeNull(type)) return type;
+        return type.IsValueType
+            ? context.Conventions.Compilation.GetSpecialType(SpecialType.System_Nullable_T).Construct(type)
+            : type.WithNullableAnnotation(NullableAnnotation.Annotated);
+    }
+
+    // A row member whose type is an object rather than one value, such as an owned r.Repository,
+    // a composite r.Price, a Uri, or a member of an owned object that is one: what it maps to is
+    // the map's to decide. Null for any other operation.
+    private static ITypeSymbol? WholeObjectMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => TryReadRowMember(op, row, context, out _, out var type, out _)
+            && IsObjectType(type, context)
+                ? UnwrapNullable(type)
+                : null;
+
+    private static bool IsObjectType(ITypeSymbol type, ReaderContext context)
+        => EntityMapReader.IsOwnable(UnwrapNullable(type), context.Conventions) || IsComposite(type, context.Conventions);
 }

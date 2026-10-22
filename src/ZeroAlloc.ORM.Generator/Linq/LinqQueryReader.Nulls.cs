@@ -45,8 +45,15 @@ internal static partial class LinqQueryReader
     }
 
     // C#'s `!`: NOT for a condition that is never NULL, IS NOT TRUE for one that can be.
+    // `!query.Contains(x)` is NOT IN when x cannot be null. A NULL x makes IN NULL, or false for an
+    // empty subquery, where C#'s Contains is false and its negation true, so a nullable x takes
+    // IS NOT TRUE like any condition.
     private static SqlExpression Negate(SqlExpression operand, ReaderContext context)
-        => MayBeNull(operand, context.NullableValues) ? new SqlIsNotTrueExpression(operand) : new SqlNotExpression(operand);
+    {
+        if (operand is SqlInSubqueryExpression subquery && !MayBeNull(subquery.Operand, context.NullableValues))
+            return subquery with { Negated = !subquery.Negated };
+        return MayBeNull(operand, context.NullableValues) ? new SqlIsNotTrueExpression(operand) : new SqlNotExpression(operand);
+    }
 
     private static SqlBinaryExpression Or(SqlExpression left, SqlExpression right) => new(SqlBinaryOperator.Or, left, right);
 
@@ -70,8 +77,12 @@ internal static partial class LinqQueryReader
                 return nullableValues.Contains(expression);
             case SqlLiteralExpression literal:
                 return literal.Kind == SqlLiteralKind.Null;
-            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression:
+            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlObjectIsNullExpression:
                 return false;
+            case SqlInSubqueryExpression subquery:
+                // The selected column is never NULL, which the reader checks, so IN can be NULL only
+                // when its operand can.
+                return MayBeNull(subquery.Operand, nullableValues);
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);
             case SqlDateTruncExpression dateTrunc:

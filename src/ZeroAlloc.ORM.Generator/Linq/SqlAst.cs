@@ -112,7 +112,17 @@ internal abstract record SqlExpression;
 /// join; it renders as <c>t1."Col"</c> and resolves through that source's map. Null without a
 /// join, which renders the bare column as in 2.5.0.
 /// </param>
-internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage, string? SourceAlias = null) : SqlExpression;
+/// <param name="WholeObject">
+/// Set on a projected member whose type is an object: the map decides when the query is bound
+/// whether it is a plain column, an owned object, ZAO107, or a composite, ZAO102. Null for any
+/// other member.
+/// </param>
+internal sealed record SqlMemberExpression(
+    string Member,
+    LocationInfo? Location,
+    bool ColumnPicksEnumStorage,
+    string? SourceAlias = null,
+    SqlWholeObject? WholeObject = null) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
@@ -197,6 +207,42 @@ internal sealed record SqlIsNotTrueExpression(SqlExpression Operand) : SqlExpres
 internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated, string? Cast) : SqlExpression;
 
 /// <summary>
+/// A null test on a row member whose type is an object, such as <c>r.Outcome == null</c> or
+/// <c>r.Website != null</c> for a <c>Uri?</c>. The map decides what it is when the query is bound:
+/// for an owned object every column the map gives its members is NULL,
+/// <c>("Outcome_A" IS NULL AND "Outcome_B" IS NULL)</c>, or its NOT when <paramref name="Negated"/>;
+/// for a plain column it is <c>"Col" IS [NOT] NULL</c>; a composite column is ZAO102, as before;
+/// anything else ZAO105.
+/// </summary>
+/// <param name="Member">The entity property, such as <c>Outcome</c>.</param>
+/// <param name="Text">The tested expression as written, for messages.</param>
+/// <param name="CompositeType">
+/// The member's type when it maps to several columns as a composite, for the ZAO102 a plain
+/// composite column gets; null for any other type.
+/// </param>
+/// <param name="Location">The tested member, where a diagnostic points.</param>
+/// <param name="Negated">Whether the test is <c>!= null</c>.</param>
+/// <param name="SourceAlias">The alias of the member's source in a query with a join, as on a member.</param>
+internal sealed record SqlObjectIsNullExpression(
+    string Member,
+    string Text,
+    string? CompositeType,
+    LocationInfo? Location,
+    bool Negated,
+    string? SourceAlias = null) : SqlExpression;
+
+/// <summary>
+/// A projected row member whose type is an object, such as <c>r.Outcome</c>; see
+/// <see cref="SqlMemberExpression.WholeObject"/>. Not an expression of its own.
+/// </summary>
+/// <param name="Text">The member as written, for messages.</param>
+/// <param name="Type">The member's type as messages show it.</param>
+/// <param name="CompositeType">
+/// The type when it maps to several columns as a composite; null for any other type.
+/// </param>
+internal sealed record SqlWholeObject(string Text, string Type, string? CompositeType);
+
+/// <summary>
 /// <c>operand::type</c>: a parameter without a DbType facet in the SELECT list, so a null still has
 /// a type. PostgreSQL reads the SELECT list first and types a bare null parameter there as text,
 /// which clashes with a later use such as a comparison with a <c>timestamptz</c> column.
@@ -223,6 +269,22 @@ internal sealed record SqlILikeExpression(SqlExpression Operand, SqlExpression P
 
 /// <summary><c>array.Contains(operand)</c>: <c>operand = ANY(array)</c>, for an array parameter.</summary>
 internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Array) : SqlExpression;
+
+/// <summary>
+/// <c>query.Select(p =&gt; p.Col).Contains(operand)</c>: <c>operand IN (SELECT "Col" FROM ... WHERE
+/// ... ORDER BY ... LIMIT ... OFFSET ...)</c>, or <c>NOT IN</c> when <paramref name="Negated"/>. The
+/// ordering and the paging stay inside the subquery, so a paged parent set selects exactly the
+/// parents' ids. The selected column is non-nullable, which the reader checks, so NOT IN has no
+/// NULL trap. The operand may be null: the test is then NULL, or false for an empty subquery,
+/// which a WHERE drops alike, and C#'s <c>!</c> over it takes IS NOT TRUE rather than NOT IN.
+/// </summary>
+/// <param name="Operand">The outer value, a column or parameter of the outer query.</param>
+/// <param name="Subquery">
+/// The uncorrelated subquery, projecting exactly one column. Its sources are aliased <c>s0</c>,
+/// <c>s1</c>, ... only when it has a join, and it binds through its own name scope.
+/// </param>
+/// <param name="Negated">Whether the test is NOT IN, C#'s <c>!</c> over the Contains of a non-nullable operand.</param>
+internal sealed record SqlInSubqueryExpression(SqlExpression Operand, SqlSelectStatement Subquery, bool Negated) : SqlExpression;
 
 /// <summary>
 /// <c>WhereIf(condition, predicate)</c>: <c>((condition) IS NOT TRUE OR (predicate))</c>. A NULL

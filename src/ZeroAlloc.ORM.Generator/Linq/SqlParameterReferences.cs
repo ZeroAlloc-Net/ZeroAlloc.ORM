@@ -53,7 +53,7 @@ internal static class SqlParameterReferences
             case SqlParameterExpression parameter:
                 names.Add(parameter.Name);
                 break;
-            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression:
+            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression or SqlObjectIsNullExpression:
                 break;
             case SqlBinaryExpression binary:
                 Add(binary.Left, names);
@@ -99,6 +99,11 @@ internal static class SqlParameterReferences
                 break;
             case SqlDateTruncExpression dateTrunc:
                 Add(dateTrunc.Operand, names);
+                break;
+            case SqlInSubqueryExpression subquery:
+                // The subquery's parameters are the containing statement's: it renders inside it.
+                Add(subquery.Operand, names);
+                AddSelect(subquery.Subquery, names);
                 break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + expression.GetType().Name + ".");

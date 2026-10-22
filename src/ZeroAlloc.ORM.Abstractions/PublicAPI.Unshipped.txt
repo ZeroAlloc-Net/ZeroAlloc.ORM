@@ -1,1 +1,4 @@
 #nullable enable
+ZeroAlloc.ORM.OwnedMapAttribute
+ZeroAlloc.ORM.OwnedMapAttribute.OwnedMapAttribute(string! property) -> void
+ZeroAlloc.ORM.OwnedMapAttribute.Property.get -> string!

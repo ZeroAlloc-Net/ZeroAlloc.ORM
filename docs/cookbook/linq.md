@@ -6,8 +6,9 @@ the method the same way it implements a `[Query]`. Nothing builds, compiles or r
 expression at run time, so the result is as AOT-clean as hand-written `[Query]` SQL. A chain the
 generator cannot translate is a build error, never a silent fallback to running it in memory.
 
-It is a second way to write the SQL, not an entity-graph ORM: there are no navigations, `Include`,
-change tracking or entity writes.
+It is a second way to write the SQL, not an entity-graph ORM: there are no navigations, change
+tracking or entity writes. In place of EF Core's `Include`, one method loads a parent and its
+children as a tuple in one round trip, see [Parents with children](#parents-with-children).
 
 ## Install
 
@@ -98,6 +99,70 @@ internal static class TaskMap;
   [ColumnMap(nameof(Execution.LocalDay), DateTimeStorage = DateTimeStorage.Timestamp)]
   internal static class ExecutionMap;
   ```
+
+### Owned types
+
+An EF Core owned type, `OwnsOne`, has no table of its own: its properties are columns of the
+owner's table. `[OwnedMap(nameof(E.P))]` declares one, and each public readable instance property
+of the owned type that holds a value becomes a column, by the same rules as the entity's own
+properties. The column name is EF Core's default, `{Owner}_{Property}`, such as `Location_StartLine`.
+A `[ColumnMap]` with a dotted path, `Owner.Property`, overrides it and sets `EnumAsString`,
+`DateTimeStorage` or `Ignore` for the member as for any column:
+
+```csharp
+public sealed class CodeAnalysisRequest
+{
+    public Guid Id { get; private set; }
+    public RepositoryReference Repository { get; private set; } = null!; // Url, Branch, Platform
+    public CodeLocation Location { get; private set; } = null!;          // FilePath, StartLine
+    public AnalysisOutcome? Outcome { get; private set; }                // optional
+}
+
+// Url, Branch and FilePath carry Daedalus' bare column names; every other owned member keeps
+// EF's {Owner}_{Property}, such as "Repository_Platform".
+[TableMap(typeof(CodeAnalysisRequest), "AnalysisRequests")]
+[OwnedMap(nameof(CodeAnalysisRequest.Repository))]
+[OwnedMap(nameof(CodeAnalysisRequest.Location))]
+[OwnedMap(nameof(CodeAnalysisRequest.Outcome))]
+[ColumnMap("Repository.Url", Column = "RepositoryUrl")]
+[ColumnMap("Repository.Branch", Column = "RepositoryBranch")]
+[ColumnMap("Location.FilePath", Column = "FilePath")]
+internal static class CodeAnalysisRequestMap;
+```
+
+A query reads a member of an owned object, `r.Repository.Url`, as its column wherever it reads a
+column: in `Where`, `Select`, `OrderBy`, `GroupBy` keys, aggregates and join keys.
+
+- The owned object itself is no column. Projecting it whole, `new Row(r.Id, r.Repository)`,
+  reports ZAO107; project its members instead. A null test on it, `r.Outcome == null`, tests that
+  every one of its columns is NULL, and `!= null` is its negation. That holds for a required owner
+  too, so `r.Repository == null` is translated rather than taken as false. An owned type may be a
+  class or a positional record, `record Review(string? Reviewer, bool Approved)`, alike.
+- The map decides what is owned, not the type's shape. A null test on a plain column whose type
+  is an object, such as `Uri? Website`, stays `"Website" IS NOT NULL`, and a composite column the
+  map does not declare owned still reports ZAO102.
+- A member of an object the map does not declare owned is not mapped, and reports ZAO105.
+- A dotted path has exactly two segments, `Owner.Property`; a deeper one reports ZAO106.
+  `[OwnedMap]` maps one level: a member of an owned object is the column the map gives it, also
+  when its type is an object, such as a `Uri Link` in the column `Home_Link`, which a null test
+  reads as `"Home_Link" IS NOT NULL`. A member of a type nested in an owned type, such as
+  `r.Repository.Origin.FilePath`, is no column: it reports ZAO102 in `Where` or an ordering and
+  ZAO107 in `Select`, with the reason "reads 'Origin', a type nested in the owned 'Repository'".
+- Only the map declares an object owned. A navigation to another entity, such as `e.Task.Title`
+  or `e.Task.Owner == null`, is not mapped and reports ZAO105; read it through a `Join`.
+- An optional owned object, a property annotated `?` such as `AnalysisOutcome? Outcome`, that is
+  absent has every one of its columns NULL. Its members read NULL then, where C# would throw on
+  the null owner, so each member of an optional owned object counts as nullable: a `bool` member
+  as `bool?`, a `string` as `string?`. The rules of [Nulls compare as in C#](#nulls-compare-as-in-c)
+  apply to it as to a nullable column: `r.Outcome!.HasFailedValidation == true` does not match a
+  request without an outcome, while `!r.Outcome!.HasFailedValidation` and `!= true` do. Projecting
+  such a member needs a parameter that takes the NULL, such as `bool?`; a `bool` parameter reports
+  ZAO107. This differs on purpose from the `Value` of a nullable value object, which is rejected:
+  without the lift a member of an optional owned object could not be used at all. Without nullable
+  annotations, an owned object counts as present, as everywhere.
+- An owned type is a class or struct whose properties are the columns. `[OwnedMap]` on a property
+  that binds as one value, such as a `string`, an enum, a value object with a `Value` or a
+  single-argument record, or on a nullable value type or a collection, reports ZAO106.
 
 An entity without a map reports [ZAO104](../diagnostics/ZAO104.md), a member that is not a mapped
 column [ZAO105](../diagnostics/ZAO105.md), and a map that contradicts itself
@@ -196,6 +261,159 @@ private static IQuery<int> CountOpenQuery(Guid projectId) =>
 an existence. Over a page they count the page:
 `SELECT count(*)::int FROM (SELECT 1 FROM ... LIMIT ... OFFSET ...) AS q`.
 
+## Parents with children
+
+A companion can return a tuple of 2 to 7 `IQuery<T>`, one per result set, with a tuple literal of
+complete chains as its body. The method returns the matching tuple. Each element becomes its own
+statement, and the statements run as one `IAsyncDbBatch` round trip, through the same multi-result
+path as a [`[Query]` head and lines method](multi-result-set.md):
+
+```csharp
+[LinqQuery(nameof(WithExecutionsQuery))]
+public partial Task<(TaskHead? Head, List<ExecutionLine> Executions)> WithExecutions(Guid id, CancellationToken ct);
+
+private static (IQuery<TaskHead>, IQuery<ExecutionLine>) WithExecutionsQuery(Guid id) =>
+    (Sql.Table<TaskEntity>().Where(t => t.Id == id).Select(t => new TaskHead(t.Id, t.Title)),
+     Sql.Table<ExecutionEntity>()
+        .Where(e => e.TaskId == id)
+        .OrderBy(e => e.ExecutedAt)
+        .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+```
+
+```sql
+SELECT "Id", "Title" FROM "Tasks" WHERE "Id" = @id LIMIT 1;
+SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "ExecutedAt"
+```
+
+- Each element takes a shape from the table above: a list, `T?` for the first row, or the value of
+  a terminal such as `Count()`. A stream is not an element shape.
+- A missing parent reads as a `null` head and an empty child list. With a nullable tuple,
+  `Task<(TaskHead? Head, List<ExecutionLine> Executions)?>`, the whole tuple is `null` when the first
+  result set is empty, as for `[Query]`.
+- Each batch command binds only the parameters its own statement uses.
+- The caller assembles the object graph from the tuple. An element that does not fit its chain, or a
+  tuple of another length, reports [ZAO112](../diagnostics/ZAO112.md), naming the element.
+
+### Children of a paged parent set
+
+For a page of parents, the child chain filters with `IQuery<T>.Contains`: a subquery that repeats the
+parent chain's order and page, and selects its id. It renders as an `IN` subquery, with the
+`ORDER BY`, `LIMIT` and `OFFSET` inside it, so it selects the same page of parents as the first
+statement:
+
+```csharp
+[LinqQuery(nameof(PageQuery))]
+public partial Task<(List<TaskHead> Tasks, List<ExecutionOfTask> Executions)> Page(int skip, int take, CancellationToken ct);
+
+private static (IQuery<TaskHead>, IQuery<ExecutionOfTask>) PageQuery(int skip, int take) =>
+    (Sql.Table<TaskEntity>()
+        .OrderByDescending(t => t.CreatedAt).ThenBy(t => t.Id)
+        .Skip(skip).Take(take)
+        .Select(t => new TaskHead(t.Id, t.Title)),
+     Sql.Table<ExecutionEntity>()
+        .Where(e => Sql.Table<TaskEntity>()
+            .OrderByDescending(t => t.CreatedAt).ThenBy(t => t.Id)
+            .Skip(skip).Take(take)
+            .Select(t => t.Id)
+            .Contains(e.TaskId))
+        .OrderBy(e => e.ExecutedAt).ThenBy(e => e.Id)
+        .Select(e => new ExecutionOfTask(e.Id, e.TaskId, e.InputTokens)));
+```
+
+`ExecutionOfTask(Guid Id, Guid TaskId, int InputTokens)` carries the parent id, so the caller can
+group the children by task:
+
+```sql
+SELECT "Id", "Title" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0);
+SELECT "Id", "TaskId", "InputTokens" FROM "Executions"
+WHERE "TaskId" IN (SELECT "Id" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0))
+ORDER BY "ExecutedAt", "Id"
+```
+
+- The children are exactly those of the returned parents when the data does not change between
+  the two statements. Under PostgreSQL's default READ COMMITTED each statement of the batch reads
+  its own snapshot, so a row inserted or reordered between them can shift the page. For a strict
+  guarantee, call the method inside a REPEATABLE READ transaction, where both statements share one
+  snapshot. Either way, group the children by their parent id, so a stray child drops out.
+- End both orderings with a unique key, such as `ThenBy(t => t.Id)`. Rows that tie on every key
+  have no defined order, so without one the page and the subquery could pick different rows.
+  Paging without any `OrderBy` warns [ZAO110](../diagnostics/ZAO110.md), inside the subquery too.
+- The subquery is a full `Sql.Table<T>()` chain, with `Where`, ordering, `Skip`, `Take` and joins,
+  ending in a `Select` of exactly one mapped column. It may use companion parameters, which bind on
+  the statement that contains it, but not the outer row: a correlated subquery reports
+  [ZAO102](../diagnostics/ZAO102.md).
+- `!query.Contains(x)` renders `NOT IN` when `x` cannot be null.
+- `Contains` follows C#, which never errs on a null. `NOT IN` is NULL for every row once the
+  subquery selects one NULL, so the selected column must be non-nullable, or the query reports
+  ZAO102. A nullable column becomes eligible with a `!= null` filter in the subquery:
+
+  ```csharp
+  .Where(e => !Sql.Table<TaskEntity>()
+      .Where(t => t.ParentId != null)
+      .Select(t => t.ParentId)
+      .Contains(e.TaskId))
+  ```
+
+- The outer value may be null, such as a nullable foreign key. Cast the selected column to the
+  nullable type, so `Contains` takes the value; the column still selects no NULL. A null value is
+  not contained, as in C#: `IN` is NULL for it, which the `WHERE` drops, and `!Contains` renders
+  `(... IN (...)) IS NOT TRUE`, which keeps the row:
+
+  ```csharp
+  .Where(t => Sql.Table<TaskEntity>()
+      .Where(p => p.Title == title)
+      .Select(p => (Guid?)p.Id)
+      .Contains(t.ParentTaskId))
+  ```
+
+- A subquery with a join aliases its sources `s0`, `s1`, ..., which never meet the outer query's
+  `t0`, `t1`, .... A subquery without one is not aliased.
+
+### A parent with owned columns
+
+A parent's [owned types](#owned-types) are columns of its table, so the head reads them like any
+other column. An optional owned object can get an element of its own, which is `null` when the
+object is absent:
+
+```csharp
+[LinqQuery(nameof(WithIterationsQuery))]
+public partial Task<(RequestHead? Request, OutcomeLine? Outcome, List<IterationLine> Iterations)> WithIterations(
+    Guid id, CancellationToken ct);
+
+private static (IQuery<RequestHead>, IQuery<OutcomeLine>, IQuery<IterationLine>) WithIterationsQuery(Guid id) =>
+    (Sql.Table<CodeAnalysisRequest>()
+        .Where(r => r.Id == id)
+        .Select(r => new RequestHead(r.Id, r.Repository.Url, r.Repository.Branch, r.Location.FilePath)),
+     Sql.Table<CodeAnalysisRequest>()
+        .Where(r => r.Id == id && r.Outcome != null)
+        .Select(r => new OutcomeLine(r.Outcome!.PullRequestUrl, r.Outcome!.HasFailedValidation)),
+     Sql.Table<CodeAnalysisIteration>()
+        .Where(i => i.RequestId == id)
+        .OrderBy(i => i.Number)
+        .Select(i => new IterationLine(i.Number, i.Summary)));
+```
+
+`OutcomeLine` takes `bool? HasFailedValidation`: a member of an optional owned object counts as
+nullable, even under the `!= null` filter.
+
+### Replacing EF Core's `Include`
+
+Each of Daedalus' seven `Include` queries maps to one tuple companion:
+
+| Site | Parents and children | `[LinqQuery]` pattern |
+|---|---|---|
+| `TaskRepository.cs:21` | one `Task` by id, its `Executions` | single tuple, see [Parents with children](#parents-with-children) |
+| `TaskQueryService.cs:17` | a page of `Task`s by `CreatedAt` descending, their `Executions` | tuple with an IN subquery, see [Children of a paged parent set](#children-of-a-paged-parent-set) |
+| `TaskQueryService.cs:36` | one `Task` by id, its `Executions` | single tuple, see [Parents with children](#parents-with-children) |
+| `ProjectQueryService.cs:16` | a page of `Project`s by name, their `Tasks` | tuple with an IN subquery, see [Children of a paged parent set](#children-of-a-paged-parent-set) |
+| `ProjectQueryService.cs:77` | one `Project` by id, its `Tasks` | single tuple, see [Parents with children](#parents-with-children) |
+| `CodeAnalysisRepository.cs:22` | one `CodeAnalysisRequest` by id with owned `Repository`, `Location` and `Outcome`, its `Iterations` | single tuple over owned columns, see [A parent with owned columns](#a-parent-with-owned-columns) and [Owned types](#owned-types) |
+| `BrainstormRepository.cs:37` | one `BrainstormSession` by id, its `Messages` by `CreatedAt` | single tuple with an ordered child chain, see [Parents with children](#parents-with-children) |
+
+The paged sites order by a column that need not be unique, so add `ThenBy(x => x.Id)` to both the
+page and its subquery. EF Core fills the navigation collections; here the caller groups the child
+rows by their parent id.
+
 ## Projection
 
 `Select` constructs a positional record through the constructor its rows are read with. Each argument is
@@ -272,6 +490,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 | `t.Title.StartsWith(text)`, `EndsWith(text)` | the same `LIKE`, with `%` on one side |
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
+| `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent set](#children-of-a-paged-parent-set) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
 
 - `Contains`, `StartsWith` and `EndsWith` match literally: `%`, `_` and `\` in the value are escaped,
@@ -531,26 +750,24 @@ compare by name.
 
 | Code | Severity | Reports |
 |---|---|---|
-| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>`. |
+| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>` or a tuple literal of them. |
 | [ZAO101](../diagnostics/ZAO101.md) | Error | The companion's parameters are not the method's value parameters, by name, type and order. |
 | [ZAO102](../diagnostics/ZAO102.md) | Error | An operator, predicate, key, count or chain order the translator does not support. |
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
-| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property, a shared column, `EnumAsString` on a non-enum, or `DateTimeStorage` on a non-`DateTime`. |
+| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, or an owned property whose type has no properties to map. |
 | [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |
 | [ZAO110](../diagnostics/ZAO110.md) | Warning | `Skip` or `Take` without an ordering returns rows in no defined order. |
 | [ZAO111](../diagnostics/ZAO111.md) | Error | An enum parameter is compared with columns that store the enum differently. |
-| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type does not fit the companion's `IQuery<T>`. |
+| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type, or one of its tuple elements, does not fit the companion's `IQuery<T>`. |
 
 ## Not supported yet
 
 The next planned work, in this order. Until then, write such a query as a raw `[Query]` or `[Command]`:
 
-- Loading a parent with its children: a multi-result head and lines method with a companion per
-  result set.
 - Set-based `ExecuteUpdate` and `ExecuteDelete`, optimistic concurrency checks, and `FOR UPDATE`.
 
 Also not supported today:
@@ -561,6 +778,15 @@ Also not supported today:
 - Left joins: there is no left-join operator yet.
 - Composite join keys, an inner side other than `Sql.Table<T>()` with `Where`, and `Join` after
   `GroupBy`, `Select`, `Skip`, `Take` or `OrderBy` (ZAO102).
+- Navigations and object graphs: a tuple companion returns flat result sets, and the caller
+  assembles the graph.
+- Correlated subqueries, such as `EXISTS` or a subquery that reads the outer row (ZAO102). Join,
+  or filter the subquery on companion parameters.
+- An owned type nested in an owned type: a deeper `[ColumnMap]` path reports ZAO106, and a read
+  of the nested object ZAO102 or ZAO107, see [Owned types](#owned-types).
+- Owned collections, `OwnsMany`: `[OwnedMap]` on a collection reports ZAO106.
+- A stream, `IAsyncEnumerable<T>`, as a tuple element (ZAO112), and a companion tuple of more than
+  7 elements (ZAO100).
 - Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
   (ZAO107). Project into a one-member record instead.
 - `Skip` and `Take` after `Select` (ZAO102). Put them before it.

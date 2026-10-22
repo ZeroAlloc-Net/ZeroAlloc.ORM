@@ -18,4 +18,5 @@ public sealed class TaskEntity
     public float? Rating { get; private set; }
     public WorkKind? Category { get; private set; }
     public float Score { get; private set; }
+    public Guid? ParentTaskId { get; private set; }
 }

@@ -281,7 +281,7 @@ static async Task RunLinqJoinAsync(IAsyncDbConnection connection)
     var ddl = connection.CreateCommand();
     await using (ddl.ConfigureAwait(false))
     {
-        ddl.CommandText = "CREATE TABLE public.smoke_tasks (id uuid PRIMARY KEY, title text NOT NULL); "
+        ddl.CommandText = "CREATE TABLE public.smoke_tasks (id uuid PRIMARY KEY, title text NOT NULL, origin_url text NULL, \"Origin_Branch\" text NULL); "
             + "CREATE TABLE public.smoke_runs (id uuid PRIMARY KEY, task_id uuid NOT NULL, tokens integer NOT NULL);";
         await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
@@ -306,4 +306,31 @@ static async Task RunLinqJoinAsync(IAsyncDbConnection connection)
         throw new InvalidOperationException($"Unexpected LINQ average: {average}.");
 
     Console.WriteLine("Postgres LINQ join smoke passed.");
+
+    await RunLinqIncludeAsync(connection, one, two).ConfigureAwait(false);
+}
+
+// A page of tasks with the runs of that page, in one batch. "build" and "test" have no origin, so
+// their owned members read NULL; "deploy" has one, whose Url reads back.
+static async Task RunLinqIncludeAsync(IAsyncDbConnection connection, Guid build, Guid test)
+{
+    var repo = new LinqIncludeRepo(connection);
+    var deploy = Guid.NewGuid();
+    await repo.InsertTaskAsync(deploy, "deploy", "https://example.com/r", null, CancellationToken.None).ConfigureAwait(false);
+    await new LinqJoinRepo(connection).InsertRunAsync(Guid.NewGuid(), deploy, 7, CancellationToken.None).ConfigureAwait(false);
+
+    // By title: build, deploy, test. The first page holds build and deploy, with their runs only.
+    var (tasks, runs) = await repo.PagedTasksWithRunsAsync(0, 2, CancellationToken.None).ConfigureAwait(false);
+    if (tasks.Count != 2
+        || tasks[0] != new SmokeTaskHead(build, "build", null, null)
+        || tasks[1] != new SmokeTaskHead(deploy, "deploy", "https://example.com/r", null))
+        throw new InvalidOperationException($"Unexpected paged parents: {tasks.Count}.");
+    if (runs.Count != 3 || runs[0] != new SmokeRunLine(deploy, 7) || runs[1] != new SmokeRunLine(build, 10) || runs[2] != new SmokeRunLine(build, 20))
+        throw new InvalidOperationException($"Unexpected paged children: {runs.Count}.");
+
+    var (last, lastRuns) = await repo.PagedTasksWithRunsAsync(2, 2, CancellationToken.None).ConfigureAwait(false);
+    if (last.Count != 1 || last[0].Id != test || lastRuns.Count != 1 || lastRuns[0] != new SmokeRunLine(test, 5))
+        throw new InvalidOperationException($"Unexpected last page: {last.Count}, {lastRuns.Count}.");
+
+    Console.WriteLine("Postgres LINQ include smoke passed.");
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
@@ -8,17 +9,23 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 
 internal static partial class LinqQueryReader
 {
-    // The companion, its declaration, the one expression its body is, and the T of its IQuery<T>;
-    // or the ZAO100 that rejects it.
+    // The companion, its declaration, the chains its body is, and the T of each chain's IQuery<T>;
+    // or the ZAO100 that rejects it. A companion returning IQuery<T> has one chain; one returning
+    // a tuple of IQuery<T> has one per element, read from its tuple literal, and IsTuple set.
     private readonly record struct Companion(
         IMethodSymbol? Symbol,
         MethodDeclarationSyntax? Syntax,
-        ExpressionSyntax? Body,
-        ITypeSymbol? RowType,
+        ImmutableArray<ExpressionSyntax> Bodies,
+        ImmutableArray<ITypeSymbol> RowTypes,
+        bool IsTuple,
         DiagnosticInfo? Error);
 
+    // A tuple companion has 2 to 7 elements: one ValueTuple, without a nested TRest.
+    private const int MaxTupleElements = 7;
+
     // ZAO100 — the companion is a static method of the same type, declared with a body that is
-    // one expression or one return statement, returning IQuery<T>.
+    // one expression or one return statement, returning IQuery<T>; or returning a tuple of 2 to 7
+    // IQuery<T> with a tuple literal of one chain per element as that expression.
     private static Companion ResolveCompanion(
         GeneratorAttributeSyntaxContext ctx,
         IMethodSymbol method,
@@ -47,6 +54,8 @@ internal static partial class LinqQueryReader
             return Invalid(name, method, "it must be static", identifier);
         if (syntax is null)
             return Invalid(name, method, "it has no body to read", identifier);
+        if (symbol.ReturnType is INamedTypeSymbol { IsTupleType: true } tuple)
+            return ResolveTupleCompanion(name, method, symbol, syntax, tuple, identifier);
         if (!IsGeneric(symbol.ReturnType, LinqNamespace, "IQuery`1", out var rowType))
             return Invalid(name, method, "it must return IQuery<T>", syntax.ReturnType.GetLocation());
 
@@ -59,7 +68,46 @@ internal static partial class LinqQueryReader
                 "its body must be one expression or one return statement, from Sql.Table<T>() to the last operator",
                 identifier);
         }
-        return new Companion(symbol, syntax, body, rowType, null);
+        return new Companion(symbol, syntax, ImmutableArray.Create(body), ImmutableArray.Create(rowType), false, null);
+    }
+
+    // A tuple of IQuery<T>, whose body is a tuple literal with one complete chain per element.
+    // Each chain is read as a companion body of its own; nothing else can be read without
+    // running the companion.
+    private static Companion ResolveTupleCompanion(
+        string name,
+        IMethodSymbol method,
+        IMethodSymbol symbol,
+        MethodDeclarationSyntax syntax,
+        INamedTypeSymbol tuple,
+        Location? identifier)
+    {
+        var elements = tuple.TupleElements;
+        var rowTypes = ImmutableArray.CreateBuilder<ITypeSymbol>(elements.Length);
+        foreach (var element in elements)
+        {
+            if (!IsGeneric(element.Type, LinqNamespace, "IQuery`1", out var rowType)) break;
+            rowTypes.Add(rowType);
+        }
+        if (rowTypes.Count != elements.Length || elements.Length > MaxTupleElements)
+        {
+            return Invalid(
+                name,
+                method,
+                "it must return IQuery<T>, or a tuple of 2 to 7 IQuery<T>, one per result set",
+                syntax.ReturnType.GetLocation());
+        }
+
+        if (SingleExpression(syntax) is not TupleExpressionSyntax literal || literal.Arguments.Count != elements.Length)
+        {
+            return Invalid(
+                name,
+                method,
+                "a tuple companion's body must be a tuple literal, (chain1, chain2, ...), with one chain from Sql.Table<T>() to its last operator per element",
+                identifier);
+        }
+        var bodies = literal.Arguments.Select(a => a.Expression).ToImmutableArray();
+        return new Companion(symbol, syntax, bodies, rowTypes.MoveToImmutable(), true, null);
     }
 
     private static ExpressionSyntax? SingleExpression(MethodDeclarationSyntax syntax)
@@ -80,5 +128,5 @@ internal static partial class LinqQueryReader
     }
 
     private static Companion Invalid(string companion, IMethodSymbol method, string reason, Location? location)
-        => new(null, null, null, null, LinqDiagnostics.InvalidCompanion(companion, method.Name, reason, location));
+        => new(null, null, default, default, false, LinqDiagnostics.InvalidCompanion(companion, method.Name, reason, location));
 }
