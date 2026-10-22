@@ -18,6 +18,10 @@ internal sealed record LinqOverrides(
     // non-query emit throws when the write affects no rows; becomes
     // QueryMethodModel.LinqNoRowsMessage. Null otherwise.
     public string? NoRowsMessage { get; init; }
+
+    // [LinqCommand] ExecuteUpdate -- the C# names of the value parameters set into a [Json]
+    // column, which bind as jsonb as if they carried [Json] themselves. Empty otherwise.
+    public EquatableArray<string> JsonParameters { get; init; }
 }
 
 // One parameter's DbType facet from the LINQ translation. Applied to the matching

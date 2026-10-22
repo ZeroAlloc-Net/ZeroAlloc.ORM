@@ -89,6 +89,8 @@ internal static partial class LinqQueryReader
                 return MayBeNull(dateTrunc.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
+            case SqlArithmeticExpression arithmetic:
+                return MayBeNull(arithmetic.Left, nullableValues) || MayBeNull(arithmetic.Right, nullableValues);
             case SqlRowComparisonExpression rows:
                 return AnyMayBeNull(rows.Left, nullableValues) || AnyMayBeNull(rows.Right, nullableValues);
             case SqlNotExpression not:

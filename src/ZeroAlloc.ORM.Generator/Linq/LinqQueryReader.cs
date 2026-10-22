@@ -115,6 +115,7 @@ internal static partial class LinqQueryReader
             new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()))
         {
             LiftedProjections = new EquatableArray<LinqLiftedProjection>(context.LiftedProjections.ToImmutableArray()),
+            JsonParameters = new EquatableArray<string>(context.JsonParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
         };
     }
 
@@ -267,6 +268,10 @@ internal static partial class LinqQueryReader
 
         // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate; null for a query.
         public string? WriteTerminal { get; init; }
+
+        // Value parameters, by C# name, that an ExecuteUpdate sets into a [Json] column: they bind
+        // as jsonb, as a [Json] parameter does.
+        public HashSet<string> JsonParameters { get; } = new(StringComparer.Ordinal);
 
         // The row parameters of the predicates an IN subquery is read inside, innermost last. A
         // subquery that reads one of them would be correlated, which is not translated.

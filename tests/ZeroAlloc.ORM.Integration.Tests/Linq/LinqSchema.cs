@@ -12,6 +12,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // "BrainstormSessions" and "BrainstormMessages" are Daedalus' brainstorm session and its
 // messages, which load together as a parent with its children. "AnalysisIterations" are the
 // iterations of a code analysis request, which load with their request the same way.
+// "AgentSessions" is Daedalus' agent session, whose state and counters are updated in place.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -89,6 +90,14 @@ internal static class LinqSchema
             "RequestId" uuid NOT NULL,
             "Number" int NOT NULL,
             "Summary" text NOT NULL
+        );
+        CREATE TABLE "AgentSessions" (
+            "Id" uuid PRIMARY KEY,
+            "State" text NOT NULL,
+            "LastActivityAt" timestamptz NOT NULL,
+            "TurnCount" int NOT NULL,
+            "TotalInputTokens" bigint NOT NULL,
+            "EndedAt" timestamptz NULL
         );
         """;
 }

@@ -103,6 +103,53 @@ internal sealed class SqlNameScope
     }
 
     /// <summary>
+    /// The column an UPDATE's setter writes, or null after recording why it cannot. The map
+    /// decides: a mapped column, an owned member's included, is written; a whole owned object, a
+    /// composite or a system column such as xmin is ZAO102; anything else ZAO105. Each is recorded
+    /// once per member and location.
+    /// </summary>
+    public string? SetterColumn(SqlMemberExpression target)
+    {
+        var source = SourceOf(target.SourceAlias);
+        string? column;
+        if (target.WholeObject is { } whole)
+        {
+            if (IsOwned(source, target.Member))
+            {
+                Record(LinqDiagnostics.UnsupportedAt(
+                    "Setting '" + target.Member + "', a whole owned object rather than one of its columns,", target.Location));
+                return null;
+            }
+            column = ResolveObject(source, target.Member, whole.Text, whole.CompositeType, target.Location, projected: false, out _);
+        }
+        else if (source.Columns.TryGetValue(target.Member, out var mapped))
+        {
+            column = mapped.Column;
+        }
+        else
+        {
+            Unmapped(source, target.Member, target.Location, projected: false);
+            column = null;
+        }
+
+        if (column is not null && SystemColumns.Contains(column))
+        {
+            Record(LinqDiagnostics.UnsupportedAt(
+                "Setting '" + target.Member + "', whose column " + column + " is a system column PostgreSQL sets itself,",
+                target.Location));
+            return null;
+        }
+        return column;
+    }
+
+    // PostgreSQL's system columns, which an UPDATE cannot assign. A quoted name in another case,
+    // such as "Xmin", is an ordinary column.
+    private static readonly HashSet<string> SystemColumns = new(StringComparer.Ordinal)
+    {
+        "xmin", "xmax", "cmin", "cmax", "ctid", "tableoid",
+    };
+
+    /// <summary>
     /// The statement's SELECT list, so a member that is not mapped there reports in a
     /// projection's terms, ZAO107, and elsewhere ZAO102 or ZAO105.
     /// </summary>

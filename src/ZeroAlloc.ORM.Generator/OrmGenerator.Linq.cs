@@ -94,6 +94,7 @@ public sealed partial class OrmGenerator
             new LinqOverrides(translation.Facets, translation.SourceComment)
             {
                 NoRowsMessage = isCommand && ThrowsOnNoRows(ctx) ? NoRowsMessage(ctx) : null,
+                JsonParameters = translation.JsonParameters,
             });
         if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {

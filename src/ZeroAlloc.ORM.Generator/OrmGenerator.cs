@@ -1367,8 +1367,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
                 }
 
-                // A string marked [Json] binds as jsonb, which only Npgsql can send.
-                var isJson = !isCt && IsJsonString(p, p.Type);
+                // A string marked [Json] binds as jsonb, which only Npgsql can send. So does one a
+                // [LinqCommand] update sets into a [Json] column.
+                var isJson = !isCt && (IsJsonString(p, p.Type)
+                    || (linq is not null && p.Type.SpecialType == SpecialType.System_String
+                        && linq.JsonParameters.Contains(p.Name, StringComparer.Ordinal)));
                 if (isJson)
                 {
                     diagnostics.Add(JsonRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
@@ -4936,7 +4939,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
     // Whether a value binds as jsonb: it carries [Json] and is a string. [Json] on any
     // other type is ZAO083, reported by its own pipeline, and binds as it would unmarked.
-    private static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
+    internal static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
         => type.SpecialType == SpecialType.System_String && HasJsonAttribute(symbol);
 
     // A composite member binds through the property named exactly like the ctor

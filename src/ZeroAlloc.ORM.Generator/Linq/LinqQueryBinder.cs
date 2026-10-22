@@ -80,13 +80,14 @@ internal static class LinqQueryBinder
     }
 
     // The statement's sources: a SELECT's FROM, alias and joins, a terminal's those of its inner
-    // SELECT, and a DELETE's table, which has neither an alias nor a join.
+    // SELECT, and a DELETE's or an UPDATE's table, which has neither an alias nor a join.
     private static (SqlTableSource From, string? Alias, EquatableArray<SqlJoin> Joins) SourcesOf(SqlStatement statement) => statement switch
     {
         SqlSelectStatement select => (select.From, select.Alias, select.Joins),
         SqlAggregateStatement aggregate => (aggregate.Source.From, aggregate.Source.Alias, aggregate.Source.Joins),
         SqlScalarAggregateStatement scalar => (scalar.Source.From, scalar.Source.Alias, scalar.Source.Joins),
         SqlDeleteStatement delete => (delete.Table, null, default),
+        SqlUpdateStatement update => (update.Table, null, default),
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 

@@ -64,6 +64,12 @@ internal sealed record LinqTranslation(
     /// parameters that cannot take a null; the binder reports ZAO107 for those the map owns.
     /// </summary>
     public EquatableArray<LinqLiftedProjection> LiftedProjections { get; init; }
+
+    /// <summary>
+    /// The C# names of the value parameters an <c>ExecuteUpdate</c> sets into a <c>[Json]</c>
+    /// column, in ordinal order: they bind as jsonb, as a <c>[Json]</c> parameter does.
+    /// </summary>
+    public EquatableArray<string> JsonParameters { get; init; }
 }
 
 /// <summary>

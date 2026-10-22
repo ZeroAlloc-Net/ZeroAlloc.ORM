@@ -57,6 +57,12 @@ internal static class EnumParameterStorage
                     foreach (var predicate in delete.Predicates)
                         Visit(predicate);
                     break;
+                case SqlUpdateStatement update:
+                    foreach (var setter in update.Setters)
+                        Set(setter);
+                    foreach (var predicate in update.Predicates)
+                        Visit(predicate);
+                    break;
                 default:
                     throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + ".");
             }
@@ -135,6 +141,10 @@ internal static class EnumParameterStorage
                     Visit(conditional.Condition);
                     Visit(conditional.Predicate);
                     break;
+                case SqlArithmeticExpression arithmetic:
+                    Visit(arithmetic.Left);
+                    Visit(arithmetic.Right);
+                    break;
                 // Forms that compare no enum parameter with a column or another parameter. One
                 // case per SqlExpression record, as in the renderer, so a new form is decided here.
                 case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
@@ -196,6 +206,29 @@ internal static class EnumParameterStorage
                         "Comparing '" + first.Member + "' with '" + second.Member
                             + "', whose columns store the enum differently, one by name and one as an integer,",
                         first.Location));
+                    break;
+            }
+        }
+
+        // A setter's target column is a vote, as a compared column is: an enum parameter set into
+        // it binds the way it stores the enum. A column of the row set into one that stores the
+        // enum differently would write text into an integer, or the reverse.
+        void Set(SqlSetter setter)
+        {
+            switch (setter.Value)
+            {
+                case SqlParameterExpression { ColumnPicksEnumStorage: true } parameter:
+                    Vote(parameter, names.IsEnumAsString(setter.Column));
+                    break;
+                case SqlMemberExpression { ColumnPicksEnumStorage: true } member
+                    when setter.Column.ColumnPicksEnumStorage && names.IsEnumAsString(member) != names.IsEnumAsString(setter.Column):
+                    conflicts.Add(LinqDiagnostics.UnsupportedAt(
+                        "Setting '" + setter.Column.Member + "' from '" + member.Member
+                            + "', whose columns store the enum differently, one by name and one as an integer,",
+                        member.Location));
+                    break;
+                default:
+                    Visit(setter.Value);
                     break;
             }
         }

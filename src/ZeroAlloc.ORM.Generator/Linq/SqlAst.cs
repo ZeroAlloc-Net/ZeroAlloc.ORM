@@ -107,6 +107,38 @@ internal sealed record SqlScalarAggregateStatement(SqlAggregateCallExpression Ca
 /// </remarks>
 internal sealed record SqlDeleteStatement(SqlTableSource Table, EquatableArray<SqlExpression> Predicates) : SqlStatement;
 
+/// <summary>
+/// <c>UPDATE table SET a = x, b = y [WHERE predicates]</c>: an <c>ExecuteUpdate(...)</c> terminal of
+/// a <c>[LinqCommand]</c> chain, whose rows affected the method returns. Without predicates it
+/// updates every row, as EF Core's <c>ExecuteUpdate</c> does; nothing is added.
+/// </summary>
+/// <param name="Table">The entity whose rows are updated.</param>
+/// <param name="Setters">One SET item per <c>SetProperty</c>, in written order; never empty.</param>
+/// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
+/// <remarks>
+/// The table takes no alias, for the reasons <see cref="SqlDeleteStatement"/> gives. A setter's
+/// value reads the row as it was before the statement, as every SET item does in PostgreSQL.
+/// </remarks>
+internal sealed record SqlUpdateStatement(
+    SqlTableSource Table,
+    EquatableArray<SqlSetter> Setters,
+    EquatableArray<SqlExpression> Predicates) : SqlStatement;
+
+/// <summary>
+/// One <c>SetProperty</c>: <c>"Col" = value</c>. The target names the entity member, as every
+/// member in the tree does; the map gives its column when the statement is bound, and decides
+/// there what an object member is: an owned object, a composite, or one plain column.
+/// </summary>
+/// <param name="Column">
+/// The member the setter writes, such as <c>State</c> or the owned <c>Outcome.PullRequestUrl</c>.
+/// Its location is the target lambda's body, where a target the map rejects is reported.
+/// </param>
+/// <param name="Value">
+/// A column of the row, a companion parameter, a literal, or a <see cref="SqlArithmeticExpression"/>
+/// over those.
+/// </param>
+internal sealed record SqlSetter(SqlMemberExpression Column, SqlExpression Value);
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
@@ -187,6 +219,22 @@ internal enum SqlBinaryOperator
     GreaterThanOrEqual,
     And,
     Or,
+}
+
+/// <summary>
+/// <c>(left op right)</c>: C#'s <c>+</c>, <c>-</c> or <c>*</c> on <c>int</c>, <c>long</c>,
+/// <c>decimal</c>, <c>double</c> or <c>float</c>, read in a setter's value only. Always
+/// parenthesised, so the tree's grouping survives the flat text. A NULL operand makes it NULL,
+/// as C#'s lifted operators do. An integer result out of its type's range raises PostgreSQL's
+/// error, where unchecked C# would wrap: a known difference.
+/// </summary>
+internal sealed record SqlArithmeticExpression(SqlArithmeticOperator Operator, SqlExpression Left, SqlExpression Right) : SqlExpression;
+
+internal enum SqlArithmeticOperator
+{
+    Add,
+    Subtract,
+    Multiply,
 }
 
 /// <summary>

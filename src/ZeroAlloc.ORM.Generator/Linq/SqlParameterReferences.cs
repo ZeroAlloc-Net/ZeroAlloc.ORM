@@ -27,6 +27,14 @@ internal static class SqlParameterReferences
             case SqlDeleteStatement delete:
                 foreach (var predicate in delete.Predicates) Add(predicate, names);
                 break;
+            case SqlUpdateStatement update:
+                foreach (var setter in update.Setters)
+                {
+                    Add(setter.Column, names);
+                    Add(setter.Value, names);
+                }
+                foreach (var predicate in update.Predicates) Add(predicate, names);
+                break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + statement.GetType().Name + ".");
         }
@@ -89,6 +97,10 @@ internal static class SqlParameterReferences
             case SqlAnyExpression any:
                 Add(any.Operand, names);
                 Add(any.Array, names);
+                break;
+            case SqlArithmeticExpression arithmetic:
+                Add(arithmetic.Left, names);
+                Add(arithmetic.Right, names);
                 break;
             case SqlConditionalExpression conditional:
                 Add(conditional.Condition, names);

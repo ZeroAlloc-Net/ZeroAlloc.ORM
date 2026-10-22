@@ -84,6 +84,75 @@ internal static partial class LinqQueryReader
         return OperandRead.Reported;
     }
 
+    // A setter's value: the forms every clause reads, a column of the row, a companion parameter
+    // or a constant, plus null, and +, - and * over those on numbers. Arithmetic is read here
+    // only; a predicate keeps rejecting it. Without a row parameter, as for SetProperty's plain
+    // value, only parameters and constants are values. Returns null after reporting.
+    private static SqlExpression? ReadSetterValue(IOperation value, IParameterSymbol? row, ReaderContext context)
+    {
+        var op = Unwrap(value);
+        if (IsNullValue(op)) return SqlLiteralExpression.Null;
+        if (!op.ConstantValue.HasValue && op is IBinaryOperation binary) return ReadArithmetic(binary, row, context);
+
+        switch (ReadOperand(value, row, context, out var expression))
+        {
+            case OperandRead.Read:
+                return expression;
+            case OperandRead.Unsupported:
+                context.Report(LinqDiagnostics.Unsupported(
+                    "'" + op.Syntax + "' as a setter value, rather than a companion parameter, a constant, a column of the row, "
+                        + "or +, - and * over those,",
+                    op.Syntax.GetLocation()));
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    // `null`, written bare or cast, as `(DateTimeOffset?)null`, or `default` of a type that can be
+    // null: the NULL literal. An explicit cast of a null to Nullable<T> is not a constant.
+    private static bool IsNullValue(IOperation op) => op switch
+    {
+        _ when op.ConstantValue is { HasValue: true, Value: null } => true,
+        IConversionOperation { Conversion.IsUserDefined: false, Operand: var operand } => IsNullValue(Unwrap(operand)),
+        IDefaultValueOperation { Type: { } type } => CanBeNull(type) || type.IsReferenceType,
+        _ => false,
+    };
+
+    // C#'s built-in +, - and * on int, long, decimal, double and float, lifted ones included,
+    // whose NULL operand makes the result NULL as in C#. Each operand is a setter value itself.
+    private static SqlArithmeticExpression? ReadArithmetic(IBinaryOperation binary, IParameterSymbol? row, ReaderContext context)
+    {
+        var arithmetic = binary.OperatorKind switch
+        {
+            BinaryOperatorKind.Add => SqlArithmeticOperator.Add,
+            BinaryOperatorKind.Subtract => SqlArithmeticOperator.Subtract,
+            BinaryOperatorKind.Multiply => SqlArithmeticOperator.Multiply,
+            _ => (SqlArithmeticOperator?)null,
+        };
+        if (arithmetic is not { } kind || !IsArithmeticOnNumbers(binary))
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + binary.Syntax + "' in a setter value, where +, - and * apply to int, long, decimal, double and float only,",
+                binary.Syntax.GetLocation()));
+            return null;
+        }
+
+        var left = ReadSetterValue(binary.LeftOperand, row, context);
+        if (left is null) return null;
+        var right = ReadSetterValue(binary.RightOperand, row, context);
+        return right is null ? null : new SqlArithmeticExpression(kind, left, right);
+    }
+
+    // The operator is the language's own: no user-defined one, though decimal's built-in
+    // operators are bound to its op_ methods. The result, and so both promoted operands, is one
+    // of the five numeric types; a string + is a concatenation and an enum + is not a number.
+    private static bool IsArithmeticOnNumbers(IBinaryOperation binary)
+        => (binary.OperatorMethod is null || binary.OperatorMethod.ContainingType?.SpecialType == SpecialType.System_Decimal)
+            && binary.Type is { } type
+            && UnwrapNullable(type).SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
+                or SpecialType.System_Decimal or SpecialType.System_Double or SpecialType.System_Single;
+
     // A column or a parameter, recorded in NullableValues when its declared type can be null.
     private static SqlExpression? ReadReference(IOperation op, IParameterSymbol? row, ReaderContext context)
     {

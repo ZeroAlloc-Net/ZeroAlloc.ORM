@@ -42,6 +42,16 @@ public sealed class AggregationSurfaceTests
         Throws(() => table.ExecuteDelete());
     }
 
+    // The setters are read at build time with the rest of the chain; neither overload runs.
+    [Fact]
+    public void Execute_update_throws()
+    {
+        IQuery<Event> table = null!;
+
+        Throws(() => table.ExecuteUpdate(set => set.SetProperty(e => e.InputTokens, 1)));
+        Throws(() => table.ExecuteUpdate(set => set.SetProperty(e => e.OutputTokens, e => e.OutputTokens + 1)));
+    }
+
     [Fact]
     public void Scalar_aggregates_throw()
     {

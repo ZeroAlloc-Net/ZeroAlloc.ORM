@@ -33,6 +33,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlDeleteStatement delete:
                 RenderDelete(sb, delete, names);
                 break;
+            case SqlUpdateStatement update:
+                RenderUpdate(sb, update, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -89,6 +92,34 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         sb.Append("DELETE FROM ");
         AppendTable(sb, names.Table, names.Schema, alias: null);
         RenderWhere(sb, delete.Predicates, names);
+    }
+
+    // `UPDATE "schema"."table" SET "A" = @a, "B" = ("B" + @n) [WHERE a AND b]`, in setter order.
+    // The table takes no alias, nor does a SET target, which PostgreSQL rejects qualified. An
+    // enum constant takes its target column's storage, as it does in a comparison. A column
+    // set twice is reported at its second setter: PostgreSQL rejects it, and it is a mistake.
+    private static void RenderUpdate(StringBuilder sb, SqlUpdateStatement update, SqlNameScope names)
+    {
+        sb.Append("UPDATE ");
+        AppendTable(sb, names.Table, names.Schema, alias: null);
+        sb.Append(" SET ");
+        var set = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < update.Setters.Length; i++)
+        {
+            var setter = update.Setters[i];
+            if (i > 0) sb.Append(", ");
+            var column = names.SetterColumn(setter.Column);
+            if (column is not null && !set.Add(column))
+            {
+                names.Report(LinqDiagnostics.UnsupportedAt(
+                    "Setting '" + setter.Column.Member + "', whose column " + column + " an earlier SetProperty sets already,",
+                    setter.Column.Location));
+            }
+            AppendIdentifier(sb, column ?? setter.Column.Member);
+            sb.Append(" = ");
+            RenderComparand(sb, setter.Value, setter.Column, names);
+        }
+        RenderWhere(sb, update.Predicates, names);
     }
 
     // As a paged count, a paged aggregate reads a paged subquery. The subquery selects the
@@ -369,6 +400,18 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                     sb.Append(", 'UTC')");
                 else
                     sb.Append(')');
+                break;
+            case SqlArithmeticExpression arithmetic:
+                sb.Append('(');
+                RenderExpression(sb, arithmetic.Left, names);
+                sb.Append(arithmetic.Operator switch
+                {
+                    SqlArithmeticOperator.Add => " + ",
+                    SqlArithmeticOperator.Subtract => " - ",
+                    _ => " * ",
+                });
+                RenderExpression(sb, arithmetic.Right, names);
+                sb.Append(')');
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

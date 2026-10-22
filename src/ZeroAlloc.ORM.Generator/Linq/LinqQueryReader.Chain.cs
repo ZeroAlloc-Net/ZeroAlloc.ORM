@@ -65,6 +65,9 @@ internal static partial class LinqQueryReader
         // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate. Only Where and
         // WhereIf may come before it; null for a query's chain and for a subquery's.
         public string? Write { get; init; }
+
+        // An ExecuteUpdate's SetProperty calls, in written order.
+        public ImmutableArray<SqlSetter>.Builder Setters { get; } = ImmutableArray.CreateBuilder<SqlSetter>();
     }
 
     private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
@@ -77,13 +80,15 @@ internal static partial class LinqQueryReader
         };
         if (operation is null || !ReadChain(operation, chain, context)) return null;
 
-        // A write deletes the rows its conditions select; without any, every row, as EF's does.
-        // Each write names its statement here, so a new one cannot fall through to a DELETE.
+        // A write deletes or updates the rows its conditions select; without any, every row, as
+        // EF's does. Each write names its statement here, so a new one cannot fall through.
         if (chain.Write is { } write)
         {
+            var predicates = new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable());
             return write switch
             {
-                "ExecuteDelete" => new SqlDeleteStatement(chain.From!, new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable())),
+                "ExecuteDelete" => new SqlDeleteStatement(chain.From!, predicates),
+                "ExecuteUpdate" => new SqlUpdateStatement(chain.From!, new EquatableArray<SqlSetter>(chain.Setters.ToImmutable()), predicates),
                 _ => throw new InvalidOperationException("No statement for write " + write),
             };
         }
@@ -209,7 +214,8 @@ internal static partial class LinqQueryReader
         // A write reads its rows from the table and its conditions alone.
         if (chain.Write is { } write)
         {
-            if (string.Equals(name, write, StringComparison.Ordinal)) return true;
+            if (string.Equals(name, write, StringComparison.Ordinal))
+                return !string.Equals(write, "ExecuteUpdate", StringComparison.Ordinal) || ReadSetters(invocation, chain, context);
             if (name is not ("Where" or "WhereIf"))
                 return Unsupported(invocation, "'" + name + "' before '" + write + "'", context);
         }
