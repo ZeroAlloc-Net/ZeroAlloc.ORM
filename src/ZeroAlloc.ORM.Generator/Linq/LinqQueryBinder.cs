@@ -13,25 +13,46 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal static class LinqQueryBinder
 {
     public static LinqBoundQuery Bind(SqlStatement statement, EquatableArray<EntityMapModel> maps)
+        => Bind(new EquatableArray<SqlStatement>(ImmutableArray.Create(statement)), maps);
+
+    // Several statements, a tuple companion's, bind as one: each in its own name scope, and an
+    // enum parameter binds one way for all of them, since every batch command binds it alike.
+    public static LinqBoundQuery Bind(EquatableArray<SqlStatement> statements, EquatableArray<EntityMapModel> maps)
     {
-        var names = Scope(SelectOf(statement), maps, out var unmapped);
-        if (names is null) return Failed(unmapped!);
+        var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
+        foreach (var statement in statements)
+        {
+            var names = Scope(SelectOf(statement), maps, out var unmapped);
+            if (names is null) return Failed(unmapped!);
+            builder.Add((statement, names));
+        }
+        var scopes = builder.MoveToImmutable();
 
         // Enum storage first: the render writes an enum constant by name next to a name-bound
         // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
-        var storage = EnumParameterStorage.Decide(statement, names);
-        names.NameBoundParameters = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
-        var sql = PostgresSqlRenderer.Instance.Render(statement, names);
-        var diagnostics = names.Diagnostics;
-        if (!diagnostics.IsEmpty)
-            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics));
+        var storage = EnumParameterStorage.Decide(scopes);
+        var byName = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
+        var sql = new string[statements.Length];
+        var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        for (var i = 0; i < statements.Length; i++)
+        {
+            var names = scopes[i].Names;
+            names.NameBoundParameters = byName;
+            sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
+            diagnostics.AddRange(names.Diagnostics);
+        }
+        if (diagnostics.Count > 0)
+            return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
 
         if (!storage.Conflicts.IsEmpty)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(storage.Conflicts));
 
+        var ordinals = ImmutableArray.CreateBuilder<EquatableArray<int>>(statements.Length);
+        for (var i = 0; i < statements.Length; i++)
+            ordinals.Add(EnumAsStringOrdinals(statements[i], scopes[i].Names, storage.ByName));
         return new LinqBoundQuery(
-            sql,
-            EnumAsStringOrdinals(statement, names, storage.ByName),
+            string.Join(";\n", sql),
+            new EquatableArray<EquatableArray<int>>(ordinals.MoveToImmutable()),
             new EquatableArray<string>(storage.ByName),
             default);
     }

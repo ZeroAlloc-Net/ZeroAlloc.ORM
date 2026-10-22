@@ -45,8 +45,20 @@ internal static partial class LinqQueryReader
         if (parameterError is not null) return Failed(comment, parameterError);
         if (!CheckParameterShapes(companion.Symbol!, context)) return Failed(comment, context.Diagnostics.ToArray());
 
-        var shape = ClassifyShape(method.ReturnType, companion.RowType!);
-        if (shape is null) return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
+        // One shape per chain: the method's own, or one per element of its tuple.
+        ImmutableArray<LinqResultShape> shapes;
+        if (companion.IsTuple)
+        {
+            var tupleShapes = ClassifyTupleShapes(method, methodSyntax, companion.Symbol!, companion.RowTypes, out var mismatch);
+            if (tupleShapes is null) return Failed(comment, mismatch!);
+            shapes = tupleShapes.Value;
+        }
+        else
+        {
+            var shape = ClassifyShape(method.ReturnType, companion.RowTypes[0]);
+            if (shape is null) return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
+            shapes = ImmutableArray.Create(shape.Value);
+        }
 
         // Facets first: a null test casts a parameter only when it has none.
         var valueParameters = ValueParameters(method);
@@ -58,15 +70,33 @@ internal static partial class LinqQueryReader
             if (OrmGenerator.HasWrittenDbType(parameter)) context.TypedParameters.Add(parameter.Name);
         }
 
-        var statement = ReadStatement(companion.Body!, shape.Value, context);
-        if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
+        var statements = ImmutableArray.CreateBuilder<SqlStatement>(shapes.Length);
+        for (var i = 0; i < shapes.Length; i++)
+        {
+            // Each chain reads its own table: what one knows of its values says nothing of another's.
+            context.NullableValues.Clear();
+            context.LiftedValues.Clear();
+            var statement = ReadStatement(companion.Bodies[i], shapes[i], context);
+            if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
-        // A Sum, Min, Max or Average gives one value, which a list or a stream cannot read.
-        if (statement is SqlScalarAggregateStatement && shape != LinqResultShape.Scalar)
-            return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
+            // A Sum, Min, Max or Average gives one value, which a list or a stream cannot read.
+            if (statement is SqlScalarAggregateStatement && shapes[i] != LinqResultShape.Scalar)
+            {
+                return Failed(comment, companion.IsTuple
+                    ? ElementMismatch(method.Name, methodSyntax, companion.Symbol!, TupleElementsOf(method)[i], i,
+                        methodSyntax.ReturnType.DescendantNodesAndSelf().OfType<TupleTypeSyntax>().FirstOrDefault())
+                    : ShapeMismatch(method, methodSyntax, companion.Symbol!));
+            }
+            statements.Add(statement);
+        }
 
         // What is left in the diagnostics are warnings, such as ZAO110.
-        return new LinqTranslation(statement, shape.Value, facets, comment, new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()));
+        return new LinqTranslation(
+            new EquatableArray<SqlStatement>(statements.MoveToImmutable()),
+            companion.IsTuple ? LinqResultShape.MultiResult : shapes[0],
+            facets,
+            comment,
+            new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()));
     }
 
     // ZAO112, at the method's return type.

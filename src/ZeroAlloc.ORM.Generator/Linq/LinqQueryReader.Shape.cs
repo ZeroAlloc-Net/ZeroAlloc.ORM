@@ -1,5 +1,10 @@
 using System;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.Linq;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
@@ -25,6 +30,14 @@ internal static partial class LinqQueryReader
         {
             return null;
         }
+        return ClassifyResult(result, rowType);
+    }
+
+    // The shape of the T in Task<T>, or of one element of a tuple: every row, the first row or
+    // the terminal's one value. Null when it does not fit.
+    private static LinqResultShape? ClassifyResult(ITypeSymbol result, ITypeSymbol rowType)
+    {
+        var counted = rowType.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Boolean;
         if (IsGeneric(result, CollectionsNamespace, "List`1", out var element)
             || IsGeneric(result, CollectionsNamespace, "IReadOnlyList`1", out element)
             || IsGeneric(result, CollectionsNamespace, "IList`1", out element))
@@ -76,4 +89,101 @@ internal static partial class LinqQueryReader
 
     private static bool IsRow(ITypeSymbol candidate, ITypeSymbol rowType)
         => SymbolEqualityComparer.Default.Equals(candidate, rowType);
+
+    // The element shapes of a tuple companion's method: Task<(...)> or ValueTask<(...)>, the
+    // tuple optionally nullable, with one element per companion element, each fitting its
+    // element's IQuery<T>. Null with the ZAO112 that names what does not fit.
+    private static ImmutableArray<LinqResultShape>? ClassifyTupleShapes(
+        IMethodSymbol method,
+        MethodDeclarationSyntax syntax,
+        IMethodSymbol companion,
+        ImmutableArray<ITypeSymbol> rowTypes,
+        out DiagnosticInfo? mismatch)
+    {
+        mismatch = null;
+        var returnType = method.ReturnType;
+        var methodTuple = (IsGeneric(returnType, TasksNamespace, "Task`1", out var result)
+            || IsGeneric(returnType, TasksNamespace, "ValueTask`1", out result))
+                ? UnwrapNullable(result) as INamedTypeSymbol
+                : null;
+        if (methodTuple is not { IsTupleType: true })
+        {
+            mismatch = TupleMismatch(method, syntax, companion, "'" + returnType.ToDisplayString() + "'",
+                syntax.ReturnType.GetLocation(), "a tuple companion's method returns Task or ValueTask of a tuple; ");
+            return null;
+        }
+
+        var elements = methodTuple.TupleElements;
+        if (elements.Length != rowTypes.Length)
+        {
+            mismatch = TupleMismatch(method, syntax, companion, "'" + returnType.ToDisplayString() + "'",
+                syntax.ReturnType.GetLocation(),
+                "its tuple has " + elements.Length.ToString(CultureInfo.InvariantCulture) + " elements and the companion's "
+                    + rowTypes.Length.ToString(CultureInfo.InvariantCulture) + "; ");
+            return null;
+        }
+
+        var tupleSyntax = syntax.ReturnType.DescendantNodesAndSelf().OfType<TupleTypeSyntax>().FirstOrDefault();
+        var shapes = ImmutableArray.CreateBuilder<LinqResultShape>(elements.Length);
+        for (var i = 0; i < elements.Length; i++)
+        {
+            if (ClassifyResult(elements[i].Type, rowTypes[i]) is { } shape)
+            {
+                shapes.Add(shape);
+                continue;
+            }
+            mismatch = ElementMismatch(method.Name, syntax, companion, elements[i], i, tupleSyntax);
+            return null;
+        }
+        return shapes.MoveToImmutable();
+    }
+
+    // ZAO112 for one tuple element, at that element of the method's return type.
+    private static DiagnosticInfo ElementMismatch(
+        string methodName,
+        MethodDeclarationSyntax syntax,
+        IMethodSymbol companion,
+        IFieldSymbol element,
+        int index,
+        TupleTypeSyntax? tupleSyntax)
+    {
+        var companionElement = ((INamedTypeSymbol)companion.ReturnType).TupleElements[index];
+        var location = tupleSyntax is not null && index < tupleSyntax.Elements.Count
+            ? tupleSyntax.Elements[index].GetLocation()
+            : syntax.ReturnType.GetLocation();
+        return LinqDiagnostics.ShapeMismatchAt(
+            methodName,
+            "'" + element.Type.ToDisplayString() + "' as tuple element '" + element.Name + "'",
+            "'" + companionElement.Type.ToDisplayString() + "'",
+            TupleShapes,
+            location);
+    }
+
+    private static DiagnosticInfo TupleMismatch(
+        IMethodSymbol method,
+        MethodDeclarationSyntax syntax,
+        IMethodSymbol companion,
+        string returned,
+        Location location,
+        string reason)
+        => LinqDiagnostics.ShapeMismatchAt(
+            method.Name,
+            returned,
+            "'" + companion.ReturnType.ToDisplayString() + "'",
+            reason + TupleShapes,
+            location);
+
+    // What each element of a tuple companion's method can be.
+    private const string TupleShapes =
+        "return one tuple element per companion element: List<T>, IReadOnlyList<T>, IList<T> or T?, with T the element's row type, "
+        + "or after a terminal the value it gives, as for a method of its own";
+
+    // The elements of the tuple a tuple companion's method returns, which ClassifyTupleShapes
+    // has checked.
+    private static ImmutableArray<IFieldSymbol> TupleElementsOf(IMethodSymbol method)
+    {
+        if (!IsGeneric(method.ReturnType, TasksNamespace, "Task`1", out var result))
+            IsGeneric(method.ReturnType, TasksNamespace, "ValueTask`1", out result);
+        return ((INamedTypeSymbol)UnwrapNullable(result)).TupleElements;
+    }
 }

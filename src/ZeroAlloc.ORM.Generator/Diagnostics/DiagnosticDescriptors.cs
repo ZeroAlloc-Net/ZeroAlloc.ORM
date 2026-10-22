@@ -816,17 +816,19 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO111"));
 
-    // ZAO112 — the method's return type does not fit the companion's IQuery<T>. Reported at the
-    // method's return type.
+    // ZAO112 — the method's return type does not fit the companion's IQuery<T>, or a tuple
+    // companion's tuple of them. Reported at the method's return type, or at the tuple element
+    // that does not fit.
     //
     // MessageArgs:
     //   {0} = the [LinqQuery] method name
-    //   {1} = the method's return type
-    //   {2} = the companion's return type
+    //   {1} = the method's return type, quoted, or the tuple element that does not fit
+    //   {2} = the companion's return type, or its tuple element, quoted
+    //   {3} = the return types that fit
     public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
         id: "ZAO112",
         title: "LINQ method return type does not fit the query",
-        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; after Count, LongCount or Any, return Task or ValueTask of int, long or bool; after Sum, Average, Min or Max, of the value it gives: int, long, double or decimal, one of those or DateTime or DateTimeOffset as nullable, or string?",
+        messageFormat: "[LinqQuery] method '{0}' returns {1}, which does not fit {2}; {3}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,

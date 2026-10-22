@@ -8,6 +8,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // grouped token report reads. "AnalysisRequests" is Daedalus' code analysis request, whose owned
 // Repository, Location and optional Outcome are columns of the table: some under the bare names
 // Daedalus gives them with HasColumnName, the rest under EF's {Owner}_{Property} default.
+// "BrainstormSessions" and "BrainstormMessages" are Daedalus' brainstorm session and its
+// messages, which load together as a parent with its children.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -65,6 +67,17 @@ internal static class LinqSchema
             "Outcome_PullRequestUrl" text NULL,
             "Outcome_ValidationResult" jsonb NULL,
             "Outcome_HasFailedValidation" boolean NULL
+        );
+        CREATE TABLE "BrainstormSessions" (
+            "Id" uuid PRIMARY KEY,
+            "Topic" text NOT NULL
+        );
+        CREATE TABLE "BrainstormMessages" (
+            "Id" uuid PRIMARY KEY,
+            "SessionId" uuid NOT NULL,
+            "Role" text NOT NULL,
+            "Content" text NOT NULL,
+            "CreatedAt" timestamptz NOT NULL
         );
         """;
 }

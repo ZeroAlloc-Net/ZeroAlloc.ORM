@@ -42,7 +42,18 @@ internal sealed record MultiResultElement(
     string? GetterMethod,
     ConventionInfo? Convention,
     bool IsNullable,
-    EquatableArray<ColumnBinding> Columns);
+    EquatableArray<ColumnBinding> Columns)
+{
+    // [LinqQuery] — a Row element reads null for an empty result set, as a single-row LINQ
+    // method does, instead of throwing. The first element of a nullable outer tuple still makes
+    // the whole tuple null. Always false off the LINQ path, so the [Query] emit is unchanged.
+    public bool NullWhenNoRow { get; init; }
+
+    // [LinqQuery] — a non-nullable Scalar element from Average, Min or Max, which SQL gives as
+    // NULL over no rows, throws InvalidOperationException("Sequence contains no elements") as
+    // LINQ does. See QueryMethodModel.LinqThrowsOnNoElements. Always false off the LINQ path.
+    public bool ThrowsOnNoElements { get; init; }
+}
 
 // Materialization plan for a tuple return type. Each `Elements[i]` corresponds to
 // the i-th tuple element AND the i-th result set produced by the multi-statement

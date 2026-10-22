@@ -305,7 +305,12 @@ internal sealed record QueryMethodModel(
     // InvalidOperationException("Sequence contains no elements") on NULL, as LINQ does;
     // a nullable result returns null as before. Always false off the LINQ path, so the
     // [Query] scalar emit is unchanged.
-    bool LinqThrowsOnNoElements = false);
+    bool LinqThrowsOnNoElements = false,
+    // [LinqQuery] — for a tuple companion's batch, the SQL names of the parameters each
+    // statement renders, in statement order. Each batch command then binds only its own
+    // statement's parameters. Default off the LINQ multi-result path: every batch command binds
+    // every parameter, as before.
+    EquatableArray<EquatableArray<string>> LinqStatementParameters = default);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

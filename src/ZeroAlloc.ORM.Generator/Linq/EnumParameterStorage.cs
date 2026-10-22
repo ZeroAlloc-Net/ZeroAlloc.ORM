@@ -27,26 +27,37 @@ internal static class EnumParameterStorage
     public static (ImmutableArray<string> ByName, ImmutableArray<DiagnosticInfo> Conflicts) Decide(
         SqlStatement statement,
         SqlNameScope names)
+        => Decide(ImmutableArray.Create((statement, names)));
+
+    // The statements of one method, each with its own name scope. A parameter binds one way in
+    // every statement, so the votes and links of all of them decide it together.
+    public static (ImmutableArray<string> ByName, ImmutableArray<DiagnosticInfo> Conflicts) Decide(
+        ImmutableArray<(SqlStatement Statement, SqlNameScope Names)> statements)
     {
         var votes = new Dictionary<string, bool>(StringComparer.Ordinal);
         var links = new List<(SqlParameterExpression Left, SqlParameterExpression Right)>();
         var conflicted = new HashSet<string>(StringComparer.Ordinal);
         var conflicts = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        var select = statement switch
+        SqlNameScope names = null!;
+        foreach (var (statement, scope) in statements)
         {
-            SqlSelectStatement own => own,
-            SqlAggregateStatement aggregate => aggregate.Source,
-            SqlScalarAggregateStatement scalar => scalar.Source,
-            _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
-        };
-        foreach (var join in select.Joins)
-        {
-            Visit(join.On);
-            foreach (var predicate in join.SourcePredicates)
+            names = scope;
+            var select = statement switch
+            {
+                SqlSelectStatement own => own,
+                SqlAggregateStatement aggregate => aggregate.Source,
+                SqlScalarAggregateStatement scalar => scalar.Source,
+                _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
+            };
+            foreach (var join in select.Joins)
+            {
+                Visit(join.On);
+                foreach (var predicate in join.SourcePredicates)
+                    Visit(predicate);
+            }
+            foreach (var predicate in select.Predicates)
                 Visit(predicate);
         }
-        foreach (var predicate in select.Predicates)
-            Visit(predicate);
 
         // A parameter compared with a decided one binds the same way.
         for (var changed = true; changed;)

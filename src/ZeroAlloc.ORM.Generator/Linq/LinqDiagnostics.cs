@@ -43,7 +43,17 @@ internal static class LinqDiagnostics
         => new("ZAO111", location, Args(parameter));
 
     public static DiagnosticInfo ShapeMismatch(string method, string returnType, string queryType, Location? location)
-        => Create("ZAO112", location, method, returnType, queryType);
+        => ShapeMismatchAt(method, "'" + returnType + "'", "'" + queryType + "'", SingleShapes, location);
+
+    // A tuple companion's mismatch: `returned` names the method's type or the tuple element that
+    // does not fit, `query` what it should fit, and `guidance` what fits.
+    public static DiagnosticInfo ShapeMismatchAt(string method, string returned, string query, string guidance, Location? location)
+        => Create("ZAO112", location, method, returned, query, guidance);
+
+    private const string SingleShapes =
+        "return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; "
+        + "after Count, LongCount or Any, return Task or ValueTask of int, long or bool; after Sum, Average, Min or Max, "
+        + "of the value it gives: int, long, double or decimal, one of those or DateTime or DateTimeOffset as nullable, or string?";
 
     private static DiagnosticInfo Create(string id, Location? location, params string[] args)
         => new(id, LocationInfo.From(location), Args(args));

@@ -248,6 +248,39 @@ private static IQuery<int> CountOpenQuery(Guid projectId) =>
 an existence. Over a page they count the page:
 `SELECT count(*)::int FROM (SELECT 1 FROM ... LIMIT ... OFFSET ...) AS q`.
 
+## Parent with children
+
+A companion can return a tuple of 2 to 7 `IQuery<T>`, one per result set, with a tuple literal of
+complete chains as its body. The method returns the matching tuple. Each element becomes its own
+statement, and the statements run as one `IAsyncDbBatch` round trip, through the same multi-result
+path as a [`[Query]` head and lines method](multi-result-set.md):
+
+```csharp
+[LinqQuery(nameof(WithExecutionsQuery))]
+public partial Task<(TaskHead? Head, List<ExecutionLine> Executions)> WithExecutions(Guid id, CancellationToken ct);
+
+private static (IQuery<TaskHead>, IQuery<ExecutionLine>) WithExecutionsQuery(Guid id) =>
+    (Sql.Table<TaskEntity>().Where(t => t.Id == id).Select(t => new TaskHead(t.Id, t.Title)),
+     Sql.Table<ExecutionEntity>()
+        .Where(e => e.TaskId == id)
+        .OrderBy(e => e.ExecutedAt)
+        .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+```
+
+```sql
+SELECT "Id", "Title" FROM "Tasks" WHERE "Id" = @id LIMIT 1;
+SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "ExecutedAt"
+```
+
+- Each element takes a shape from the table above: a list, `T?` for the first row, or the value of
+  a terminal such as `Count()`. A stream is not an element shape.
+- A missing parent reads as a `null` head and an empty child list. With a nullable tuple,
+  `Task<(TaskHead? Head, List<ExecutionLine> Executions)?>`, the whole tuple is `null` when the first
+  result set is empty, as for `[Query]`.
+- Each batch command binds only the parameters its own statement uses.
+- The caller assembles the object graph from the tuple. An element that does not fit its chain, or a
+  tuple of another length, reports [ZAO112](../diagnostics/ZAO112.md), naming the element.
+
 ## Projection
 
 `Select` constructs a positional record through the constructor its rows are read with. Each argument is
@@ -583,7 +616,7 @@ compare by name.
 
 | Code | Severity | Reports |
 |---|---|---|
-| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>`. |
+| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>` or a tuple literal of them. |
 | [ZAO101](../diagnostics/ZAO101.md) | Error | The companion's parameters are not the method's value parameters, by name, type and order. |
 | [ZAO102](../diagnostics/ZAO102.md) | Error | An operator, predicate, key, count or chain order the translator does not support. |
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
@@ -595,14 +628,12 @@ compare by name.
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |
 | [ZAO110](../diagnostics/ZAO110.md) | Warning | `Skip` or `Take` without an ordering returns rows in no defined order. |
 | [ZAO111](../diagnostics/ZAO111.md) | Error | An enum parameter is compared with columns that store the enum differently. |
-| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type does not fit the companion's `IQuery<T>`. |
+| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type, or one of its tuple elements, does not fit the companion's `IQuery<T>`. |
 
 ## Not supported yet
 
 The next planned work, in this order. Until then, write such a query as a raw `[Query]` or `[Command]`:
 
-- Loading a parent with its children: a multi-result head and lines method with a companion per
-  result set.
 - Set-based `ExecuteUpdate` and `ExecuteDelete`, optimistic concurrency checks, and `FOR UPDATE`.
 
 Also not supported today:
