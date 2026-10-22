@@ -7,8 +7,8 @@ using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
-// PostgreSQL arrays: `T[]`, `List<T>` and `IReadOnlyList<T>` of string, int, long or
-// Guid, bound as one parameter and read as one column. Every case runs with the
+// PostgreSQL arrays: `T[]`, `List<T>` and `IReadOnlyList<T>` of string, int, long, float,
+// double or Guid, bound as one parameter and read as one column. Every case runs with the
 // Npgsql stub, since without Npgsql ZAO082 rejects them. Each snapshot is also
 // compiled: the emitted code must build with no error and no warning.
 public class ArrayParameterEmitTests
@@ -34,6 +34,30 @@ public class ArrayParameterEmitTests
             {
                 [Query("SELECT COUNT(*) FROM posts WHERE tags && @tags")]
                 public partial Task<int> CountTaggedAsync(string[] tags, CancellationToken ct);
+            }
+            """);
+    }
+
+    [Fact]
+    public void Float_array_parameter_binds_value()
+    {
+        VerifyCompiled(Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT COUNT(*) FROM items WHERE embedding = @embedding")]
+                public partial Task<int> CountAsync(float[] embedding, CancellationToken ct);
+            }
+            """);
+    }
+
+    [Fact]
+    public void Double_readonly_list_parameter_binds_copy()
+    {
+        VerifyCompiled(Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT COUNT(*) FROM items WHERE weights = @weights")]
+                public partial Task<int> CountAsync(IReadOnlyList<double> weights, CancellationToken ct);
             }
             """);
     }
@@ -207,6 +231,20 @@ public class ArrayParameterEmitTests
             {
                 [Query("SELECT id, tags, scores FROM posts WHERE id = @id")]
                 public partial Task<TaggedRow?> GetAsync(Guid id, CancellationToken ct);
+            }
+            """);
+    }
+
+    [Fact]
+    public void Row_with_float_array_column_reads_GetFieldValue()
+    {
+        VerifyCompiled(Usings + """
+            public sealed record VectorRow(Guid Id, float[] Embedding, List<double> Weights);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT id, embedding, weights FROM items WHERE id = @id")]
+                public partial Task<VectorRow?> GetAsync(Guid id, CancellationToken ct);
             }
             """);
     }

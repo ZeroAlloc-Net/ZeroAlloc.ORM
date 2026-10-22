@@ -259,7 +259,7 @@ covers the procedure path; the function path is exercised by the regular
 
 ### PostgreSQL arrays
 
-`T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long` and `Guid` work as parameters and as
+`T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long`, `float`, `double` and `Guid` work as parameters and as
 columns. Parameters bind as the CLR value, so Npgsql maps `string[]` to `text[]` and `Guid[]` to `uuid[]`:
 
 ```csharp
@@ -278,6 +278,8 @@ public sealed partial class TagRepo(IAsyncDbConnection connection)
   column reads back `null` through an `IsDBNull` guard.
 - An `IReadOnlyList<T>` that is neither a `T[]` nor a `List<T>` is copied to an array before binding,
   because Npgsql does not bind an arbitrary `IReadOnlyList<T>` as an array.
+- A `float[]` parameter binds as `real[]` and a `double[]` as `double precision[]`. pgvector can cast a
+  `float[]` with `@embedding::vector`. Columns read back as `float[]` and `double[]`, not widened.
 - Columns read with `GetFieldValue<T[]>`; a `List<T>` column wraps that array in a new `List<T>`.
 - `[Query] Task<T[]>` returns a single array column, and `[Command(Kind = CommandKind.Scalar)]` can
   return `Task<T[]>` too.
@@ -285,7 +287,8 @@ public sealed partial class TagRepo(IAsyncDbConnection connection)
 - The project must reference Npgsql, otherwise the build reports ZAO082. No other provider can bind a CLR array.
 - The generator never references Npgsql. The AOT smoke project (`tests/ZeroAlloc.ORM.AotSmoke`) publishes
   array parameter and column code with `PublishAot` and zero trim or AOT warnings. It also runs it
-  against a server when `ZAORM_AOT_PG` holds a connection string, which CI does not set.
+  against a server when `ZAORM_AOT_PG` holds a connection string. CI sets it, against a postgres:18 service,
+  so the slim data source path with `EnableArrays()` runs under NativeAOT there.
 
 A connection built from `NpgsqlSlimDataSourceBuilder` registers no optional type handlers. Call
 `EnableArrays()` on it, or Npgsql throws at the first array parameter or column:

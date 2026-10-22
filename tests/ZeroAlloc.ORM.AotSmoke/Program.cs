@@ -191,28 +191,52 @@ static async Task RunPostgresAsync()
                 var list = await repo.GetListAsync(a, CancellationToken.None).ConfigureAwait(false);
                 if (list is null || !list.Tags.SequenceEqual(["x", "y"], StringComparer.Ordinal))
                     throw new InvalidOperationException("Unexpected List<string> column.");
+
+                await RunFloatArrayAsync(connection, repo, a).ConfigureAwait(false);
                 Console.WriteLine("Postgres array smoke passed.");
 
-                var ddlJson = connection.CreateCommand();
-                await using (ddlJson.ConfigureAwait(false))
-                {
-                    ddlJson.CommandText = "CREATE TABLE documents (id uuid PRIMARY KEY, body jsonb NOT NULL, note jsonb NULL);";
-                    await ddlJson.ExecuteNonQueryAsync().ConfigureAwait(false);
-                }
-
-                var json = new JsonRepo(connection);
-                var d = new Guid("1b4e28ba-2fa1-11d2-883f-0016d3cca427");
-                await json.InsertAsync(d, "{\"a\": 1}", null, CancellationToken.None).ConfigureAwait(false);
-                var doc = await json.GetAsync(d, CancellationToken.None).ConfigureAwait(false);
-                if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
-                    throw new InvalidOperationException("Unexpected jsonb row.");
-                await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
-                Console.WriteLine("Postgres jsonb smoke passed.");
+                await RunJsonAsync(connection).ConfigureAwait(false);
 
                 await RunLinqAsync(connection).ConfigureAwait(false);
             }
         }
     }
+}
+
+// jsonb strings: [Json] sets NpgsqlDbType.Jsonb, so no cast is needed in the SQL.
+static async Task RunJsonAsync(IAsyncDbConnection connection)
+{
+    var ddlJson = connection.CreateCommand();
+    await using (ddlJson.ConfigureAwait(false))
+    {
+        ddlJson.CommandText = "CREATE TABLE documents (id uuid PRIMARY KEY, body jsonb NOT NULL, note jsonb NULL);";
+        await ddlJson.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    var json = new JsonRepo(connection);
+    var d = new Guid("1b4e28ba-2fa1-11d2-883f-0016d3cca427");
+    await json.InsertAsync(d, "{\"a\": 1}", null, CancellationToken.None).ConfigureAwait(false);
+    var doc = await json.GetAsync(d, CancellationToken.None).ConfigureAwait(false);
+    if (doc is null || doc.Id != d || !string.Equals(doc.Body, "{\"a\": 1}", StringComparison.Ordinal) || doc.Note is not null)
+        throw new InvalidOperationException("Unexpected jsonb row.");
+    await json.InsertAsync(Guid.NewGuid(), "{\"a\": 2}", "[1]", CancellationToken.None).ConfigureAwait(false);
+    Console.WriteLine("Postgres jsonb smoke passed.");
+}
+
+// A float[] parameter binds as real[] and the column reads back as float[].
+static async Task RunFloatArrayAsync(IAsyncDbConnection connection, ArrayRepo repo, Guid id)
+{
+    var ddl = connection.CreateCommand();
+    await using (ddl.ConfigureAwait(false))
+    {
+        ddl.CommandText = "CREATE TABLE vectors (id uuid PRIMARY KEY, embedding real[] NOT NULL);";
+        await ddl.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
+    await repo.InsertVectorAsync(id, [0.25f, -1.5f, 3f], CancellationToken.None).ConfigureAwait(false);
+    var vector = await repo.GetVectorAsync(id, CancellationToken.None).ConfigureAwait(false);
+    if (vector is null || !vector.Embedding.AsSpan().SequenceEqual([0.25f, -1.5f, 3f]))
+        throw new InvalidOperationException("Unexpected float[] column.");
 }
 
 // [LinqQuery] through a map with a schema, column overrides and an EnumAsString column: a filter

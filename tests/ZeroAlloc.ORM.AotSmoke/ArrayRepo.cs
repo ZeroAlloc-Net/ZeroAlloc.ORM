@@ -16,4 +16,10 @@ internal sealed partial class ArrayRepo(IAsyncDbConnection connection)
 
     [Query("SELECT id, tags FROM tagged WHERE id = @id")]
     public partial Task<TaggedListRow?> GetListAsync(Guid id, CancellationToken ct);
+
+    [Command("INSERT INTO vectors (id, embedding) VALUES (@id, @embedding)")]
+    public partial Task<int> InsertVectorAsync(Guid id, float[] embedding, CancellationToken ct);
+
+    [Query("SELECT id, embedding FROM vectors WHERE id = @id")]
+    public partial Task<VectorRow?> GetVectorAsync(Guid id, CancellationToken ct);
 }

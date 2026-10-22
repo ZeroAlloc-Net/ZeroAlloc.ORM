@@ -28,7 +28,8 @@ internal static class LinqSchema
             "StartedAt" timestamptz NULL,
             "Priority" int NULL,
             "Rating" real NULL,
-            "Category" int NULL
+            "Category" int NULL,
+            "Score" real NOT NULL DEFAULT 0
         );
         CREATE TABLE "Executions" (
             "Id" uuid PRIMARY KEY,

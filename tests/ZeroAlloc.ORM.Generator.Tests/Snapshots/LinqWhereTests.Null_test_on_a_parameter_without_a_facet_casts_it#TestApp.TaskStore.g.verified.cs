@@ -7,10 +7,10 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.FindQuery
-    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@ids::uuid[] IS NOT NULL) IS NOT TRUE OR (\"Id\" = ANY(@ids))) AND ((@titles::text[] IS NOT NULL) IS NOT TRUE OR (\"Title\" = ANY(@titles))) AND ((@orders::integer[] IS NOT NULL) IS NOT TRUE OR (\"Order\" = ANY(@orders))) AND ((@sizes::bigint[] IS NOT NULL) IS NOT TRUE OR (\"Size\" = ANY(@sizes))) AND (@at::timestamptz IS NULL OR \"LocalAt\" < @at) AND (@dueOn::date IS NULL OR \"DueOn\" = @dueOn) AND (@spent::interval IS NULL OR \"Spent\" > @spent) AND (@tier::smallint IS NULL OR \"Tier\" = @tier) AND (@level IS NULL OR \"Level\" = @level) AND (@startsAt::time IS NULL OR \"StartsAt\" = @startsAt) AND (@rank IS NULL OR \"Rank\" = @rank)";
+    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE ((@ids::uuid[] IS NOT NULL) IS NOT TRUE OR (\"Id\" = ANY(@ids))) AND ((@titles::text[] IS NOT NULL) IS NOT TRUE OR (\"Title\" = ANY(@titles))) AND ((@orders::integer[] IS NOT NULL) IS NOT TRUE OR (\"Order\" = ANY(@orders))) AND ((@sizes::bigint[] IS NOT NULL) IS NOT TRUE OR (\"Size\" = ANY(@sizes))) AND ((@weights::real[] IS NOT NULL) IS NOT TRUE OR (\"Weight\" = ANY(@weights))) AND ((@ratios::double precision[] IS NOT NULL) IS NOT TRUE OR (\"Ratio\" = ANY(@ratios))) AND (@at::timestamptz IS NULL OR \"LocalAt\" < @at) AND (@dueOn::date IS NULL OR \"DueOn\" = @dueOn) AND (@spent::interval IS NULL OR \"Spent\" > @spent) AND (@tier::smallint IS NULL OR \"Tier\" = @tier) AND (@level IS NULL OR \"Level\" = @level) AND (@startsAt::time IS NULL OR \"StartsAt\" = @startsAt) AND (@rank IS NULL OR \"Rank\" = @rank)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[]? @ids, global::System.Collections.Generic.List<string>? @titles, global::System.Collections.Generic.IReadOnlyList<int>? @orders, long[]? @sizes, global::System.DateTime? @at, global::System.DateOnly? @dueOn, global::System.TimeSpan? @spent, global::TestApp.Tier? @tier, global::TestApp.Level? @level, global::System.TimeOnly? @startsAt, short? @rank, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[]? @ids, global::System.Collections.Generic.List<string>? @titles, global::System.Collections.Generic.IReadOnlyList<int>? @orders, long[]? @sizes, float[]? @weights, double[]? @ratios, global::System.DateTime? @at, global::System.DateOnly? @dueOn, global::System.TimeSpan? @spent, global::TestApp.Tier? @tier, global::TestApp.Level? @level, global::System.TimeOnly? @startsAt, short? @rank, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -35,6 +35,14 @@ partial class TaskStore
             __p_sizes.ParameterName = "sizes";
             __p_sizes.Value = (object?)@sizes ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_sizes);
+            var __p_weights = __cmd.CreateParameter();
+            __p_weights.ParameterName = "weights";
+            __p_weights.Value = (object?)@weights ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_weights);
+            var __p_ratios = __cmd.CreateParameter();
+            __p_ratios.ParameterName = "ratios";
+            __p_ratios.Value = (object?)@ratios ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_ratios);
             var __p_at = __cmd.CreateParameter();
             __p_at.ParameterName = "at";
             __p_at.Value = (object?)@at ?? global::System.DBNull.Value;

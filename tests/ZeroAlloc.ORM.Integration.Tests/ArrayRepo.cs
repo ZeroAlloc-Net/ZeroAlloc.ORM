@@ -33,6 +33,12 @@ internal sealed partial class ArrayRepo(IAsyncDbConnection connection)
     [Query("SELECT id, ints, longs FROM nums WHERE id = @id")]
     public partial Task<NumsRow?> GetNumsAsync(int id, CancellationToken ct);
 
+    [Command("INSERT INTO reals (id, floats, doubles) VALUES (@id, @floats, @doubles)")]
+    public partial Task<int> InsertRealsAsync(int id, float[] floats, double[] doubles, CancellationToken ct);
+
+    [Query("SELECT id, floats, doubles FROM reals WHERE id = @id")]
+    public partial Task<RealsRow?> GetRealsAsync(int id, CancellationToken ct);
+
     [Query("SELECT tags FROM tagged WHERE id = @id")]
     public partial Task<string[]> GetTagsAsync(Guid id, CancellationToken ct);
 

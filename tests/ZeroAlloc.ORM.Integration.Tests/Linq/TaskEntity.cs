@@ -17,4 +17,5 @@ public sealed class TaskEntity
     public int? Priority { get; private set; }
     public float? Rating { get; private set; }
     public WorkKind? Category { get; private set; }
+    public float Score { get; private set; }
 }

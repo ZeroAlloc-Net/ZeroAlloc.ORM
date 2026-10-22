@@ -207,6 +207,23 @@ public sealed class PostgresLinqWhereTests
         }
     }
 
+    // A float[] has no DbType facet either: its null test is cast to real[].
+    [Fact]
+    public async Task Null_float_array_filter_casts_to_real()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var half = Row("half", 1);
+        var tenth = Row("tenth", 2);
+        await SeedAsync(fx, half, tenth, Row("zero", 3)).ConfigureAwait(false);
+        var repo = new LinqWhereRepo(fx.Connection);
+        await repo.ScoreAsync(half.Id, 0.5f, CancellationToken.None).ConfigureAwait(false);
+        await repo.ScoreAsync(tenth.Id, 0.1f, CancellationToken.None).ConfigureAwait(false);
+
+        Titles(await repo.AmongScoresAsync(null, CancellationToken.None).ConfigureAwait(false)).Should().Equal("half", "tenth", "zero");
+        Titles(await repo.AmongScoresAsync([0.1f, 7f], CancellationToken.None).ConfigureAwait(false)).Should().Equal("tenth");
+        Titles(await repo.AmongScoresAsync([], CancellationToken.None).ConfigureAwait(false)).Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Parameter_reused_in_condition_and_predicate()
     {

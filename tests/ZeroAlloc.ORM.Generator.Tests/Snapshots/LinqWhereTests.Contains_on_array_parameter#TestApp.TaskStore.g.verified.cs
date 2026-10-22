@@ -7,10 +7,10 @@ namespace TestApp;
 partial class TaskStore
 {
     // LINQ: TaskStore.FindQuery
-    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"Id\" = ANY(@ids) AND \"Title\" = ANY(@titles) AND \"Order\" = ANY(@orders) AND \"Size\" = ANY(@sizes)";
+    private const string __sql0_Find = "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"Id\" = ANY(@ids) AND \"Title\" = ANY(@titles) AND \"Order\" = ANY(@orders) AND \"Size\" = ANY(@sizes) AND \"Weight\" = ANY(@weights) AND \"Ratio\" = ANY(@ratios)";
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
-    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[] @ids, global::System.Collections.Generic.List<string> @titles, global::System.Collections.Generic.IReadOnlyList<int> @orders, long[] @sizes, global::System.Threading.CancellationToken @ct)
+    public partial async global::System.Threading.Tasks.Task<global::System.Collections.Generic.List<global::TestApp.TaskSummary>> Find(global::System.Guid[] @ids, global::System.Collections.Generic.List<string> @titles, global::System.Collections.Generic.IReadOnlyList<int> @orders, long[] @sizes, float[] @weights, double[] @ratios, global::System.Threading.CancellationToken @ct)
     {
         var __conn = @connection;
         var __openedHere = __conn.State != global::System.Data.ConnectionState.Open;
@@ -35,6 +35,14 @@ partial class TaskStore
             __p_sizes.ParameterName = "sizes";
             __p_sizes.Value = (object?)@sizes ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_sizes);
+            var __p_weights = __cmd.CreateParameter();
+            __p_weights.ParameterName = "weights";
+            __p_weights.Value = (object?)@weights ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_weights);
+            var __p_ratios = __cmd.CreateParameter();
+            __p_ratios.ParameterName = "ratios";
+            __p_ratios.Value = (object?)@ratios ?? global::System.DBNull.Value;
+            __cmd.Parameters.Add(__p_ratios);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>();
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))

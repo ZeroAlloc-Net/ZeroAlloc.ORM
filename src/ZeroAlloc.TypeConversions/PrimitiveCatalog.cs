@@ -138,14 +138,30 @@ public static class PrimitiveCatalog
                 $"PrimitiveCatalog.GetDbTypeNameFromReader: unrecognized reader method '{readerMethod}'. The table is populated by GetScalarReaderMethod; an unrecognized entry implies a generator bug."),
         };
 
-    // The element types a PostgreSQL array may hold: string, int, long and Guid. The one
-    // definition both ConventionDiscovery's PrimitiveArray rule and GetArrayReaderMethod
-    // use, so the classified set and the readable set cannot drift apart.
+    // The element types a PostgreSQL array may hold: string, int, long, float, double and Guid.
+    // The one definition: IsPrimitiveArrayElement is "this mapping is non-null", so
+    // ConventionDiscovery's PrimitiveArray rule, GetArrayReaderMethod and the LINQ null-test
+    // cast cannot drift apart.
     internal static bool IsPrimitiveArrayElement(ITypeSymbol element)
-        => element.SpecialType is SpecialType.System_String or SpecialType.System_Int32 or SpecialType.System_Int64
-           || (element.MetadataName == "Guid"
-               && element.ContainingNamespace is { Name: "System" } ns
-               && ns.ContainingNamespace?.IsGlobalNamespace == true);
+        => GetPostgresArrayTypeName(element) is not null;
+
+    /// <summary>
+    /// The PostgreSQL array type Npgsql infers for a CLR array of <paramref name="element"/>, such
+    /// as <c>text[]</c> for string, or null for an element type a PostgreSQL array may not hold.
+    /// The element's nullable reference annotation is ignored, so <c>string?</c> also maps to
+    /// <c>text[]</c>; a nullable value-type element such as <c>int?</c> is not supported.
+    /// </summary>
+    public static string? GetPostgresArrayTypeName(ITypeSymbol element)
+        => element.SpecialType switch
+        {
+            SpecialType.System_String => "text[]",
+            SpecialType.System_Int32 => "integer[]",
+            SpecialType.System_Int64 => "bigint[]",
+            SpecialType.System_Single => "real[]",
+            SpecialType.System_Double => "double precision[]",
+            _ when element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.Guid" => "uuid[]",
+            _ => null,
+        };
 
     // byte[] is the canonical BLOB carrier in ADO.NET. It is recognized as an
     // array of SpecialType.System_Byte; the array itself has no SpecialType.

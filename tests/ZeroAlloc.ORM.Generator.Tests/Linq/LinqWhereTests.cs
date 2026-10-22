@@ -243,12 +243,16 @@ public class LinqWhereTests
         VerifyCompiled(
             Repo + """
                 [LinqQuery(nameof(FindQuery))]
-                public partial Task<List<TaskSummary>> Find(Guid[] ids, List<string> titles, IReadOnlyList<int> orders, long[] sizes, CancellationToken ct);
+                public partial Task<List<TaskSummary>> Find(
+                    Guid[] ids, List<string> titles, IReadOnlyList<int> orders, long[] sizes, float[] weights, double[] ratios,
+                    CancellationToken ct);
 
-                private static IQuery<TaskSummary> FindQuery(Guid[] ids, List<string> titles, IReadOnlyList<int> orders, long[] sizes) =>
+                private static IQuery<TaskSummary> FindQuery(
+                    Guid[] ids, List<string> titles, IReadOnlyList<int> orders, long[] sizes, float[] weights, double[] ratios) =>
                     Sql.Table<TaskEntity>()
                         .Where(t => ids.Contains(t.Id) && titles.Contains(t.Title) && orders.Contains(t.Order))
                         .Where(t => Enumerable.Contains(sizes, t.Size))
+                        .Where(t => weights.Contains(t.Weight) && ratios.Contains(t.Ratio))
                         .Select(t => new TaskSummary(t.Id, t.Title));
             }
             """,
@@ -763,19 +767,21 @@ public class LinqWhereTests
             Repo + """
                 [LinqQuery(nameof(FindQuery))]
                 public partial Task<List<TaskSummary>> Find(
-                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
-                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
+                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, float[]? weights, double[]? ratios,
+                    DateTime? at, DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
                     short? rank, CancellationToken ct);
 
                 private static IQuery<TaskSummary> FindQuery(
-                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, DateTime? at,
-                    DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
+                    Guid[]? ids, List<string>? titles, IReadOnlyList<int>? orders, long[]? sizes, float[]? weights, double[]? ratios,
+                    DateTime? at, DateOnly? dueOn, TimeSpan? spent, Tier? tier, Level? level, TimeOnly? startsAt,
                     short? rank) =>
                     Sql.Table<TaskEntity>()
                         .WhereIf(ids != null, t => ids!.Contains(t.Id))
                         .WhereIf(titles != null, t => titles!.Contains(t.Title))
                         .WhereIf(orders != null, t => orders!.Contains(t.Order))
                         .WhereIf(sizes != null, t => sizes!.Contains(t.Size))
+                        .WhereIf(weights != null, t => weights!.Contains(t.Weight))
+                        .WhereIf(ratios != null, t => ratios!.Contains(t.Ratio))
                         .Where(t => at == null || t.LocalAt < at)
                         .Where(t => dueOn == null || t.DueOn == dueOn)
                         .Where(t => spent == null || t.Spent > spent)

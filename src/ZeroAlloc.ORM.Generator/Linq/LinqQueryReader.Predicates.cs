@@ -214,22 +214,11 @@ internal static partial class LinqQueryReader
     private static string? NullTestCast(ITypeSymbol type, ConventionContext conventions)
     {
         var underlying = UnwrapNullable(type);
-        if (ConventionDiscovery.Resolve(underlying, conventions).Kind == ConventionKind.PrimitiveArray)
+        var resolved = ConventionDiscovery.Resolve(underlying, conventions);
+        if (resolved.Kind == ConventionKind.PrimitiveArray)
         {
-            var element = underlying switch
-            {
-                IArrayTypeSymbol array => array.ElementType,
-                INamedTypeSymbol { TypeArguments.Length: 1 } named => named.TypeArguments[0],
-                _ => null,
-            };
-            return element switch
-            {
-                { SpecialType: SpecialType.System_String } => "text[]",
-                { SpecialType: SpecialType.System_Int32 } => "integer[]",
-                { SpecialType: SpecialType.System_Int64 } => "bigint[]",
-                { MetadataName: "Guid" } => "uuid[]",
-                _ => null,
-            };
+            // Discovery sets ElementType on every PrimitiveArray result.
+            return PrimitiveCatalog.GetPostgresArrayTypeName(resolved.ElementType!);
         }
         return OrmGenerator.BoundReader(type, conventions) switch
         {
@@ -370,7 +359,7 @@ internal static partial class LinqQueryReader
     }
 
     // `ids.Contains(t.Id)` — `"Id" = ANY(@ids)`. The collection must be a companion parameter
-    // that binds as a PostgreSQL array: T[], List<T> or IReadOnlyList<T> of string, int, long or Guid.
+    // that binds as a PostgreSQL array: T[], List<T> or IReadOnlyList<T> of string, int, long, float, double or Guid.
     private static SqlExpression? ReadArrayContains(
         IInvocationOperation invocation,
         IOperation collection,
