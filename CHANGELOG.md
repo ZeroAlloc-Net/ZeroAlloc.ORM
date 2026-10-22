@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.6.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.5.0...v2.6.0) (2026-10-22)
+
+
+### Features
+
+* let entity maps declare DateTime storage for exact LINQ Date ([#395](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/395)) ([d4e1717](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/d4e1717eda3fc554d3b6875fe517939e6a4065ec))
+* report PostgreSQL-only types on repositories of another dialect ([#388](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/388)) ([69f147a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/69f147ae3b3fe3805697e15ff90f53fe5517ced3)), closes [#376](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/376)
+* support Task&lt;double&gt; and Task&lt;decimal&gt; scalar results for Query methods ([6200398](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/620039889838bb0e2e71e845d59d06d3a8cf860c))
+* tell computed properties from columns on referenced entities ([#389](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/389)) ([09d6500](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/09d65006df04358e6e01a50703afb879e87813b5))
+* translate LINQ GroupBy, aggregates, Date and inner joins ([6200398](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/620039889838bb0e2e71e845d59d06d3a8cf860c))
+
+
+### Bug Fixes
+
+* order nulls as LINQ does in LINQ queries ([6200398](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/620039889838bb0e2e71e845d59d06d3a8cf860c))
+
 ## [2.5.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.4.1...v2.5.0) (2026-10-21)
 
 
