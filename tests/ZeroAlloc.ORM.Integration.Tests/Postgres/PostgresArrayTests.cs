@@ -153,6 +153,46 @@ public sealed class PostgresArrayTests
 
     [Theory]
     [MemberData(nameof(Fixtures))]
+    public async Task Float_and_double_arrays_round_trip_exact_values(string kind)
+    {
+        await using var fx = await CreateAsync(kind).ConfigureAwait(false);
+        await fx.ExecuteDdlAsync("CREATE TABLE reals (id int PRIMARY KEY, floats real[] NOT NULL, doubles double precision[] NOT NULL);")
+            .ConfigureAwait(false);
+        var repo = new ArrayRepo(fx.Connection);
+        float[] floats = [1.5f, -0f, float.MaxValue, float.Epsilon, float.NaN];
+        double[] doubles = [Math.PI, double.MinValue];
+
+        (await repo.InsertRealsAsync(1, floats, doubles, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+        var row = await repo.GetRealsAsync(1, CancellationToken.None).ConfigureAwait(false);
+
+        row.Should().NotBeNull();
+        // Compare bits: NaN is not equal to itself and -0f equals 0f, but both must survive.
+        row!.Floats.Select(BitConverter.SingleToInt32Bits).Should().Equal(floats.Select(BitConverter.SingleToInt32Bits));
+        row.Doubles.Select(BitConverter.DoubleToInt64Bits).Should().Equal(doubles.Select(BitConverter.DoubleToInt64Bits));
+        row.Doubles.Should().BeOfType<List<double>>();
+    }
+
+    [Theory]
+    [MemberData(nameof(Fixtures))]
+    public async Task Empty_float_and_double_arrays_store_empty_literal(string kind)
+    {
+        await using var fx = await CreateAsync(kind).ConfigureAwait(false);
+        await fx.ExecuteDdlAsync("CREATE TABLE reals (id int PRIMARY KEY, floats real[] NOT NULL, doubles double precision[] NOT NULL);")
+            .ConfigureAwait(false);
+        var repo = new ArrayRepo(fx.Connection);
+
+        await repo.InsertRealsAsync(1, [], [], CancellationToken.None).ConfigureAwait(false);
+
+        var row = await repo.GetRealsAsync(1, CancellationToken.None).ConfigureAwait(false);
+        row.Should().NotBeNull();
+        row!.Floats.Should().BeEmpty();
+        row.Doubles.Should().BeEmpty();
+        (await ScalarAsync(fx, "SELECT floats::text FROM reals").ConfigureAwait(false)).Should().Be("{}");
+        (await ScalarAsync(fx, "SELECT doubles::text FROM reals").ConfigureAwait(false)).Should().Be("{}");
+    }
+
+    [Theory]
+    [MemberData(nameof(Fixtures))]
     public async Task Composite_parameter_and_bulk_insert_row_carry_arrays(string kind)
     {
         await using var fx = await CreateAsync(kind).ConfigureAwait(false);
