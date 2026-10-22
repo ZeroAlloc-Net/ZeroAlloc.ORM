@@ -231,21 +231,34 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
-    // (a IS NULL AND b IS NULL ...) over every column of the owned object, NOT (...) for != null.
-    // An owner the map does not declare owned has no columns: ZAO105, and its name stands in.
-    private static void RenderOwnedIsNull(StringBuilder sb, SqlOwnedIsNullExpression test, SqlNameScope names)
+    // An object member's null test, as the map decides: (a IS NULL AND b IS NULL ...) over every
+    // column of an owned object, NOT (...) for != null; "Col" IS [NOT] NULL for a plain column.
+    // Anything else was reported, and the SQL is not used.
+    private static void RenderObjectIsNull(StringBuilder sb, SqlObjectIsNullExpression test, SqlNameScope names)
     {
-        var columns = names.OwnedColumns(test);
+        var owned = names.ObjectColumns(test, out var plain);
+        if (owned.IsEmpty)
+        {
+            AppendQualified(sb, test.SourceAlias, plain ?? test.Member, names);
+            sb.Append(test.Negated ? " IS NOT NULL" : " IS NULL");
+            return;
+        }
+
         if (test.Negated) sb.Append("NOT ");
         sb.Append('(');
-        for (var i = 0; i < columns.Length; i++)
+        for (var i = 0; i < owned.Length; i++)
         {
             if (i > 0) sb.Append(" AND ");
-            if (test.SourceAlias is { } alias && names.QualifyColumns) sb.Append(alias).Append('.');
-            AppendIdentifier(sb, columns[i]);
+            AppendQualified(sb, test.SourceAlias, owned[i], names);
             sb.Append(" IS NULL");
         }
         sb.Append(')');
+    }
+
+    private static void AppendQualified(StringBuilder sb, string? alias, string column, SqlNameScope names)
+    {
+        if (alias is not null && names.QualifyColumns) sb.Append(alias).Append('.');
+        AppendIdentifier(sb, column);
     }
 
     // One case per SqlExpression record. A new expression form adds its case here.
@@ -305,8 +318,8 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 AppendCast(sb, isNull.Operand, isNull.Cast, names);
                 sb.Append(isNull.Negated ? " IS NOT NULL" : " IS NULL");
                 break;
-            case SqlOwnedIsNullExpression ownedIsNull:
-                RenderOwnedIsNull(sb, ownedIsNull, names);
+            case SqlObjectIsNullExpression objectIsNull:
+                RenderObjectIsNull(sb, objectIsNull, names);
                 break;
             case SqlCastExpression cast:
                 RenderExpression(sb, cast.Operand, names);

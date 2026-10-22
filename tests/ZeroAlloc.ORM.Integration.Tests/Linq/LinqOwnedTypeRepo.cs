@@ -32,6 +32,28 @@ internal sealed partial class LinqOwnedTypeRepo(IAsyncDbConnection connection)
         bool? hasFailedValidation,
         CancellationToken ct);
 
+    [Command("""UPDATE "AnalysisRequests" SET "Review_Reviewer" = @reviewer, "Review_Approved" = @approved WHERE "Title" = @title""")]
+    public partial Task<int> ReviewAsync(string title, string? reviewer, bool approved, CancellationToken ct);
+
+    [LinqQuery(nameof(ReviewedQuery))]
+    public partial Task<List<ReviewFlag>> ReviewedAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(UnreviewedQuery))]
+    public partial Task<List<ReviewFlag>> UnreviewedAsync(CancellationToken ct);
+
+    // The owned record's null test checks both of its columns.
+    private static IQuery<ReviewFlag> ReviewedQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => r.Review != null)
+            .OrderBy(r => r.Title)
+            .Select(r => new ReviewFlag(r.Title, r.Review!.Reviewer, r.Review!.Approved));
+
+    private static IQuery<ReviewFlag> UnreviewedQuery() =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => r.Review == null)
+            .OrderBy(r => r.Title)
+            .Select(r => new ReviewFlag(r.Title, r.Review!.Reviewer, r.Review!.Approved));
+
     [LinqQuery(nameof(AllQuery))]
     public partial Task<List<AnalysisRequestLine>> AllAsync(CancellationToken ct);
 

@@ -172,8 +172,10 @@ internal static partial class LinqQueryReader
                 ? reference
                 : null;
 
-    // `tested IS [NOT] NULL`, reported at `at`. A whole owned object, r.Outcome, is NULL when
-    // every one of its columns is; that is tested even for a required owner, as C# would.
+    // `tested IS [NOT] NULL`, reported at `at`. A row member whose type is an object goes to the
+    // binder, where the map decides: an owned object, r.Outcome, is NULL when every one of its
+    // columns is, tested even for a required owner as C# would; a plain column, such as a
+    // Uri? Website, is tested as itself.
     private static SqlExpression? ReadNullTestOf(
         IOperation testedOperation,
         bool negated,
@@ -182,11 +184,22 @@ internal static partial class LinqQueryReader
         ReaderContext context)
     {
         var unwrapped = Unwrap(testedOperation);
-        if (WholeObjectMemberType(unwrapped, row, context) is { } whole
-            && !IsComposite(whole, context.Conventions)
-            && TryReadRowMember(unwrapped, row, context, out var owner, out _, out var alias))
+        if (NestedOwnedReason(unwrapped, row, context) is { } nested)
         {
-            return new SqlOwnedIsNullExpression(owner, LocationInfo.From(unwrapped.Syntax.GetLocation()), negated, alias);
+            context.Report(LinqDiagnostics.Unsupported(nested, unwrapped.Syntax.GetLocation()));
+            return null;
+        }
+
+        if (WholeObjectMemberType(unwrapped, row, context) is { } whole
+            && TryReadRowMember(unwrapped, row, context, out var member, out _, out var alias))
+        {
+            return new SqlObjectIsNullExpression(
+                member,
+                unwrapped.Syntax.ToString(),
+                IsComposite(whole, context.Conventions) ? whole.ToDisplayString() : null,
+                LocationInfo.From(unwrapped.Syntax.GetLocation()),
+                negated,
+                alias);
         }
 
         var tested = ReadComparand(testedOperation, row, context);

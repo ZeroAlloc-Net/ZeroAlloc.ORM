@@ -59,7 +59,7 @@ public class SqlAstExhaustivenessTests
         Assert.True(expressions.Count >= 15, "found " + expressions.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
         Assert.Contains(typeof(SqlDateTruncExpression), expressions);
-        Assert.Contains(typeof(SqlOwnedIsNullExpression), expressions);
+        Assert.Contains(typeof(SqlObjectIsNullExpression), expressions);
         Assert.Contains(typeof(SqlInSubqueryExpression), expressions);
         Assert.Equal(
             [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
@@ -144,6 +144,7 @@ public class SqlAstExhaustivenessTests
         if (type == typeof(bool)) return false;
         if (type.IsEnum) return Enum.GetValues(type).GetValue(0);
         if (type == typeof(LocationInfo)) return null;
+        if (type == typeof(SqlWholeObject)) return null;
         if (type == typeof(SqlExpression)) return Column;
         if (type == typeof(EquatableArray<SqlExpression>)) return new EquatableArray<SqlExpression>(ImmutableArray.Create<SqlExpression>(Column));
         if (type == typeof(EquatableArray<SqlOrdering>)) return new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(Column, Descending: false)));

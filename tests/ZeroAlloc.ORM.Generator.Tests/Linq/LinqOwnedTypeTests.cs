@@ -384,6 +384,235 @@ public class LinqOwnedTypeTests
             "FROM \"Jobs\"");
     }
 
+    // A plain column whose type is an object, a Uri? the map does not declare owned, is still
+    // tested as itself, as in 2.6.0: the map, not the type's shape, decides what is owned.
+    internal const string Websites = """
+        #nullable enable
+        using System;
+        using System.Collections.Generic;
+        using System.Data.Async;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+        using ZeroAlloc.ORM.Linq;
+
+        namespace TestApp;
+
+        public sealed class Company
+        {
+            public Guid Id { get; private set; }
+            public string Name { get; private set; } = "";
+            public Uri? Website { get; private set; }
+        }
+
+        [TableMap(typeof(Company), "Companies")]
+        internal static class CompanyMap;
+
+        public sealed record CompanyLine(Guid Id, string Name);
+
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class CompanyStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(WithWebsiteQuery))]
+            public partial Task<List<CompanyLine>> WithWebsite(CancellationToken ct);
+
+            [LinqQuery(nameof(WithoutWebsiteQuery))]
+            public partial Task<List<CompanyLine>> WithoutWebsite(CancellationToken ct);
+
+            private static IQuery<CompanyLine> WithWebsiteQuery() =>
+                Sql.Table<Company>().Where(c => c.Website != null).Select(c => new CompanyLine(c.Id, c.Name));
+
+            private static IQuery<CompanyLine> WithoutWebsiteQuery() =>
+                Sql.Table<Company>().Where(c => c.Website == null).Select(c => new CompanyLine(c.Id, c.Name));
+        }
+        """;
+
+    [Fact]
+    public void Plain_object_column_null_test_renders_as_in_2_6_0()
+    {
+        VerifyCompiled(Websites,
+            "SELECT \"Id\", \"Name\" FROM \"Companies\" WHERE \"Website\" IS NOT NULL",
+            "SELECT \"Id\", \"Name\" FROM \"Companies\" WHERE \"Website\" IS NULL",
+            "WithWebsite(",
+            "WithoutWebsite(");
+    }
+
+    // An owned positional record is an owned object like any other: its members read their
+    // columns, its null test checks every column and a whole projection of it is ZAO107. The
+    // composite rule, ZAO102, is for a composite the map does not declare owned.
+    private const string Reviewed = """
+            public sealed record Review(string? Reviewer, bool Approved);
+
+            public sealed class ReviewedRequest
+            {
+                public Guid Id { get; private set; }
+                public Review? Review { get; private set; }
+            }
+
+            [TableMap(typeof(ReviewedRequest), "ReviewedRequests")]
+            [OwnedMap(nameof(ReviewedRequest.Review))]
+            internal static class ReviewedRequestMap;
+
+            public sealed record ReviewLine(Guid Id, string? Reviewer);
+
+            """;
+
+    [Fact]
+    public void Owned_record_members_and_null_tests_translate()
+    {
+        VerifyCompiled(Prelude + Reviewed + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ReviewStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(ReviewedQuery))]
+                public partial Task<List<ReviewLine>> Reviewed(CancellationToken ct);
+
+                [LinqQuery(nameof(UnreviewedQuery))]
+                public partial Task<List<ReviewLine>> Unreviewed(CancellationToken ct);
+
+                private static IQuery<ReviewLine> ReviewedQuery() =>
+                    Sql.Table<ReviewedRequest>()
+                        .Where(r => r.Review != null && r.Review!.Approved)
+                        .Select(r => new ReviewLine(r.Id, r.Review!.Reviewer));
+
+                private static IQuery<ReviewLine> UnreviewedQuery() =>
+                    Sql.Table<ReviewedRequest>()
+                        .Where(r => r.Review == null)
+                        .Select(r => new ReviewLine(r.Id, r.Review!.Reviewer));
+            }
+            """,
+            "SELECT \"Id\", \"Review_Reviewer\" FROM \"ReviewedRequests\"",
+            "WHERE NOT (\"Review_Reviewer\" IS NULL AND \"Review_Approved\" IS NULL) AND \"Review_Approved\"",
+            "WHERE (\"Review_Reviewer\" IS NULL AND \"Review_Approved\" IS NULL)",
+            "Unreviewed(");
+    }
+
+    [Fact]
+    public void Whole_owned_record_reports_ZAO107()
+    {
+        var (d, located) = Single(Prelude + Reviewed + """
+            public sealed record WithReview(Guid Id, Review? Review);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ReviewStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(AllQuery))]
+                public partial Task<List<WithReview>> All(CancellationToken ct);
+
+                private static IQuery<WithReview> AllQuery() =>
+                    Sql.Table<ReviewedRequest>().Select(r => new WithReview(r.Id, r.Review));
+            }
+            """);
+
+        Assert.Equal("ZAO107", d.Id);
+        Assert.Equal("r.Review", located);
+        Assert.Contains("whole owned 'Review'", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    // Owned members inside an IN subquery bind through the subquery's own scope: a null test on
+    // the optional Outcome and an EnumAsString owned member compared with an enum parameter,
+    // once in a subquery without a join and once in one with a join, aliased s0 and s1.
+    private const string Pulls = """
+        #nullable enable
+        using System;
+        using System.Collections.Generic;
+        using System.Data.Async;
+        using System.Linq;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+        using ZeroAlloc.ORM.Linq;
+
+        namespace TestApp;
+
+        public enum RepositoryPlatform { GitHub, GitLab }
+
+        public sealed class RepositoryReference
+        {
+            public string Url { get; private set; } = "";
+            public RepositoryPlatform Platform { get; private set; }
+        }
+
+        public sealed class AnalysisOutcome
+        {
+            public string? PullRequestUrl { get; private set; }
+            public bool HasFailedValidation { get; private set; }
+        }
+
+        public sealed class Request
+        {
+            public Guid Id { get; private set; }
+            public Guid TeamId { get; private set; }
+            public RepositoryReference Repository { get; private set; } = null!;
+            public AnalysisOutcome? Outcome { get; private set; }
+        }
+
+        public sealed class Team
+        {
+            public Guid Id { get; private set; }
+            public string Name { get; private set; } = "";
+        }
+
+        public sealed class PullRequest
+        {
+            public Guid Id { get; private set; }
+            public string RepositoryUrl { get; private set; } = "";
+            public int Number { get; private set; }
+        }
+
+        [TableMap(typeof(Request), "Requests")]
+        [OwnedMap(nameof(Request.Repository))]
+        [OwnedMap(nameof(Request.Outcome))]
+        [ColumnMap("Repository.Url", Column = "RepositoryUrl")]
+        [ColumnMap("Repository.Platform", EnumAsString = true)]
+        internal static class RequestMap;
+
+        [TableMap(typeof(Team), "Teams")]
+        internal static class TeamMap;
+
+        [TableMap(typeof(PullRequest), "PullRequests")]
+        internal static class PullRequestMap;
+
+        public sealed record PullLine(Guid Id, int Number);
+
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class PullStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(AnalyzedQuery))]
+            public partial Task<List<PullLine>> Analyzed(RepositoryPlatform platform, CancellationToken ct);
+
+            [LinqQuery(nameof(AnalyzedByTeamQuery))]
+            public partial Task<List<PullLine>> AnalyzedByTeam(RepositoryPlatform platform, string team, CancellationToken ct);
+
+            private static IQuery<PullLine> AnalyzedQuery(RepositoryPlatform platform) =>
+                Sql.Table<PullRequest>()
+                    .Where(p => Sql.Table<Request>()
+                        .Where(r => r.Outcome != null && r.Repository.Platform == platform)
+                        .Select(r => r.Repository.Url)
+                        .Contains(p.RepositoryUrl))
+                    .Select(p => new PullLine(p.Id, p.Number));
+
+            private static IQuery<PullLine> AnalyzedByTeamQuery(RepositoryPlatform platform, string team) =>
+                Sql.Table<PullRequest>()
+                    .Where(p => Sql.Table<Request>()
+                        .Join(Sql.Table<Team>(), r => r.TeamId, t => t.Id, (r, t) => new { Request = r, Team = t })
+                        .Where(y => y.Request.Outcome != null && y.Request.Repository.Platform == platform && y.Team.Name == team)
+                        .Select(y => y.Request.Repository.Url)
+                        .Contains(p.RepositoryUrl))
+                    .Select(p => new PullLine(p.Id, p.Number));
+        }
+        """;
+
+    [Fact]
+    public void Owned_members_inside_a_subquery()
+    {
+        VerifyCompiled(Pulls,
+            "\"RepositoryUrl\" IN (SELECT \"RepositoryUrl\" FROM \"Requests\" WHERE NOT (\"Outcome_PullRequestUrl\" IS NULL AND \"Outcome_HasFailedValidation\" IS NULL) AND \"Repository_Platform\" = @platform)",
+            "\"RepositoryUrl\" IN (SELECT s0.\"RepositoryUrl\" FROM \"Requests\" AS s0 INNER JOIN \"Teams\" AS s1 ON s0.\"TeamId\" = s1.\"Id\" WHERE NOT (s0.\"Outcome_PullRequestUrl\" IS NULL AND s0.\"Outcome_HasFailedValidation\" IS NULL) AND s0.\"Repository_Platform\" = @platform AND s1.\"Name\" = @team)",
+            "__p_platform.DbType = global::System.Data.DbType.String;",
+            "__p_platform.Value = @platform.ToString();");
+    }
+
     // A whole owned object maps to several columns, while a projected row reads one column per
     // constructor parameter.
     [Fact]
@@ -410,11 +639,11 @@ public class LinqOwnedTypeTests
 
     // An owned type nested in an owned type is not mapped: Repository's own CodeLocation and Spot
     // members are no columns the chain can read. Each use is a build error, never a silent column,
-    // with the diagnostic of the position it is in.
+    // with the diagnostic of the position it is in and one shared reason.
     [Theory]
     [InlineData("Where(r => r.Repository.Origin.FilePath == \"x\")", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.FilePath")]
     [InlineData("OrderBy(r => r.Repository.Origin.StartLine)", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.StartLine")]
-    [InlineData("Where(r => r.Repository.Origin == null)", "r.Id, r.Repository.Url", "ZAO105", "r.Repository.Origin")]
+    [InlineData("Where(r => r.Repository.Origin == null)", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin")]
     [InlineData("Where(r => true)", "r.Id, r.Repository.Origin.FilePath", "ZAO107", "r.Repository.Origin.FilePath")]
     [InlineData("Where(r => true)", "r.Id, r.Repository.Spot.FilePath", "ZAO107", "r.Repository.Spot.FilePath")]
     public void Member_of_a_type_nested_in_an_owned_type_is_a_build_error(
@@ -443,6 +672,7 @@ public class LinqOwnedTypeTests
 
         Assert.Equal(expectedId, d.Id);
         Assert.Equal(expectedLocation, located);
+        Assert.Contains("a type nested in the owned 'Repository'; [OwnedMap] maps one level", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     // The map declares only Repository owned: Location's members are not mapped.

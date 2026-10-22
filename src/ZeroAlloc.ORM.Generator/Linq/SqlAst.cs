@@ -112,7 +112,17 @@ internal abstract record SqlExpression;
 /// join; it renders as <c>t1."Col"</c> and resolves through that source's map. Null without a
 /// join, which renders the bare column as in 2.5.0.
 /// </param>
-internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage, string? SourceAlias = null) : SqlExpression;
+/// <param name="WholeObject">
+/// Set on a projected member whose type is an object: the map decides when the query is bound
+/// whether it is a plain column, an owned object, ZAO107, or a composite, ZAO102. Null for any
+/// other member.
+/// </param>
+internal sealed record SqlMemberExpression(
+    string Member,
+    LocationInfo? Location,
+    bool ColumnPicksEnumStorage,
+    string? SourceAlias = null,
+    SqlWholeObject? WholeObject = null) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
@@ -197,16 +207,40 @@ internal sealed record SqlIsNotTrueExpression(SqlExpression Operand) : SqlExpres
 internal sealed record SqlIsNullExpression(SqlExpression Operand, bool Negated, string? Cast) : SqlExpression;
 
 /// <summary>
-/// <c>r.Outcome == null</c> for an owned object: every column the map gives the owned members is
-/// NULL, <c>("Outcome_A" IS NULL AND "Outcome_B" IS NULL)</c>, or its NOT when
-/// <paramref name="Negated"/>. The binder expands the columns from the map, through
-/// <c>ColumnMapModel.Owner</c>.
+/// A null test on a row member whose type is an object, such as <c>r.Outcome == null</c> or
+/// <c>r.Website != null</c> for a <c>Uri?</c>. The map decides what it is when the query is bound:
+/// for an owned object every column the map gives its members is NULL,
+/// <c>("Outcome_A" IS NULL AND "Outcome_B" IS NULL)</c>, or its NOT when <paramref name="Negated"/>;
+/// for a plain column it is <c>"Col" IS [NOT] NULL</c>; a composite column is ZAO102, as before;
+/// anything else ZAO105.
 /// </summary>
-/// <param name="Owner">The entity property the map declares owned, such as <c>Outcome</c>.</param>
-/// <param name="Location">The tested member, where ZAO105 points when the map does not own it.</param>
+/// <param name="Member">The entity property, such as <c>Outcome</c>.</param>
+/// <param name="Text">The tested expression as written, for messages.</param>
+/// <param name="CompositeType">
+/// The member's type when it maps to several columns as a composite, for the ZAO102 a plain
+/// composite column gets; null for any other type.
+/// </param>
+/// <param name="Location">The tested member, where a diagnostic points.</param>
 /// <param name="Negated">Whether the test is <c>!= null</c>.</param>
-/// <param name="SourceAlias">The alias of the owner's source in a query with a join, as on a member.</param>
-internal sealed record SqlOwnedIsNullExpression(string Owner, LocationInfo? Location, bool Negated, string? SourceAlias = null) : SqlExpression;
+/// <param name="SourceAlias">The alias of the member's source in a query with a join, as on a member.</param>
+internal sealed record SqlObjectIsNullExpression(
+    string Member,
+    string Text,
+    string? CompositeType,
+    LocationInfo? Location,
+    bool Negated,
+    string? SourceAlias = null) : SqlExpression;
+
+/// <summary>
+/// A projected row member whose type is an object, such as <c>r.Outcome</c>; see
+/// <see cref="SqlMemberExpression.WholeObject"/>. Not an expression of its own.
+/// </summary>
+/// <param name="Text">The member as written, for messages.</param>
+/// <param name="Type">The member's type as messages show it.</param>
+/// <param name="CompositeType">
+/// The type when it maps to several columns as a composite; null for any other type.
+/// </param>
+internal sealed record SqlWholeObject(string Text, string Type, string? CompositeType);
 
 /// <summary>
 /// <c>operand::type</c>: a parameter without a DbType facet in the SELECT list, so a null still has

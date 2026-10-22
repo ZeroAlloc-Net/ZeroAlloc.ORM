@@ -33,6 +33,9 @@ internal static class LinqDiagnostics
     public static DiagnosticInfo UnsupportedProjection(string reason, Location? location)
         => Create("ZAO107", location, reason);
 
+    public static DiagnosticInfo UnsupportedProjectionAt(string reason, LocationInfo? location)
+        => new("ZAO107", location, Args(reason));
+
     public static DiagnosticInfo DialectNotPostgres(string method, string found, Location? location)
         => Create("ZAO108", location, method, found);
 

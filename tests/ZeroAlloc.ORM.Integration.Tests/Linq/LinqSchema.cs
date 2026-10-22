@@ -69,7 +69,9 @@ internal static class LinqSchema
             "Location_EndLine" int NULL,
             "Outcome_PullRequestUrl" text NULL,
             "Outcome_ValidationResult" jsonb NULL,
-            "Outcome_HasFailedValidation" boolean NULL
+            "Outcome_HasFailedValidation" boolean NULL,
+            "Review_Reviewer" text NULL,
+            "Review_Approved" boolean NULL
         );
         CREATE TABLE "BrainstormSessions" (
             "Id" uuid PRIMARY KEY,

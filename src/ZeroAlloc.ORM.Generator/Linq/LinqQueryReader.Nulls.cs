@@ -77,7 +77,7 @@ internal static partial class LinqQueryReader
                 return nullableValues.Contains(expression);
             case SqlLiteralExpression literal:
                 return literal.Kind == SqlLiteralKind.Null;
-            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlOwnedIsNullExpression:
+            case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlObjectIsNullExpression:
                 return false;
             case SqlInSubqueryExpression subquery:
                 // The selected column is never NULL, which the reader checks, so IN can be NULL only

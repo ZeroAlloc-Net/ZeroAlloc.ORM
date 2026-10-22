@@ -53,7 +53,7 @@ internal static class SqlParameterReferences
             case SqlParameterExpression parameter:
                 names.Add(parameter.Name);
                 break;
-            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression or SqlOwnedIsNullExpression:
+            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression or SqlObjectIsNullExpression:
                 break;
             case SqlBinaryExpression binary:
                 Add(binary.Left, names);

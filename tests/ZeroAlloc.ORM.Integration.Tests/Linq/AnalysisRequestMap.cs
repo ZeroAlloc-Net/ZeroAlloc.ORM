@@ -6,6 +6,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 [OwnedMap(nameof(AnalysisRequestEntity.Repository))]
 [OwnedMap(nameof(AnalysisRequestEntity.Location))]
 [OwnedMap(nameof(AnalysisRequestEntity.Outcome))]
+[OwnedMap(nameof(AnalysisRequestEntity.Review))]
 [ColumnMap("Repository.Url", Column = "RepositoryUrl")]
 [ColumnMap("Repository.Branch", Column = "RepositoryBranch")]
 [ColumnMap("Location.FilePath", Column = "FilePath")]

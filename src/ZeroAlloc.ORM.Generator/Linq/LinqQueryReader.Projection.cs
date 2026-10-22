@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
@@ -63,17 +64,27 @@ internal static partial class LinqQueryReader
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
     private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
-        // A whole owned object maps to several columns; the row reads one per parameter. A
-        // composite, which the [Query] path expands, keeps ReadOperand's ZAO102.
-        if (WholeObjectMemberType(Unwrap(value), row, context) is { } whole
-            && !IsComposite(whole, context.Conventions))
+        var op = Unwrap(value);
+        if (NestedOwnedReason(op, row, context) is { } nested)
         {
-            RejectProjection(
-                "'" + value.Syntax + "' reads a whole '" + whole.Name + "', an object rather than one column; "
-                    + "project the columns it holds, which needs [OwnedMap] for an owned type",
-                value,
-                context);
+            RejectProjection(nested, value, context);
             return null;
+        }
+
+        // A member whose type is an object: the map decides what it is when the query is bound,
+        // an owned object, ZAO107, a composite column, ZAO102, or a plain column.
+        if (WholeObjectMemberType(op, row, context) is { } whole
+            && TryReadRowMember(op, row, context, out var name, out var type, out var alias))
+        {
+            var composite = IsComposite(whole, context.Conventions) ? whole.ToDisplayString() : null;
+            var member = new SqlMemberExpression(
+                name,
+                LocationInfo.From(op.Syntax.GetLocation()),
+                ColumnPicksEnumStorage(type),
+                alias,
+                new SqlWholeObject(op.Syntax.ToString(), whole.ToDisplayString(), composite));
+            if (CanBeNull(type)) context.NullableValues.Add(member);
+            return member;
         }
 
         switch (ReadOperand(value, row, context, out var expression))

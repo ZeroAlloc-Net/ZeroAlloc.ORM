@@ -90,6 +90,12 @@ internal sealed class SqlNameScope
     public string Column(SqlMemberExpression member)
     {
         var source = SourceOf(member.SourceAlias);
+        if (member.WholeObject is { } whole)
+        {
+            return ResolveObject(source, member.Member, whole.Text, whole.CompositeType, member.Location, projected: true, out _)
+                ?? member.Member;
+        }
+
         if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
         var unmapped = LinqDiagnostics.UnmappedMember(member.Member, source.EntityDisplay, member.Location);
         if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
@@ -97,23 +103,66 @@ internal sealed class SqlNameScope
     }
 
     /// <summary>
-    /// The columns of the owned object the test names, in map order; or, after recording ZAO105
-    /// once per owner and location, the owner's name alone when the map does not own it.
+    /// What a null test on an object member is, by the map: the owned object's columns, in map
+    /// order, or the one plain column it is. Empty with no plain column after recording the
+    /// diagnostic, once per member and location.
     /// </summary>
-    public ImmutableArray<string> OwnedColumns(SqlOwnedIsNullExpression test)
+    public ImmutableArray<string> ObjectColumns(SqlObjectIsNullExpression test, out string? plain)
     {
-        var source = SourceOf(test.SourceAlias);
+        plain = ResolveObject(SourceOf(test.SourceAlias), test.Member, test.Text, test.CompositeType, test.Location, projected: false, out var owned);
+        return owned;
+    }
+
+    // The one decision for a row member whose type is an object, read whole. The map decides:
+    // an owned object gives its columns, and reading it in a projection is ZAO107; a composite
+    // column is ZAO102, as it was before owned types; a plain column is that column; anything
+    // else ZAO105. Returns the plain column, or null.
+    private string? ResolveObject(
+        Source source,
+        string member,
+        string text,
+        string? compositeType,
+        LocationInfo? location,
+        bool projected,
+        out ImmutableArray<string> owned)
+    {
         var columns = ImmutableArray.CreateBuilder<string>();
         foreach (var column in source.Map.Columns)
         {
-            if (string.Equals(column.Owner, test.Owner, StringComparison.Ordinal))
+            if (string.Equals(column.Owner, member, StringComparison.Ordinal))
                 columns.Add(column.Column);
         }
-        if (columns.Count > 0) return columns.ToImmutable();
+        owned = columns.ToImmutable();
 
-        var unmapped = LinqDiagnostics.UnmappedMember(test.Owner, source.EntityDisplay, test.Location);
-        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
-        return ImmutableArray.Create(test.Owner);
+        if (owned.Length > 0)
+        {
+            if (projected)
+            {
+                Record(LinqDiagnostics.UnsupportedProjectionAt(
+                    "'" + text + "' reads a whole owned '" + member + "', an object rather than one column; "
+                        + "project the columns it holds",
+                    location));
+            }
+            return null;
+        }
+
+        if (compositeType is not null)
+        {
+            Record(LinqDiagnostics.UnsupportedAt(
+                "'" + text + "', whose type '" + compositeType + "' maps to several columns,", location));
+            return null;
+        }
+
+        if (source.Columns.TryGetValue(member, out var plain)) return plain.Column;
+
+        Record(LinqDiagnostics.UnmappedMember(member, source.EntityDisplay, location));
+        return null;
+    }
+
+    // A diagnostic the render found, once per diagnostic: one member renders more than once.
+    private void Record(DiagnosticInfo diagnostic)
+    {
+        if (_unmapped.Add(diagnostic)) _diagnostics.Add(diagnostic);
     }
 
     /// <summary>

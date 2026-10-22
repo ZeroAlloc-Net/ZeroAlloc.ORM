@@ -62,7 +62,7 @@ public sealed partial class OrmGenerator
             AttributePipelineKind.LinqQuery,
             sql: string.Empty,
             new LinqOverrides(translation.Facets, translation.SourceComment));
-        if (core is not null && ReadsSeveralColumns(core.Method) is { } member)
+        if (core is not null && !ProjectsWholeObject(translation) && ReadsSeveralColumns(core.Method) is { } member)
         {
             var location = ((MethodDeclarationSyntax)ctx.TargetNode).ReturnType.GetLocation();
             var error = LinqDiagnostics.UnsupportedProjection(
@@ -73,6 +73,21 @@ public sealed partial class OrmGenerator
                 null);
         }
         return new LinqMethodRead(translation, core);
+    }
+
+    // A projected row member whose type is an object is decided by the map when the query is
+    // bound, at the member: an owned object is ZAO107 and a composite column ZAO102 there.
+    private static bool ProjectsWholeObject(LinqTranslation translation)
+    {
+        foreach (var statement in translation.Statements)
+        {
+            if (statement is not SqlSelectStatement select) continue;
+            foreach (var item in select.Projection)
+            {
+                if (item is SqlMemberExpression { WholeObject: not null }) return true;
+            }
+        }
+        return false;
     }
 
     // A composite or [Materialize] factory member of the row expands to several reader columns,

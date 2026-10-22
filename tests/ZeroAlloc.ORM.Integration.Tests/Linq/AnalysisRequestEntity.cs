@@ -8,4 +8,5 @@ public sealed class AnalysisRequestEntity
     public RepositoryReference Repository { get; private set; } = null!;
     public CodeLocation Location { get; private set; } = null!;
     public AnalysisOutcome? Outcome { get; private set; }
+    public AnalysisReview? Review { get; private set; }
 }

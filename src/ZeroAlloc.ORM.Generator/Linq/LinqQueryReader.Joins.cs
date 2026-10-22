@@ -314,11 +314,44 @@ internal static partial class LinqQueryReader
             : type.WithNullableAnnotation(NullableAnnotation.Annotated);
     }
 
-    // A row member that holds an object whose properties are columns, such as an owned
-    // r.Repository: a whole object, not one column. Null for any other operation.
+    // A row member whose type is an object rather than one value, such as an owned r.Repository,
+    // a composite r.Price or a Uri: what it maps to is the map's to decide. Null for any other
+    // operation, and for a member of an owned object, which NestedOwnedReason covers.
     private static ITypeSymbol? WholeObjectMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
-        => TryReadRowMember(op, row, context, out _, out var type, out _)
-            && EntityMapReader.IsOwnable(type, context.Conventions)
-                ? type
+        => TryReadRowMember(op, row, context, out var name, out var type, out _)
+            && name.IndexOf('.') < 0
+            && IsObjectType(type, context)
+                ? UnwrapNullable(type)
                 : null;
+
+    private static bool IsObjectType(ITypeSymbol type, ReaderContext context)
+        => EntityMapReader.IsOwnable(UnwrapNullable(type), context.Conventions) || IsComposite(type, context.Conventions);
+
+    // A type nested in an owned type: r.Repository.Origin, or a member of it such as
+    // r.Repository.Origin.FilePath. [OwnedMap] maps one level, so neither is a column; the one
+    // reason is reported as ZAO102 in a condition or an ordering and ZAO107 in a projection.
+    private static string? NestedOwnedReason(IOperation op, IParameterSymbol? row, ReaderContext context)
+    {
+        var nested = op;
+        if (!IsNestedObject(nested, row, context))
+        {
+            if (op is not IPropertyReferenceOperation { Instance: { } instance }) return null;
+            nested = Unwrap(instance);
+            if (!IsNestedObject(nested, row, context)) return null;
+        }
+
+        var path = ((IPropertyReferenceOperation)nested).Property;
+        var owner = ((IPropertyReferenceOperation)nested).Instance is IPropertyReferenceOperation ownerProperty
+            ? ownerProperty.Property.Name
+            : string.Empty;
+        return "'" + op.Syntax + "' reads '" + path.Name + "', a type nested in the owned '" + owner
+            + "'; [OwnedMap] maps one level";
+    }
+
+    // A member of an owned object whose own type is an object.
+    private static bool IsNestedObject(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => op is IPropertyReferenceOperation
+            && TryReadRowMember(op, row, context, out var name, out var type, out _)
+            && name.IndexOf('.') >= 0
+            && IsObjectType(type, context);
 }

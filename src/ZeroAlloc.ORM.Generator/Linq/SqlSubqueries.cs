@@ -57,7 +57,7 @@ internal static class SqlSubqueries
                 AddSelect(subquery.Subquery, subqueries);
                 break;
             case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
-                or SqlOwnedIsNullExpression:
+                or SqlObjectIsNullExpression:
                 break;
             case SqlBinaryExpression binary:
                 Add(binary.Left, subqueries);

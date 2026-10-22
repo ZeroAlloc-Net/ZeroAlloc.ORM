@@ -122,5 +122,13 @@ public sealed class PostgresLinqOwnedTypeTests
         (await repo.NotTrueAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(passed, none);
         (await repo.WithoutOutcomeAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(none);
         (await repo.WithOutcomeAsync(CancellationToken.None).ConfigureAwait(false)).Should().Equal(passed, failed);
+
+        // An owned positional record: a review without a reviewer still has its Approved column.
+        await repo.ReviewAsync("beta", null, approved: false, CancellationToken.None).ConfigureAwait(false);
+        await repo.ReviewAsync("delta", "ann", approved: true, CancellationToken.None).ConfigureAwait(false);
+        (await repo.ReviewedAsync(CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(new ReviewFlag("beta", null, false), new ReviewFlag("delta", "ann", true));
+        (await repo.UnreviewedAsync(CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(new ReviewFlag("pending", null, null));
     }
 }
