@@ -36,8 +36,15 @@ internal static class EnumParameterStorage
         {
             SqlSelectStatement own => own,
             SqlAggregateStatement aggregate => aggregate.Source,
+            SqlScalarAggregateStatement scalar => scalar.Source,
             _ => throw new InvalidOperationException("No enum storage walk for " + statement.GetType().Name + "."),
         };
+        foreach (var join in select.Joins)
+        {
+            Visit(join.On);
+            foreach (var predicate in join.SourcePredicates)
+                Visit(predicate);
+        }
         foreach (var predicate in select.Predicates)
             Visit(predicate);
 
@@ -103,7 +110,8 @@ internal static class EnumParameterStorage
                 // case per SqlExpression record, as in the renderer, so a new form is decided here.
                 case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
                     or SqlIsNullExpression or SqlCastExpression or SqlLikeExpression or SqlILikeExpression
-                    or SqlAnyExpression or SqlPagingCountExpression:
+                    or SqlAnyExpression or SqlPagingCountExpression or SqlAggregateCallExpression
+                    or SqlDateTruncExpression:
                     break;
                 default:
                     throw new InvalidOperationException("No enum storage walk for " + expression.GetType().Name + ".");

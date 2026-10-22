@@ -27,6 +27,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlAggregateStatement aggregate:
                 RenderAggregate(sb, aggregate, names);
                 break;
+            case SqlScalarAggregateStatement scalar:
+                RenderScalarAggregate(sb, scalar, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -38,6 +41,11 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         sb.Append("SELECT ");
         AppendList(sb, select.Projection, names);
         RenderFromWhere(sb, select, names);
+        if (select.GroupBy.Length > 0)
+        {
+            sb.Append(" GROUP BY ");
+            AppendList(sb, select.GroupBy, names);
+        }
         RenderOrdering(sb, select, names);
         RenderPaging(sb, select.Paging, names);
     }
@@ -72,13 +80,101 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         sb.Append(") AS q");
     }
 
-    // ` FROM "schema"."table" [WHERE a AND b]`.
+    // As a paged count, a paged aggregate reads a paged subquery. The subquery selects the
+    // aggregated column, so the call outside names it the same way, and keeps the ORDER BY,
+    // which picks the rows of the page:
+    //   SELECT COALESCE(sum("X"), 0)::int FROM "T" WHERE ...
+    //   SELECT COALESCE(sum("X"), 0)::int FROM (SELECT "X" FROM "T" WHERE ... ORDER BY ... LIMIT @take) AS q
+    private static void RenderScalarAggregate(StringBuilder sb, SqlScalarAggregateStatement scalar, SqlNameScope names)
+    {
+        var source = scalar.Source;
+        sb.Append("SELECT ");
+        var paged = source.Paging.Limit is not null || source.Paging.Offset is not null;
+        // Outside the subquery, the call reads its one column by name, without the alias of the
+        // source inside it.
+        names.QualifyColumns = !paged;
+        RenderExpression(sb, scalar.Call, names);
+        names.QualifyColumns = true;
+        if (!paged)
+        {
+            RenderFromWhere(sb, source, names);
+            return;
+        }
+        sb.Append(" FROM (SELECT ");
+        // The subquery selects the bare column; a cast on the argument applies outside it.
+        if (scalar.Call.Argument is SqlCastExpression { Operand: var column })
+            RenderExpression(sb, column, names);
+        else if (scalar.Call.Argument is { } argument)
+            RenderExpression(sb, argument, names);
+        else
+            sb.Append('1');
+        RenderFromWhere(sb, source, names);
+        RenderOrdering(sb, source, names);
+        RenderPaging(sb, source.Paging, names);
+        sb.Append(") AS q");
+    }
+
+    // `COALESCE(sum("X"), 0)::int`, `avg("X")::double precision`, `count(*)`.
+    private static void RenderAggregateCall(StringBuilder sb, SqlAggregateCallExpression call, SqlNameScope names)
+    {
+        if (call.CoalesceToZero) sb.Append("COALESCE(");
+        sb.Append(call.Function switch
+        {
+            SqlAggregateFunction.Count or SqlAggregateFunction.LongCount => "count(",
+            SqlAggregateFunction.Sum => "sum(",
+            SqlAggregateFunction.Min => "min(",
+            SqlAggregateFunction.Max => "max(",
+            _ => "avg(",
+        });
+        if (call.Argument is { } argument)
+        {
+            ReportNameOrderedAggregate(call, argument, names);
+            RenderExpression(sb, argument, names);
+        }
+        else
+        {
+            sb.Append('*');
+        }
+        sb.Append(')');
+        if (call.CoalesceToZero) sb.Append(", 0)");
+        if (call.ResultCast is { } cast) sb.Append("::").Append(cast);
+    }
+
+    // min or max over a column that stores enum member names would order the names, where C#
+    // orders the values. The reader rejects a [StoreAsString] enum; the map's storage is known
+    // only here.
+    private static void ReportNameOrderedAggregate(SqlAggregateCallExpression call, SqlExpression argument, SqlNameScope names)
+    {
+        if (call.Function is SqlAggregateFunction.Min or SqlAggregateFunction.Max
+            && argument is SqlMemberExpression member
+            && names.IsEnumAsString(member))
+        {
+            names.Report(LinqDiagnostics.UnsupportedAt(
+                "'" + (call.Function == SqlAggregateFunction.Min ? "Min" : "Max") + "' over '" + member.Member
+                    + "', whose column stores enum member names, which order differently from C#,",
+                member.Location));
+        }
+    }
+
+    // ` FROM "schema"."table" [WHERE a AND b]`, or with joins
+    // ` FROM "a" AS t0 INNER JOIN "schema"."b" AS t1 ON t0."BId" = t1."Id" [AND c] [WHERE a AND b]`.
     private static void RenderFromWhere(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
     {
         sb.Append(" FROM ");
-        if (names.Schema is { } schema)
-            AppendIdentifier(sb, schema).Append('.');
-        AppendIdentifier(sb, names.Table);
+        AppendTable(sb, names.Table, names.Schema, select.Alias);
+        foreach (var join in select.Joins)
+        {
+            var (table, schema) = names.TableOf(join.Alias);
+            sb.Append(" INNER JOIN ");
+            AppendTable(sb, table, schema, join.Alias);
+            sb.Append(" ON ");
+            RenderExpression(sb, join.On, names);
+            foreach (var predicate in join.SourcePredicates)
+            {
+                sb.Append(" AND ");
+                RenderExpression(sb, predicate, names);
+            }
+        }
 
         if (select.Predicates.Length > 0)
         {
@@ -91,13 +187,24 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
     }
 
+    // `"schema"."table" [AS t0]`. An alias is generated, t0, t1, ..., so it needs no quotes.
+    private static void AppendTable(StringBuilder sb, string table, string? schema, string? alias)
+    {
+        if (schema is not null)
+            AppendIdentifier(sb, schema).Append('.');
+        AppendIdentifier(sb, table);
+        if (alias is not null) sb.Append(" AS ").Append(alias);
+    }
+
     private static void RenderOrdering(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
     {
         for (var i = 0; i < select.Ordering.Length; i++)
         {
             sb.Append(i == 0 ? " ORDER BY " : ", ");
             RenderExpression(sb, select.Ordering[i].Expression, names);
-            if (select.Ordering[i].Descending) sb.Append(" DESC");
+            var ordering = select.Ordering[i];
+            if (ordering.Descending) sb.Append(" DESC");
+            if (ordering.NullsLikeLinq) sb.Append(ordering.Descending ? " NULLS LAST" : " NULLS FIRST");
         }
     }
 
@@ -132,6 +239,7 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         switch (expression)
         {
             case SqlMemberExpression member:
+                if (member.SourceAlias is { } alias && names.QualifyColumns) sb.Append(alias).Append('.');
                 AppendIdentifier(sb, names.Column(member));
                 break;
             case SqlParameterExpression parameter:
@@ -197,6 +305,14 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 sb.Append(" = ANY(");
                 RenderExpression(sb, any.Array, names);
                 sb.Append(')');
+                break;
+            case SqlAggregateCallExpression call:
+                RenderAggregateCall(sb, call, names);
+                break;
+            case SqlDateTruncExpression dateTrunc:
+                sb.Append("date_trunc('day', ");
+                RenderExpression(sb, dateTrunc.Operand, names);
+                sb.Append(dateTrunc.AtUtc ? " AT TIME ZONE 'UTC')" : ")");
                 break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,

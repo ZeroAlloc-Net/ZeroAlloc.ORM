@@ -45,6 +45,16 @@ internal static partial class LinqQueryReader
             return OperandRead.Reported;
         }
 
+        if (NullableValueObjectValue(op, row, context) is { } valueOf)
+        {
+            expression = null;
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + valueOf.Syntax + "', the Value of a value object that can be null, which throws in C# "
+                    + "where SQL would drop or null the row,",
+                valueOf.Syntax.GetLocation()));
+            return OperandRead.Reported;
+        }
+
         // A member of a companion parameter, such as `minOrder.Value`, is not a value the SQL can
         // bind. It is no capture either: the parameter already is one. `p.HasValue` is read as a
         // condition, by ReadPredicate.
@@ -72,29 +82,22 @@ internal static partial class LinqQueryReader
     {
         ITypeSymbol type;
         SqlExpression expression;
-        switch (op)
+        if (TryReadRowMember(op, row, context, out var name, out type, out var alias))
         {
-            case IPropertyReferenceOperation { Instance: IParameterReferenceOperation p, Arguments.Length: 0 } property
-                when IsParameter(p, row):
-                type = property.Property.Type;
-                expression = Member(property.Property.Name, op, type);
-                break;
-            // A field is never a mapped column; the binder reports it as ZAO105.
-            case IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field
-                when IsParameter(p, row):
-                type = field.Field.Type;
-                expression = Member(field.Field.Name, op, type);
-                break;
-            case IParameterReferenceOperation p when context.SqlNames.TryGetValue(p.Parameter, out var sqlName):
-                type = p.Parameter.Type;
-                expression = new SqlParameterExpression(
-                    sqlName,
-                    p.Parameter.Name,
-                    ColumnPicksEnumStorage(type),
-                    LocationInfo.From(op.Syntax.GetLocation()));
-                break;
-            default:
-                return null;
+            expression = Member(name, op, type, alias);
+        }
+        else if (op is IParameterReferenceOperation p && context.SqlNames.TryGetValue(p.Parameter, out var sqlName))
+        {
+            type = p.Parameter.Type;
+            expression = new SqlParameterExpression(
+                sqlName,
+                p.Parameter.Name,
+                ColumnPicksEnumStorage(type),
+                LocationInfo.From(op.Syntax.GetLocation()));
+        }
+        else
+        {
+            return null;
         }
 
         if (CanBeNull(type)) context.NullableValues.Add(expression);
@@ -106,13 +109,9 @@ internal static partial class LinqQueryReader
     // one column the SQL can name. Null for any other value.
     private static ITypeSymbol? CompositeMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
     {
-        var type = op switch
-        {
-            IPropertyReferenceOperation { Instance: IParameterReferenceOperation p } property when IsParameter(p, row) => property.Property.Type,
-            IFieldReferenceOperation { Instance: IParameterReferenceOperation p } field when IsParameter(p, row) => field.Field.Type,
-            _ => null,
-        };
-        return type is not null && IsComposite(type, context.Conventions) ? type : null;
+        return TryReadRowMember(op, row, context, out _, out var type, out _) && IsComposite(type, context.Conventions)
+            ? type
+            : null;
     }
 
     // A multi-field composite: the [Query] path binds it as one DbParameter per constructor
@@ -126,8 +125,8 @@ internal static partial class LinqQueryReader
             || OrmGenerator.ReadMaterializeFactoryName(underlying.GetAttributes()) is not null;
     }
 
-    private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type)
-        => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type));
+    private static SqlMemberExpression Member(string name, IOperation op, ITypeSymbol type, string? alias)
+        => new(name, LocationInfo.From(op.Syntax.GetLocation()), ColumnPicksEnumStorage(type), alias);
 
     private static bool IsParameter(IParameterReferenceOperation reference, IParameterSymbol? parameter)
         => parameter is not null && SymbolEqualityComparer.Default.Equals(reference.Parameter, parameter);

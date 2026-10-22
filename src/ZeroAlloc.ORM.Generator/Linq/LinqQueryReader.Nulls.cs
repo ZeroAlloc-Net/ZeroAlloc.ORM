@@ -74,6 +74,8 @@ internal static partial class LinqQueryReader
                 return false;
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);
+            case SqlDateTruncExpression dateTrunc:
+                return MayBeNull(dateTrunc.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
             case SqlRowComparisonExpression rows:
@@ -91,6 +93,13 @@ internal static partial class LinqQueryReader
                 return MayBeNull(conditional.Predicate, nullableValues);
             case SqlPagingCountExpression count:
                 return MayBeNull(count.Count, nullableValues);
+            case SqlAggregateCallExpression call:
+                // Only a group's aggregate is read here, and a group has rows. Then a count is never
+                // NULL, nor is a sum; Min, Max and Average are NULL when every value is, so when the
+                // argument can be.
+                return call.Function is not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum)
+                    && call.Argument is { } argument
+                    && MayBeNull(argument, nullableValues);
             default:
                 throw new InvalidOperationException("No nullability rule for " + expression.GetType().Name + ".");
         }

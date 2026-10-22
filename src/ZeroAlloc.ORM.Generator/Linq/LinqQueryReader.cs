@@ -46,14 +46,7 @@ internal static partial class LinqQueryReader
         if (!CheckParameterShapes(companion.Symbol!, context)) return Failed(comment, context.Diagnostics.ToArray());
 
         var shape = ClassifyShape(method.ReturnType, companion.RowType!);
-        if (shape is null)
-        {
-            return Failed(comment, LinqDiagnostics.ShapeMismatch(
-                method.Name,
-                method.ReturnType.ToDisplayString(),
-                companion.Symbol!.ReturnType.ToDisplayString(),
-                methodSyntax.ReturnType.GetLocation()));
-        }
+        if (shape is null) return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
 
         // Facets first: a null test casts a parameter only when it has none.
         var valueParameters = ValueParameters(method);
@@ -68,9 +61,21 @@ internal static partial class LinqQueryReader
         var statement = ReadStatement(companion.Body!, shape.Value, context);
         if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
+        // A Sum, Min, Max or Average gives one value, which a list or a stream cannot read.
+        if (statement is SqlScalarAggregateStatement && shape != LinqResultShape.Scalar)
+            return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
+
         // What is left in the diagnostics are warnings, such as ZAO110.
         return new LinqTranslation(statement, shape.Value, facets, comment, new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()));
     }
+
+    // ZAO112, at the method's return type.
+    private static DiagnosticInfo ShapeMismatch(IMethodSymbol method, MethodDeclarationSyntax syntax, IMethodSymbol companion)
+        => LinqDiagnostics.ShapeMismatch(
+            method.Name,
+            method.ReturnType.ToDisplayString(),
+            companion.ReturnType.ToDisplayString(),
+            syntax.ReturnType.GetLocation());
 
     private static LinqTranslation Failed(string comment, params DiagnosticInfo[] diagnostics)
         => LinqTranslation.Failed(comment, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutableArray()));
@@ -193,6 +198,9 @@ internal static partial class LinqQueryReader
         // Value parameters, by name, that bind with a DbType: a derived facet or a written one.
         // The companion's parameters carry the method's names, which ZAO101 guarantees.
         public HashSet<string> TypedParameters { get; } = new(StringComparer.Ordinal);
+
+        // What the current lambdas' row is: the FROM entity, or after a join its result.
+        public RowShape Row { get; set; } = RowShape.Entity(alias: null);
 
         // The columns and parameters read so far whose declared type can be null.
         public HashSet<SqlExpression> NullableValues { get; } = new();

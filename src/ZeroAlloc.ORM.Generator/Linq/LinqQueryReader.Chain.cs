@@ -20,6 +20,11 @@ internal static partial class LinqQueryReader
     {
         public SqlTableSource? From { get; set; }
 
+        // The FROM source's alias, t0, when the chain has a join; null without one.
+        public string? Alias { get; set; }
+
+        public ImmutableArray<SqlJoin>.Builder Joins { get; } = ImmutableArray.CreateBuilder<SqlJoin>();
+
         public ImmutableArray<SqlExpression>? Projection { get; set; }
 
         public ImmutableArray<SqlExpression>.Builder Predicates { get; } = ImmutableArray.CreateBuilder<SqlExpression>();
@@ -39,22 +44,30 @@ internal static partial class LinqQueryReader
         // Count, LongCount or Any, which end the chain.
         public SqlAggregate? Terminal { get; set; }
 
+        // Sum, Min, Max or Average, which end the chain too.
+        public SqlAggregateCallExpression? Call { get; set; }
+
         public string? TerminalOperator { get; set; }
+
+        // The GroupBy key; the operators after it read groups.
+        public GroupKey? Group { get; set; }
     }
 
     private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
     {
         var operation = context.Model.GetOperation(body, context.CancellationToken);
-        var chain = new ChainBuilder();
+        var chain = new ChainBuilder { Alias = operation is not null && HasJoin(operation) ? "t0" : null };
         if (operation is null || !ReadChain(operation, chain, context)) return null;
 
         // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
         // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,
-        // or a Take, reads any one row. A scalar shape does not depend on the order at all.
+        // or a Take, reads any one row. A count or an existence does not depend on the order at
+        // all, but a sum, an average, a min or a max over a page does.
         var unorderedPaging = shape switch
         {
             LinqResultShape.List or LinqResultShape.Stream => chain.PagingLocation,
             LinqResultShape.SingleRow when chain.Offset is not null => chain.PagingLocation,
+            LinqResultShape.Scalar when chain.Call is not null => chain.PagingLocation,
             _ => null,
         };
         if (unorderedPaging is not null && chain.Ordering.Count == 0)
@@ -70,13 +83,21 @@ internal static partial class LinqQueryReader
                 default,
                 new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
                 default,
-                new SqlPaging(chain.Limit, chain.Offset)));
+                new SqlPaging(chain.Limit, chain.Offset),
+                default,
+                JoinsOf(chain),
+                chain.Alias));
         }
+
+        if (chain.Call is { } call)
+            return ScalarAggregate(call, chain);
 
         if (chain.Projection is not { } projection)
         {
             context.Report(LinqDiagnostics.UnsupportedProjection(
-                "the chain must end with Select(x => new Row(...)), constructing a positional record",
+                chain.Group is null
+                    ? "the chain must end with Select(x => new Row(...)), constructing a positional record"
+                    : "a GroupBy must end with Select(g => new Row(...)), constructing a positional record from g.Key and group aggregates",
                 body.GetLocation()));
             return null;
         }
@@ -87,7 +108,29 @@ internal static partial class LinqQueryReader
             new EquatableArray<SqlExpression>(projection),
             new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
             new EquatableArray<SqlOrdering>(chain.Ordering.ToImmutable()),
-            new SqlPaging(limit, chain.Offset));
+            new SqlPaging(limit, chain.Offset),
+            chain.Group is { } group ? new EquatableArray<SqlExpression>(group.Keys) : default,
+            JoinsOf(chain),
+            chain.Alias);
+    }
+
+    private static EquatableArray<SqlJoin> JoinsOf(ChainBuilder chain)
+        => chain.Joins.Count == 0 ? default : new EquatableArray<SqlJoin>(chain.Joins.ToImmutable());
+
+    // The rows a Sum, Min, Max or Average reads. A page keeps its ordering, which picks the
+    // page's rows; without paging the ordering changes nothing and goes.
+    private static SqlScalarAggregateStatement ScalarAggregate(SqlAggregateCallExpression call, ChainBuilder chain)
+    {
+        var paged = chain.Limit is not null || chain.Offset is not null;
+        return new SqlScalarAggregateStatement(call, new SqlSelectStatement(
+            chain.From!,
+            default,
+            new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable()),
+            paged ? new EquatableArray<SqlOrdering>(chain.Ordering.ToImmutable()) : default,
+            new SqlPaging(chain.Limit, chain.Offset),
+            default,
+            JoinsOf(chain),
+            chain.Alias));
     }
 
     // Reads the chain source first, so operators apply in written order.
@@ -105,11 +148,8 @@ internal static partial class LinqQueryReader
         var target = invocation.TargetMethod;
         if (IsLinqMember(target, SqlTypeName, "Table"))
         {
-            chain.From = new SqlTableSource(
-                target.TypeArguments[0]
-                    .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
-                    .ToDisplayString(OrmGenerator.TypeDisplayFormat),
-                LocationInfo.From(invocation.Syntax.GetLocation()));
+            chain.From = TableSource(invocation);
+            context.Row = RowShape.Entity(chain.Alias);
             return true;
         }
         if (!IsQueryOperator(target) || invocation.Arguments.Length == 0)
@@ -118,15 +158,27 @@ internal static partial class LinqQueryReader
         if (!ReadChain(invocation.Arguments[0].Value, chain, context)) return false;
         if (chain.TerminalOperator is { } terminal)
             return Unsupported(invocation, "'" + target.Name + "' after '" + terminal + "'", context);
+        // Count, LongCount and Any drop a projection. Sum, Min, Max and Average would read the
+        // projected row's members, which are not columns.
         if (chain.Projection is not null && TerminalOf(target.Name) is null)
             return Unsupported(invocation, "'" + target.Name + "' after 'Select'", context);
         return ReadOperator(invocation, chain, context);
     }
 
+    // The entity of a Sql.Table<T>() call.
+    private static SqlTableSource TableSource(IInvocationOperation table)
+        => new(
+            table.TargetMethod.TypeArguments[0]
+                .WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                .ToDisplayString(OrmGenerator.TypeDisplayFormat),
+            LocationInfo.From(table.Syntax.GetLocation()));
+
     // One case per supported operator.
     private static bool ReadOperator(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         var name = invocation.TargetMethod.Name;
+        if (chain.Group is not null && UnsupportedAfterGroupBy(name) is { } afterGroup)
+            return Unsupported(invocation, afterGroup, context);
         if (TerminalOf(name) is { } terminal)
         {
             chain.Terminal = terminal;
@@ -136,8 +188,10 @@ internal static partial class LinqQueryReader
 
         // SQL filters and orders before it pages. Written after Skip or Take, a filter or an
         // ordering would apply to the page alone, which one SELECT cannot express.
-        if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending")
+        if (chain.PagingOperator is { } paging && name is "Where" or "WhereIf" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "GroupBy" or "Join")
             return Unsupported(invocation, "'" + name + "' after '" + paging + "'", context);
+
+        if (IsValueAggregate(name)) return ReadAggregate(invocation, chain, context);
 
         return name switch
         {
@@ -146,6 +200,8 @@ internal static partial class LinqQueryReader
             "WhereIf" => ReadWhereIf(invocation, chain, context),
             "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => ReadOrdering(invocation, chain, context),
             "Skip" or "Take" => ReadPaging(invocation, chain, context),
+            "GroupBy" => ReadGroupBy(invocation, chain, context),
+            "Join" => ReadJoin(invocation, chain, context),
             _ => Unsupported(invocation, "'" + name + "'", context),
         };
     }
@@ -160,6 +216,17 @@ internal static partial class LinqQueryReader
         SqlLiteralExpression => SqlLiteralExpression.Number("1"),
         SqlPagingCountExpression count => count with { AtMostOne = true },
         _ => take,
+    };
+
+    // After GroupBy, a Where filters groups, which is HAVING; and a terminal would count or
+    // aggregate the groups, which needs a subquery. Neither is translated yet.
+    private static string? UnsupportedAfterGroupBy(string operatorName) => operatorName switch
+    {
+        "Where" or "WhereIf" => "'" + operatorName + "' after 'GroupBy', which filters groups as HAVING,",
+        "Join" => "'Join' after 'GroupBy'",
+        _ when TerminalOf(operatorName) is not null || IsValueAggregate(operatorName)
+            => "'" + operatorName + "' over the groups of a 'GroupBy'",
+        _ => null,
     };
 
     private static SqlAggregate? TerminalOf(string operatorName) => operatorName switch
@@ -198,15 +265,24 @@ internal static partial class LinqQueryReader
     private static bool TryReadLambda(IOperation argument, out IParameterSymbol parameter, out IOperation returned)
     {
         parameter = null!;
+        if (!TryReadLambda(argument, 1, out var parameters, out returned)) return false;
+        parameter = parameters[0];
+        return true;
+    }
+
+    // The same for a lambda of `arity` parameters, such as a Join's result selector.
+    private static bool TryReadLambda(IOperation argument, int arity, out ImmutableArray<IParameterSymbol> parameters, out IOperation returned)
+    {
+        parameters = default;
         returned = null!;
         if (Unwrap(argument) is not IDelegateCreationOperation { Target: IAnonymousFunctionOperation lambda }
-            || lambda.Symbol.Parameters.Length != 1
+            || lambda.Symbol.Parameters.Length != arity
             || lambda.Body.Operations.Length != 1
             || lambda.Body.Operations[0] is not IReturnOperation { ReturnedValue: { } value })
         {
             return false;
         }
-        parameter = lambda.Symbol.Parameters[0];
+        parameters = lambda.Symbol.Parameters;
         returned = value;
         return true;
     }

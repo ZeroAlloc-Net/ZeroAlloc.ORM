@@ -112,6 +112,36 @@ public sealed class PostgresLinqOrderPagingTests
         (await repo.CountLabeledAsync("unused", 2, CancellationToken.None).ConfigureAwait(false)).Should().Be(4);
     }
 
+    // LINQ sorts null first ascending and last descending, where PostgreSQL's default is the
+    // opposite. The expected order is LINQ to Objects over the seeded rows.
+    [Fact]
+    public async Task Nullable_key_orders_nulls_as_linq_does()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var tasks = new LinqRepo(fx.Connection);
+        var seeded = new List<(Guid Id, int Order, DateTimeOffset? DueAt)>();
+        DateTimeOffset?[] dues = [Created.AddDays(2), null, Created.AddDays(1), null, Created.AddDays(3), Created.AddDays(1)];
+        for (var i = 0; i < dues.Length; i++)
+        {
+            var row = (Id: Guid.NewGuid(), Order: i, DueAt: dues[i]);
+            seeded.Add(row);
+            await tasks.InsertTaskAsync(
+                row.Id, ProjectId.From(Guid.NewGuid()), "t" + i, WorkStatus.Open, nameof(WorkKind.Bug), Created, row.DueAt, [], row.Order, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+
+        var repo = new LinqOrderPagingRepo(fx.Connection);
+        var ascending = await repo.ByDueAsync(CancellationToken.None).ConfigureAwait(false);
+        var descending = await repo.ByDueDescendingAsync(CancellationToken.None).ConfigureAwait(false);
+
+        ascending.Select(r => r.Id).Should().Equal(
+            seeded.OrderBy(r => r.DueAt).ThenBy(r => r.Order).Select(r => r.Id));
+        descending.Select(r => r.Id).Should().Equal(
+            seeded.OrderByDescending(r => r.DueAt).ThenBy(r => r.Order).Select(r => r.Id));
+        ascending[0].Order.Should().Be(1);
+        descending[^1].Order.Should().Be(3);
+    }
+
     [Fact]
     public async Task Query_runs_on_caller_transaction()
     {

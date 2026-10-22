@@ -16,36 +16,59 @@ internal interface ISqlRenderer
 }
 
 /// <summary>
-/// Resolves the entity members a statement names to the mapped table and columns. A member that
+/// Resolves the entity members a statement names to the mapped tables and columns. A member that
 /// is not a mapped column is recorded as ZAO105, so one render both produces the SQL and checks
-/// every name in it. Used for one render, never cached.
+/// every name in it. A query with a join has one source per alias, each with its own map; a
+/// member resolves through the source its alias names, or through the FROM source when it has no
+/// alias. Used for one render, never cached.
 /// </summary>
 internal sealed class SqlNameScope
 {
-    private readonly EntityMapModel _map;
-    private readonly string _entityDisplay;
-    private readonly Dictionary<string, ColumnMapModel> _columns = new(StringComparer.Ordinal);
+    private readonly Source _from;
+    private readonly Dictionary<string, Source> _aliased = new(StringComparer.Ordinal);
     private readonly List<DiagnosticInfo> _diagnostics = new();
+    private readonly HashSet<DiagnosticInfo> _unmapped = new();
 
-    public SqlNameScope(EntityMapModel map, string entityDisplay)
+    public SqlNameScope(EntityMapModel map, string entityDisplay, string? alias = null)
     {
-        _map = map;
-        _entityDisplay = entityDisplay;
-        foreach (var column in map.Columns)
-            _columns[column.Property] = column;
+        _from = new Source(map, entityDisplay);
+        if (alias is not null) _aliased[alias] = _from;
     }
 
-    public string Table => _map.Table;
+    public string Table => _from.Map.Table;
 
-    public string? Schema => _map.Schema;
+    public string? Schema => _from.Map.Schema;
 
     public ImmutableArray<DiagnosticInfo> Diagnostics => _diagnostics.ToImmutableArray();
 
-    /// <summary>The member's column, or the member name after recording ZAO105.</summary>
+    /// <summary>
+    /// Whether a member renders with its source's alias. A paged aggregate turns it off for the
+    /// call outside its subquery, which reads the subquery's one column.
+    /// </summary>
+    public bool QualifyColumns { get; set; } = true;
+
+    /// <summary>Adds a joined source under its alias.</summary>
+    public void AddSource(string alias, EntityMapModel map, string entityDisplay)
+        => _aliased[alias] = new Source(map, entityDisplay);
+
+    /// <summary>The table and schema of the source <paramref name="alias"/> names.</summary>
+    public (string Table, string? Schema) TableOf(string alias)
+    {
+        var map = SourceOf(alias).Map;
+        return (map.Table, map.Schema);
+    }
+
+    /// <summary>
+    /// The member's column, or the member name after recording ZAO105. One member renders more
+    /// than once, such as a group key in SELECT, GROUP BY and ORDER BY, so ZAO105 is recorded
+    /// once per member and location.
+    /// </summary>
     public string Column(SqlMemberExpression member)
     {
-        if (_columns.TryGetValue(member.Member, out var column)) return column.Column;
-        _diagnostics.Add(LinqDiagnostics.UnmappedMember(member.Member, _entityDisplay, member.Location));
+        var source = SourceOf(member.SourceAlias);
+        if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
+        var unmapped = LinqDiagnostics.UnmappedMember(member.Member, source.EntityDisplay, member.Location);
+        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
         return member.Member;
     }
 
@@ -60,5 +83,29 @@ internal sealed class SqlNameScope
 
     /// <summary>Whether the member maps to a column that stores an enum as its member name.</summary>
     public bool IsEnumAsString(SqlMemberExpression member)
-        => _columns.TryGetValue(member.Member, out var column) && column.EnumAsString;
+        => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column) && column.EnumAsString;
+
+    private Source SourceOf(string? alias)
+    {
+        if (alias is null) return _from;
+        if (_aliased.TryGetValue(alias, out var source)) return source;
+        throw new InvalidOperationException("No source for alias " + alias + ".");
+    }
+
+    private sealed class Source
+    {
+        public Source(EntityMapModel map, string entityDisplay)
+        {
+            Map = map;
+            EntityDisplay = entityDisplay;
+            foreach (var column in map.Columns)
+                Columns[column.Property] = column;
+        }
+
+        public EntityMapModel Map { get; }
+
+        public string EntityDisplay { get; }
+
+        public Dictionary<string, ColumnMapModel> Columns { get; } = new(StringComparer.Ordinal);
+    }
 }

@@ -14,19 +14,46 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal abstract record SqlStatement;
 
 /// <summary>
-/// <c>SELECT projection FROM table [WHERE predicates] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
+/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
 /// </summary>
 /// <param name="From">The queried entity.</param>
 /// <param name="Projection">The SELECT list, in the order the row type's constructor reads it.</param>
 /// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
 /// <param name="Ordering">ORDER BY keys, in order. Empty for no ORDER BY clause.</param>
 /// <param name="Paging">LIMIT and OFFSET.</param>
+/// <param name="GroupBy">
+/// GROUP BY keys, in the order the key selector names them. Empty for no GROUP BY clause. A
+/// grouped projection and ordering read only these keys and aggregate calls.
+/// </param>
+/// <param name="Joins">The inner joins, in join order. Empty for a query without a join.</param>
+/// <param name="Alias">
+/// The alias of <paramref name="From"/>, <c>t0</c>, set exactly when the query has a join. Then
+/// every member names its source's alias; without a join neither is aliased, as in 2.5.0.
+/// </param>
 internal sealed record SqlSelectStatement(
     SqlTableSource From,
     EquatableArray<SqlExpression> Projection,
     EquatableArray<SqlExpression> Predicates,
     EquatableArray<SqlOrdering> Ordering,
-    SqlPaging Paging) : SqlStatement;
+    SqlPaging Paging,
+    EquatableArray<SqlExpression> GroupBy = default,
+    EquatableArray<SqlJoin> Joins = default,
+    string? Alias = null) : SqlStatement;
+
+/// <summary>
+/// <c>INNER JOIN table AS alias ON on [AND sourcePredicates]</c>: a <c>Join</c> operator. The
+/// inner source's own <c>Where</c> conditions are scoped to it in the ON clause, which for an
+/// inner join keeps the same rows as a WHERE would.
+/// </summary>
+/// <param name="Source">The joined entity.</param>
+/// <param name="Alias">Its alias: <c>t1</c>, <c>t2</c>, ... in join order.</param>
+/// <param name="On">The key equality, outer key first.</param>
+/// <param name="SourcePredicates">The inner source's Where conditions, joined with AND.</param>
+internal sealed record SqlJoin(
+    SqlTableSource Source,
+    string Alias,
+    SqlExpression On,
+    EquatableArray<SqlExpression> SourcePredicates);
 
 /// <summary>
 /// A <c>Count()</c>, <c>LongCount()</c> or <c>Any()</c> terminal over a SELECT: one value, read
@@ -51,6 +78,20 @@ internal enum SqlAggregate
     Any,
 }
 
+/// <summary>
+/// A <c>Sum</c>, <c>Min</c>, <c>Max</c> or <c>Average</c> terminal over a SELECT:
+/// <c>SELECT call FROM ... WHERE ...</c>, one value read through the <c>[Query]</c> scalar shapes.
+/// A record of its own rather than a <see cref="SqlAggregateStatement"/> with an optional call,
+/// so each statement says one thing: that one is a bare count or existence, this one a call.
+/// </summary>
+/// <param name="Call">The aggregate, over a column of <paramref name="Source"/>.</param>
+/// <param name="Source">
+/// The rows the aggregate reads: the chain's table, WHERE and paging, without a projection. It
+/// has an ordering only when it is paged, since which rows a page holds changes a sum, and an
+/// ORDER BY next to an aggregate without a GROUP BY is an error.
+/// </param>
+internal sealed record SqlScalarAggregateStatement(SqlAggregateCallExpression Call, SqlSelectStatement Source) : SqlStatement;
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
@@ -66,7 +107,12 @@ internal abstract record SqlExpression;
 /// The member is an enum without <c>[StoreAsString]</c>, so its map decides whether the column
 /// holds the integer or the member name.
 /// </param>
-internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage) : SqlExpression;
+/// <param name="SourceAlias">
+/// The alias of the source the member belongs to, <c>t0</c>, <c>t1</c>, ..., in a query with a
+/// join; it renders as <c>t1."Col"</c> and resolves through that source's map. Null without a
+/// join, which renders the bare column as in 2.5.0.
+/// </param>
+internal sealed record SqlMemberExpression(string Member, LocationInfo? Location, bool ColumnPicksEnumStorage, string? SourceAlias = null) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
@@ -207,8 +253,71 @@ internal enum SqlLiteralKind
 /// <param name="AtMostOne">Whether the count is also capped at 1.</param>
 internal sealed record SqlPagingCountExpression(SqlExpression Count, bool AtMostOne) : SqlExpression;
 
-/// <summary>One ORDER BY key.</summary>
-internal sealed record SqlOrdering(SqlExpression Expression, bool Descending);
+/// <summary>
+/// An aggregate call: <c>COALESCE(fn(argument), 0)::cast</c>, each part optional. Scalar
+/// aggregates use it as their whole SELECT list; a grouped SELECT can project several.
+/// </summary>
+/// <param name="Function">The aggregate function.</param>
+/// <param name="Argument">The aggregated column; null for <c>count(*)</c>.</param>
+/// <param name="ResultCast">
+/// The PostgreSQL type the result is cast to, so it is exactly the CLR type the scalar reads,
+/// such as <c>int</c> for a <c>Sum</c> over int, whose <c>sum</c> is bigint. Null for none.
+/// </param>
+/// <param name="CoalesceToZero">
+/// Whether NULL, the aggregate of no values, reads as 0. LINQ's <c>Sum</c> is 0 for no values,
+/// nullable selectors included.
+/// </param>
+internal sealed record SqlAggregateCallExpression(
+    SqlAggregateFunction Function,
+    SqlExpression? Argument,
+    string? ResultCast,
+    bool CoalesceToZero) : SqlExpression;
+
+/// <summary>
+/// C#'s <c>.Date</c> on a <c>DateTime</c> or <c>DateTimeOffset</c> column, as EF Core's Npgsql
+/// provider translates it.
+/// <list type="bullet">
+/// <item>A <c>DateTimeOffset</c> column is a <c>timestamptz</c>, which Npgsql reads at offset 0, so
+/// C#'s <c>.Date</c> is the UTC date: <c>date_trunc('day', col AT TIME ZONE 'UTC')</c>, a
+/// <c>timestamp</c> read with Kind Unspecified, as C#'s is. It does not depend on the session's
+/// <c>TimeZone</c>.</item>
+/// <item>A <c>DateTime</c> column may be a <c>timestamp</c> or a <c>timestamptz</c>, which the
+/// generator cannot tell apart: <c>date_trunc('day', col)</c>. Over a <c>timestamptz</c> its day
+/// boundary follows the session's <c>TimeZone</c>, so <c>Timezone=UTC</c> in the connection
+/// string matches C#'s <c>.Date</c> on the UTC values Npgsql reads.</item>
+/// </list>
+/// </summary>
+/// <param name="Operand">The column.</param>
+/// <param name="AtUtc">Whether the column is a <c>timestamptz</c> cut at the UTC day.</param>
+internal sealed record SqlDateTruncExpression(SqlExpression Operand, bool AtUtc) : SqlExpression;
+
+internal enum SqlAggregateFunction
+{
+    /// <summary><c>count</c>.</summary>
+    Count,
+
+    /// <summary><c>count</c>, read as a long.</summary>
+    LongCount,
+
+    /// <summary><c>sum</c>.</summary>
+    Sum,
+
+    /// <summary><c>min</c>.</summary>
+    Min,
+
+    /// <summary><c>max</c>.</summary>
+    Max,
+
+    /// <summary><c>avg</c>.</summary>
+    Average,
+}
+
+/// <summary>
+/// One ORDER BY key. <paramref name="NullsLikeLinq"/> is set when the key can be NULL: LINQ sorts
+/// null first ascending and last descending, where PostgreSQL's default is the opposite, so the
+/// renderer says NULLS FIRST or NULLS LAST. A key that cannot be NULL renders without it.
+/// </summary>
+internal sealed record SqlOrdering(SqlExpression Expression, bool Descending, bool NullsLikeLinq = false);
 
 /// <summary>LIMIT and OFFSET, each null when absent.</summary>
 internal sealed record SqlPaging(SqlExpression? Limit, SqlExpression? Offset)

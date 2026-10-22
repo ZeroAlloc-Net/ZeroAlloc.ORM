@@ -107,7 +107,8 @@ public sealed partial class TaskStore(IAsyncDbConnection connection)
 
 `TaskEntity` is any class with the mapped properties, such as a Domain entity; columns default to the
 property names, as in EF Core. Filters, ordering, `Skip`/`Take`, `Sql.Row` keyset paging, `Count`,
-`LongCount` and `Any` translate today. See the
+`LongCount`, `Any`, `Sum`, `Min`, `Max`, `Average`, `GroupBy` with aggregates and `.Date`, and inner
+`Join` translate today. See the
 [LINQ recipe](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) for every
 operator, result shape and diagnostic.
 

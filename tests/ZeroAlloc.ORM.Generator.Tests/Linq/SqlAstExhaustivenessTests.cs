@@ -39,6 +39,7 @@ public class SqlAstExhaustivenessTests
 
         Walk(select);
         Walk(new SqlAggregateStatement(SqlAggregate.Count, select));
+        Walk(new SqlScalarAggregateStatement(Call(expression), select));
         _ = LinqQueryReader.MayBeNull(expression, new HashSet<SqlExpression>());
     }
 
@@ -56,27 +57,54 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlCastExpression), expressions);
         Assert.Contains(typeof(SqlConditionalExpression), expressions);
         Assert.True(expressions.Count >= 15, "found " + expressions.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        Assert.Equal([typeof(SqlAggregateStatement), typeof(SqlSelectStatement)], Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
+        Assert.Contains(typeof(SqlAggregateCallExpression), expressions);
+        Assert.Contains(typeof(SqlDateTruncExpression), expressions);
+        Assert.Equal(
+            [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
+            Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
     }
 
     private static void Walk(SqlStatement statement)
     {
-        var names = new SqlNameScope(Map, "TestApp.TaskEntity");
+        var select = statement switch
+        {
+            SqlAggregateStatement aggregate => aggregate.Source,
+            SqlScalarAggregateStatement scalar => scalar.Source,
+            _ => (SqlSelectStatement)statement,
+        };
+        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias);
+        foreach (var join in select.Joins)
+            names.AddSource(join.Alias, Map, "TestApp.TaskEntity");
         _ = EnumParameterStorage.Decide(statement, names);
         _ = PostgresSqlRenderer.Instance.Render(statement, names);
         _ = SqlParameterReferences.Collect(statement);
         _ = LinqQueryBinder.Bind(statement, new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map)));
     }
 
-    // The expression in every position a statement has: the projection, the WHERE, the ORDER BY
-    // and the paging.
+    // The expression in every position a statement has: the projection, a join's ON and its
+    // source's conditions, the WHERE, the GROUP BY, the ORDER BY and the paging. The FROM's alias
+    // is "x", the placeholder a member's source alias gets.
     private static SqlSelectStatement Select(SqlExpression expression)
         => new(
             From,
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
             new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(expression, Descending: false))),
-            new SqlPaging(expression, expression));
+            new SqlPaging(expression, expression),
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)),
+            Joins(expression),
+            Alias: "x");
+
+    private static EquatableArray<SqlJoin> Joins(SqlExpression expression)
+        => new(ImmutableArray.Create(new SqlJoin(
+            From,
+            "t1",
+            expression,
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)))));
+
+    // The expression as an aggregate's argument, the position a scalar aggregate adds.
+    private static SqlAggregateCallExpression Call(SqlExpression argument)
+        => new(SqlAggregateFunction.Sum, argument, ResultCast: "int", CoalesceToZero: true);
 
     private static TheoryData<string> Names(Type root)
     {
@@ -116,8 +144,10 @@ public class SqlAstExhaustivenessTests
         if (type == typeof(EquatableArray<SqlExpression>)) return new EquatableArray<SqlExpression>(ImmutableArray.Create<SqlExpression>(Column));
         if (type == typeof(EquatableArray<SqlOrdering>)) return new EquatableArray<SqlOrdering>(ImmutableArray.Create(new SqlOrdering(Column, Descending: false)));
         if (type == typeof(SqlTableSource)) return From;
+        if (type == typeof(EquatableArray<SqlJoin>)) return Joins(Column);
         if (type == typeof(SqlPaging)) return SqlPaging.None;
         if (type == typeof(SqlSelectStatement)) return Select(Column);
+        if (type == typeof(SqlAggregateCallExpression)) return Call(Column);
         throw new InvalidOperationException(
             "No placeholder for " + type.Name + " in " + parameter.Member.DeclaringType?.Name + "; add one here.");
     }

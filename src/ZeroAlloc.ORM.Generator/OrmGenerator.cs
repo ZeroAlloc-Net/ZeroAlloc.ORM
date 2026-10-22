@@ -1881,6 +1881,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         if (inner.SpecialType == SpecialType.System_Boolean) return (EmitShape.ScalarBool, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         if (inner.SpecialType == SpecialType.System_Int64) return (EmitShape.ScalarLong, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
+        // Non-nullable double / decimal: Convert.ToDouble / Convert.ToDecimal. Needed by
+        // LINQ Average and Sum. Same ordering rule as bool / long above.
+        if (inner.SpecialType == SpecialType.System_Double) return (EmitShape.ScalarDouble, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+        if (inner.SpecialType == SpecialType.System_Decimal) return (EmitShape.ScalarDecimal, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
         // `Money(decimal Amount, string Currency)` constructs the composite type
         // directly from the SELECT list. Tried BEFORE FlatRow's nullable-reference
@@ -5262,6 +5267,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 case EmitShape.ScalarLong:
                     EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToInt64");
                     break;
+                case EmitShape.ScalarDouble:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDouble");
+                    break;
+                case EmitShape.ScalarDecimal:
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDecimal");
+                    break;
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m, repo.ConnectionAccess);
                     break;
@@ -5523,9 +5534,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
         => EmitScalarConvert(sb, m, connectionAccess, "ToInt32");
 
-    // Shared body for ScalarInt / ScalarBool / ScalarLong: ExecuteScalarAsync then
-    // System.Convert.<convertMethod> with the invariant culture. A no-row result
-    // (null) converts to the default value; a DBNull throws InvalidCastException.
+    // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble /
+    // ScalarDecimal: ExecuteScalarAsync then System.Convert.<convertMethod> with
+    // the invariant culture. A no-row result (null) converts to the default
+    // value; a DBNull throws InvalidCastException. A [LinqQuery] Average, Min or Max
+    // throws InvalidOperationException on either instead, as LINQ's non-nullable
+    // overload does on no values; see QueryMethodModel.LinqThrowsOnNoElements.
     private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
     {
         var paramList = BuildParameterList(m.MethodParameters);
@@ -5539,6 +5553,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            var __result = await __cmd.ExecuteScalarAsync({ct}).ConfigureAwait(false);");
+        if (m.LinqThrowsOnNoElements)
+        {
+            sb.AppendLine("            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException(\"Sequence contains no elements\");");
+        }
         sb.AppendLine($"            return global::System.Convert.{convertMethod}(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");

@@ -49,6 +49,65 @@ public class LinqOrderPagingTests
             """);
     }
 
+    // LINQ sorts null first ascending and last descending; PostgreSQL does the opposite, so a
+    // key that can be null says which way, and a key that cannot be null renders as before.
+    [Fact]
+    public void Order_by_nullable_column_puts_nulls_first()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(ByDueQuery))]
+                public partial Task<List<TaskSummary>> ByDue(CancellationToken ct);
+
+                [LinqQuery(nameof(ByNoteQuery))]
+                public partial Task<List<TaskSummary>> ByNote(CancellationToken ct);
+
+                private static IQuery<TaskSummary> ByDueQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .OrderBy(t => t.DueAt)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+
+                private static IQuery<TaskSummary> ByNoteQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .OrderBy(t => t.Note)
+                        .ThenBy(t => t.Priority)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
+    [Fact]
+    public void Order_by_descending_nullable_puts_nulls_last()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(ByDueQuery))]
+                public partial Task<List<TaskSummary>> ByDue(CancellationToken ct);
+
+                private static IQuery<TaskSummary> ByDueQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .OrderByDescending(t => t.DueAt)
+                        .ThenByDescending(t => t.Category)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
+    [Fact]
+    public void ThenBy_nullable_after_non_nullable()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(ByQuery))]
+                public partial Task<List<TaskSummary>> By(CancellationToken ct);
+
+                private static IQuery<TaskSummary> ByQuery() =>
+                    Sql.Table<TaskEntity>()
+                        .OrderBy(t => t.CreatedAt)
+                        .ThenBy(t => t.DueAt)
+                        .ThenByDescending(t => t.Order)
+                        .Select(t => new TaskSummary(t.Id, t.Title));
+            }
+            """);
+    }
+
     // Skip and Take take a parameter, clamped at 0 as LINQ reads a negative count, or an int
     // literal. The single-row shape reads one row at most: a Take literal becomes min(n, 1), a
     // Take parameter is capped at 1 too, and a Skip alone keeps LIMIT 1.

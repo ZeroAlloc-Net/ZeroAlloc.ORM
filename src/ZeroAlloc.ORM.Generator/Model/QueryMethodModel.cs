@@ -13,6 +13,9 @@ internal enum EmitShape
     // Task<bool> / Task<long> [Query] results; same ExecuteScalar shape as ScalarInt.
     ScalarBool,
     ScalarLong,
+    // Task<double> / Task<decimal> [Query] results; Convert.ToDouble / Convert.ToDecimal.
+    ScalarDouble,
+    ScalarDecimal,
     NullableScalar,
     FlatRow,
     // Multi-arg class with column-name-keyed reads. Detected when the return-type
@@ -296,7 +299,13 @@ internal sealed record QueryMethodModel(
     // it once per method from the method's index in the repository, so overloads
     // get distinct constants, and BuildCommandTextAssignment uses it as the
     // CommandText when non-null.
-    string? LinqSqlConstantName = null);
+    string? LinqSqlConstantName = null,
+    // [LinqQuery] — true for a scalar Average, Min or Max, whose SQL gives NULL for no
+    // rows where LINQ's non-nullable overload throws. The non-null scalar emit then throws
+    // InvalidOperationException("Sequence contains no elements") on NULL, as LINQ does;
+    // a nullable result returns null as before. Always false off the LINQ path, so the
+    // [Query] scalar emit is unchanged.
+    bool LinqThrowsOnNoElements = false);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

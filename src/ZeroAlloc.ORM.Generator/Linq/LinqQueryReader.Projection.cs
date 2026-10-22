@@ -45,7 +45,9 @@ internal static partial class LinqQueryReader
         {
             if (argument.Parameter is not { } parameter || argument.ArgumentKind == ArgumentKind.ParamArray)
                 return RejectProjection("a params argument is not supported", argument, context);
-            var item = ReadProjectionItem(argument.Value, row, context);
+            var item = chain.Group is { } group
+                ? ReadGroupedItem(argument.Value, row, group, context)
+                : ReadProjectionItem(argument.Value, row, context);
             if (item is null) return false;
             items[parameter.Ordinal] = item;
         }
@@ -56,7 +58,7 @@ internal static partial class LinqQueryReader
 
     // A parameter that can be null and has no DbType facet is cast, so that a null still has a
     // type: PostgreSQL reads the SELECT list first and would type it as text there.
-    private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol row, ReaderContext context)
+    private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
         switch (ReadOperand(value, row, context, out var expression))
         {

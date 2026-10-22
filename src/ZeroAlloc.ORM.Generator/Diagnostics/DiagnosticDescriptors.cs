@@ -825,7 +825,7 @@ internal static class DiagnosticDescriptors
     public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
         id: "ZAO112",
         title: "LINQ method return type does not fit the query",
-        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; after Count, LongCount or Any, return Task or ValueTask of int, long or bool",
+        messageFormat: "[LinqQuery] method '{0}' returns '{1}', which does not fit '{2}'; return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; after Count, LongCount or Any, return Task or ValueTask of int, long or bool; after Sum, Average, Min or Max, of the value it gives: int, long, double or decimal, one of those or DateTime or DateTimeOffset as nullable, or string?",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
