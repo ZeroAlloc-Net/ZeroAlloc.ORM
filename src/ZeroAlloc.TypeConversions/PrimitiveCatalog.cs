@@ -148,6 +148,8 @@ public static class PrimitiveCatalog
     /// <summary>
     /// The PostgreSQL array type Npgsql infers for a CLR array of <paramref name="element"/>, such
     /// as <c>text[]</c> for string, or null for an element type a PostgreSQL array may not hold.
+    /// The element's nullable reference annotation is ignored, so <c>string?</c> also maps to
+    /// <c>text[]</c>; a nullable value-type element such as <c>int?</c> is not supported.
     /// </summary>
     public static string? GetPostgresArrayTypeName(ITypeSymbol element)
         => element.SpecialType switch
