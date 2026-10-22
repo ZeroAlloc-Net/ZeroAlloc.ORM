@@ -2,7 +2,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 
 // A schema shaped like Daedalus' EF-created one: quoted PascalCase names, a reserved word
 // ("Order") as a column, a typed id, an enum stored as int and one stored as text, a text[],
-// a nullable timestamptz, and nullable int, real and int-enum columns for the null semantics.
+// a nullable timestamptz, and nullable int, real and int-enum columns for the null semantics. A
+// task's nullable "ParentTaskId" makes it a sub-task.
 // "Projects" lives in its own schema so the map's Schema is used. "Executions" is Daedalus'
 // task-execution log, which the aggregates read, and "Sessions" its chat sessions, which the
 // grouped token report reads. "AnalysisRequests" is Daedalus' code analysis request, whose owned
@@ -33,7 +34,8 @@ internal static class LinqSchema
             "Priority" int NULL,
             "Rating" real NULL,
             "Category" int NULL,
-            "Score" real NOT NULL DEFAULT 0
+            "Score" real NOT NULL DEFAULT 0,
+            "ParentTaskId" uuid NULL
         );
         CREATE TABLE "Executions" (
             "Id" uuid PRIMARY KEY,

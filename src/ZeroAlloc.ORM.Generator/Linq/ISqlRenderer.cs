@@ -37,9 +37,9 @@ internal sealed class SqlNameScope
 
     /// <param name="map">The FROM entity's map.</param>
     /// <param name="entityDisplay">The FROM entity as messages show it.</param>
-    /// <param name="alias">The FROM entity's alias, when the statement has a join.</param>
+    /// <param name="alias">The FROM entity's alias, when the statement has a join; null without one.</param>
     /// <param name="maps">Every entity map, which an IN subquery's sources resolve through.</param>
-    public SqlNameScope(EntityMapModel map, string entityDisplay, string? alias = null, EquatableArray<EntityMapModel> maps = default)
+    public SqlNameScope(EntityMapModel map, string entityDisplay, string? alias, EquatableArray<EntityMapModel> maps)
     {
         _maps = maps;
         _diagnostics = new List<DiagnosticInfo>();
@@ -128,9 +128,8 @@ internal sealed class SqlNameScope
 
     /// <summary>
     /// The scope an IN subquery binds through: its FROM source, under its alias when it has a
-    /// join, and each joined source under its own. A source without a map records ZAO104 and
-    /// binds through an empty one, so the render goes on and the statement fails on the
-    /// diagnostic. One scope per subquery, so a subquery walked twice resolves alike.
+    /// join, and each joined source under its own. One scope per subquery, so a subquery walked
+    /// twice resolves alike.
     /// </summary>
     public SqlNameScope Subquery(SqlSelectStatement select)
     {
@@ -142,27 +141,11 @@ internal sealed class SqlNameScope
         return scope;
     }
 
-    // The map of a subquery's source: from every map the binder holds, else from a source this
-    // scope or an enclosing one already reads.
+    // The map of a subquery's source. The binder has checked every subquery source against the
+    // maps before the render, reporting ZAO104 for one without a map, so each has one here.
     private EntityMapModel MapOf(SqlTableSource source)
-    {
-        if (LinqQueryBinder.FindMap(_maps, source.EntityTypeFullName) is { } map) return map;
-        for (var scope = this; scope is not null; scope = scope._parent)
-        {
-            if (string.Equals(scope._from.Map.EntityTypeFullName, source.EntityTypeFullName, StringComparison.Ordinal))
-                return scope._from.Map;
-            foreach (var aliased in scope._aliased.Values)
-            {
-                if (string.Equals(aliased.Map.EntityTypeFullName, source.EntityTypeFullName, StringComparison.Ordinal))
-                    return aliased.Map;
-            }
-        }
-
-        var display = LinqQueryBinder.DisplayName(source.EntityTypeFullName);
-        var unmapped = LinqDiagnostics.UnmappedEntity(display, source.Location);
-        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
-        return new EntityMapModel(source.EntityTypeFullName, display, Schema: null, EquatableArray<ColumnMapModel>.Empty);
-    }
+        => LinqQueryBinder.FindMap(_maps, source.EntityTypeFullName)
+            ?? throw new InvalidOperationException("No map for subquery source " + source.EntityTypeFullName + ".");
 
     /// <summary>Records a diagnostic the render found, such as an enum value with no name to compare by.</summary>
     public void Report(DiagnosticInfo diagnostic) => _diagnostics.Add(diagnostic);

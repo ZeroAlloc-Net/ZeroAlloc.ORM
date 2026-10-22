@@ -24,6 +24,10 @@ internal static class LinqQueryBinder
         {
             var names = Scope(SelectOf(statement), maps, out var unmapped);
             if (names is null) return Failed(unmapped!);
+            foreach (var subquery in SqlSubqueries.Collect(statement))
+            {
+                if (UnmappedSource(subquery, maps) is { } missing) return Failed(missing);
+            }
             builder.Add((statement, names));
         }
         var scopes = builder.MoveToImmutable();
@@ -93,6 +97,20 @@ internal static class LinqQueryBinder
             names.AddSource(join.Alias, joinedMap, DisplayName(joined));
         }
         return names;
+    }
+
+    // ZAO104 for the first source of an IN subquery without a map, its FROM or a joined one, as
+    // Scope reports it for the statement's own; null when every source has one.
+    private static DiagnosticInfo? UnmappedSource(SqlSelectStatement subquery, EquatableArray<EntityMapModel> maps)
+    {
+        if (FindMap(maps, subquery.From.EntityTypeFullName) is null)
+            return LinqDiagnostics.UnmappedEntity(DisplayName(subquery.From.EntityTypeFullName), subquery.From.Location);
+        foreach (var join in subquery.Joins)
+        {
+            if (FindMap(maps, join.Source.EntityTypeFullName) is null)
+                return LinqDiagnostics.UnmappedEntity(DisplayName(join.Source.EntityTypeFullName), join.Source.Location);
+        }
+        return null;
     }
 
     // SELECT positions that read a member name: an EnumAsString column, or an enum parameter

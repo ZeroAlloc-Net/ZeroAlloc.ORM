@@ -62,6 +62,11 @@ public class LinqSubqueryTests
         [TableMap(typeof(ProjectEntity), "Projects")]
         internal static class ProjectMap;
 
+        public sealed class OrphanEntity
+        {
+            public Guid Id { get; private set; }
+        }
+
         public sealed record TaskHead(Guid Id, string Title);
 
         public sealed record ExecutionLine(Guid Id, Guid TaskId, int InputTokens);
@@ -222,6 +227,97 @@ public class LinqSubqueryTests
             static _ => { });
     }
 
+    // A nullable outer value: IN is NULL for a NULL value, which the WHERE drops as C#'s false is,
+    // and the negation takes IS NOT TRUE, which keeps it as C#'s true. The selected column is cast
+    // to the nullable type, so Contains takes the value; it still selects no NULL.
+    [Fact]
+    public void Nullable_outer_value_reads_in_and_negates_with_is_not_true()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ExecutionStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(UnderQuery))]
+                public partial Task<List<ExecutionLine>> Under(string title, CancellationToken ct);
+
+                [LinqQuery(nameof(NotUnderQuery))]
+                public partial Task<List<ExecutionLine>> NotUnder(string title, CancellationToken ct);
+
+                private static IQuery<ExecutionLine> UnderQuery(string title) =>
+                    Sql.Table<ExecutionEntity>()
+                        .Where(e => Sql.Table<TaskEntity>().Where(t => t.Title == title).Select(t => (Guid?)t.Id).Contains(e.ParentTaskId))
+                        .Select(e => new ExecutionLine(e.Id, e.TaskId, e.InputTokens));
+
+                private static IQuery<ExecutionLine> NotUnderQuery(string title) =>
+                    Sql.Table<ExecutionEntity>()
+                        .Where(e => !Sql.Table<TaskEntity>().Where(t => t.Title == title).Select(t => (Guid?)t.Id).Contains(e.ParentTaskId))
+                        .Select(e => new ExecutionLine(e.Id, e.TaskId, e.InputTokens));
+            }
+            """,
+            "FROM \"Executions\" WHERE \"ParentTaskId\" IN (SELECT \"Id\" FROM \"Tasks\" WHERE \"Title\" = @title)\"",
+            "FROM \"Executions\" WHERE (\"ParentTaskId\" IN (SELECT \"Id\" FROM \"Tasks\" WHERE \"Title\" = @title)) IS NOT TRUE\"",
+            "// LINQ: ExecutionStore.NotUnderQuery",
+            static generated => Assert.DoesNotContain("NOT IN", generated, StringComparison.Ordinal));
+    }
+
+    // A subquery inside a subquery: the middle one joins, aliased s0 and s1, and the inner one in
+    // its WHERE is plain and unaliased. Each binds through its own scope.
+    [Fact]
+    public void Nested_subquery_binds_through_its_own_scope()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ExecutionStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(NestedQuery))]
+                public partial Task<List<ExecutionLine>> Nested(string name, string title, CancellationToken ct);
+
+                private static IQuery<ExecutionLine> NestedQuery(string name, string title) =>
+                    Sql.Table<ExecutionEntity>()
+                        .Where(e => Sql.Table<TaskEntity>()
+                            .Join(Sql.Table<ProjectEntity>(), t => t.ProjectId, p => p.Id, (t, p) => new { Task = t, Project = p })
+                            .Where(y => y.Project.Name == name
+                                && Sql.Table<TaskEntity>().Where(t => t.Title == title).Select(t => t.Id).Contains(y.Task.Id))
+                            .Select(y => y.Task.Id)
+                            .Contains(e.TaskId))
+                        .Select(e => new ExecutionLine(e.Id, e.TaskId, e.InputTokens));
+            }
+            """,
+            "WHERE \"TaskId\" IN (SELECT s0.\"Id\" FROM \"Tasks\" AS s0 INNER JOIN \"Projects\" AS s1 ON s0.\"ProjectId\" = s1.\"Id\" WHERE s1.\"Name\" = @name AND s0.\"Id\" IN (SELECT \"Id\" FROM \"Tasks\" WHERE \"Title\" = @title))",
+            "__p_name.ParameterName = \"name\"",
+            "__p_title.ParameterName = \"title\"",
+            static _ => { });
+    }
+
+    // The inner subquery reading the middle one's row is as correlated as reading the outer row.
+    [Fact]
+    public void Nested_subquery_reading_the_middle_row_reports_ZAO102()
+    {
+        var (located, message) = SingleError("""
+            Sql.Table<TaskEntity>()
+                .Where(y => Sql.Table<TaskEntity>().Where(t => t.ProjectId == y.ProjectId).Select(t => t.Id).Contains(y.Id))
+                .Select(y => y.Id)
+                .Contains(e.TaskId)
+            """);
+
+        Assert.Equal("y.ProjectId", located);
+        Assert.Contains("correlated subquery", message, StringComparison.Ordinal);
+    }
+
+    // An unmapped entity in a subquery fails the query with one ZAO104, as at the top level, and
+    // no ZAO105 for each of its members.
+    [Fact]
+    public void Unmapped_subquery_entity_reports_one_ZAO104()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + Store(
+            "Sql.Table<OrphanEntity>().OrderBy(o => o.Id).Select(o => o.Id).Contains(e.TaskId)"));
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO104", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("Sql.Table<OrphanEntity>()", tree.ToString().Substring(span.Start, span.Length));
+    }
+
     // A subquery that reads the outer row would be a correlated subquery, which is not translated.
     [Fact]
     public void Correlated_subquery_reports_ZAO102()
@@ -235,17 +331,17 @@ public class LinqSubqueryTests
             message);
     }
 
-    // SQL's IN and NOT IN treat NULL unlike C#'s Contains, so the selected column and the outer
-    // value must both be non-nullable.
+    // SQL's NOT IN is NULL for every row once the subquery selects a NULL, unlike C#'s Contains, so
+    // the selected column must be non-nullable, whether the outer value is nullable or not.
     [Theory]
     [InlineData(
         "Sql.Table<TaskEntity>().Select(t => t.ParentId).Contains(e.TaskId)",
         "t.ParentId",
         "Selecting 't.ParentId', which can be null, for an IQuery Contains without a 't.ParentId != null' filter in the subquery, is not supported in a [LinqQuery] chain")]
     [InlineData(
-        "Sql.Table<TaskEntity>().Where(t => t.ParentId != null).Select(t => t.ParentId).Contains(e.ParentTaskId)",
-        "e.ParentTaskId",
-        "'e.ParentTaskId', which can be null, as the value of an IQuery Contains, whose IN and NOT IN treat NULL unlike C#, is not supported in a [LinqQuery] chain")]
+        "!Sql.Table<TaskEntity>().Where(t => t.Title == title).Select(t => t.ParentId).Contains(e.ParentTaskId)",
+        "t.ParentId",
+        "Selecting 't.ParentId', which can be null, for an IQuery Contains without a 't.ParentId != null' filter in the subquery, is not supported in a [LinqQuery] chain")]
     public void Nullable_subquery_column_reports_ZAO102(string predicate, string expectedLocation, string expectedMessage)
     {
         var (located, message) = SingleError(predicate);

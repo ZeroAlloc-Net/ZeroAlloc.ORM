@@ -285,8 +285,8 @@ SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "Exec
 
 For a page of parents, the child chain filters with `IQuery<T>.Contains`: a subquery that repeats the
 parent chain's order and page, and selects its id. It renders as an `IN` subquery, with the
-`ORDER BY`, `LIMIT` and `OFFSET` inside it, so the children are exactly those of the parents the
-first statement returns:
+`ORDER BY`, `LIMIT` and `OFFSET` inside it, so it selects the same page of parents as the first
+statement:
 
 ```csharp
 [LinqQuery(nameof(PageQuery))]
@@ -303,7 +303,7 @@ private static (IQuery<TaskHead>, IQuery<ExecutionLine>) PageQuery(int skip, int
             .Skip(skip).Take(take)
             .Select(t => t.Id)
             .Contains(e.TaskId))
-        .OrderBy(e => e.ExecutedAt)
+        .OrderBy(e => e.ExecutedAt).ThenBy(e => e.Id)
         .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
 ```
 
@@ -311,9 +311,14 @@ private static (IQuery<TaskHead>, IQuery<ExecutionLine>) PageQuery(int skip, int
 SELECT "Id", "Title" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0);
 SELECT "Id", "InputTokens" FROM "Executions"
 WHERE "TaskId" IN (SELECT "Id" FROM "Tasks" ORDER BY "CreatedAt" DESC, "Id" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0))
-ORDER BY "ExecutedAt"
+ORDER BY "ExecutedAt", "Id"
 ```
 
+- The children are exactly those of the returned parents when the data does not change between
+  the two statements. Under PostgreSQL's default READ COMMITTED each statement of the batch reads
+  its own snapshot, so a row inserted or reordered between them can shift the page. For a strict
+  guarantee, call the method inside a REPEATABLE READ transaction, where both statements share one
+  snapshot. Either way, group the children by their parent id, so a stray child drops out.
 - End both orderings with a unique key, such as `ThenBy(t => t.Id)`. Rows that tie on every key
   have no defined order, so without one the page and the subquery could pick different rows.
   Paging without any `OrderBy` warns [ZAO110](../diagnostics/ZAO110.md), inside the subquery too.
@@ -321,17 +326,28 @@ ORDER BY "ExecutedAt"
   ending in a `Select` of exactly one mapped column. It may use companion parameters, which bind on
   the statement that contains it, but not the outer row: a correlated subquery reports
   [ZAO102](../diagnostics/ZAO102.md).
-- `!query.Contains(x)` renders `NOT IN`.
-- `Contains` follows C#, which never errs on a null. SQL's `IN` is NULL for a NULL value, and
-  `NOT IN` is NULL for every row once the subquery selects one NULL. So the selected column and the
-  outer value must both be non-nullable, or the query reports ZAO102. A nullable column becomes
-  eligible with a `!= null` filter in the subquery:
+- `!query.Contains(x)` renders `NOT IN` when `x` cannot be null.
+- `Contains` follows C#, which never errs on a null. `NOT IN` is NULL for every row once the
+  subquery selects one NULL, so the selected column must be non-nullable, or the query reports
+  ZAO102. A nullable column becomes eligible with a `!= null` filter in the subquery:
 
   ```csharp
   .Where(e => !Sql.Table<TaskEntity>()
       .Where(t => t.ParentId != null)
       .Select(t => t.ParentId)
       .Contains(e.TaskId))
+  ```
+
+- The outer value may be null, such as a nullable foreign key. Cast the selected column to the
+  nullable type, so `Contains` takes the value; the column still selects no NULL. A null value is
+  not contained, as in C#: `IN` is NULL for it, which the `WHERE` drops, and `!Contains` renders
+  `(... IN (...)) IS NOT TRUE`, which keeps the row:
+
+  ```csharp
+  .Where(t => Sql.Table<TaskEntity>()
+      .Where(p => p.Title == title)
+      .Select(p => (Guid?)p.Id)
+      .Contains(t.ParentTaskId))
   ```
 
 - A subquery with a join aliases its sources `s0`, `s1`, ..., which never meet the outer query's
@@ -413,7 +429,7 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 | `t.Title.StartsWith(text)`, `EndsWith(text)` | the same `LIKE`, with `%` on one side |
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
-| `Sql.Table<P>().Select(p => p.Id).Contains(t.ParentId)` | `"ParentId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent list](#children-of-a-paged-parent-list) |
+| `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent list](#children-of-a-paged-parent-list) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
 
 - `Contains`, `StartsWith` and `EndsWith` match literally: `%`, `_` and `\` in the value are escaped,

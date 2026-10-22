@@ -74,13 +74,15 @@ public class SqlAstExhaustivenessTests
             SqlScalarAggregateStatement scalar => scalar.Source,
             _ => (SqlSelectStatement)statement,
         };
-        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias);
+        var maps = new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map));
+        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias, maps);
         foreach (var join in select.Joins)
             names.AddSource(join.Alias, Map, "TestApp.TaskEntity");
         _ = EnumParameterStorage.Decide(statement, names);
         _ = PostgresSqlRenderer.Instance.Render(statement, names);
         _ = SqlParameterReferences.Collect(statement);
-        _ = LinqQueryBinder.Bind(statement, new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map)));
+        _ = SqlSubqueries.Collect(statement);
+        _ = LinqQueryBinder.Bind(statement, maps);
     }
 
     // The expression in every position a statement has: the projection, a join's ON and its

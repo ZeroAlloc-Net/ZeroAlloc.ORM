@@ -117,7 +117,10 @@ public static class QueryOperators
     /// A full <c>Sql.Table&lt;T&gt;()</c> chain ending in a <c>Select</c> of one non-nullable column,
     /// which does not read the outer row.
     /// </param>
-    /// <param name="value">The outer value to look for, which cannot be null.</param>
+    /// <param name="value">
+    /// The outer value to look for. A null value is not contained, as in LINQ to Objects over a
+    /// set without null.
+    /// </param>
     /// <returns>Never returns; the generator reads the call at build time.</returns>
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static bool Contains<T>(this IQuery<T> source, T value) => throw Guidance.Exception();

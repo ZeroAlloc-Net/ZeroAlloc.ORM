@@ -25,11 +25,38 @@ internal sealed partial class LinqSubqueryRepo(IAsyncDbConnection connection)
     [Command("""INSERT INTO app."Projects" ("Id", "Name", "Order") VALUES (@id, @name, @order)""")]
     public partial Task<int> InsertProjectAsync(Guid id, string name, int order, CancellationToken ct);
 
+    [Command("""
+        INSERT INTO "Tasks" ("Id", "ProjectId", "Title", "Status", "Kind", "CreatedAt", "Tags", "Order", "ParentTaskId")
+        VALUES (@id, @projectId, @title, 0, 'Bug', now(), '{}', 0, @parentTaskId)
+        """)]
+    public partial Task<int> InsertSubtaskAsync(Guid id, Guid projectId, string title, Guid? parentTaskId, CancellationToken ct);
+
+    [LinqQuery(nameof(SubtasksQuery))]
+    public partial Task<List<TaskHead>> SubtasksOfAsync(string parentTitle, CancellationToken ct);
+
+    [LinqQuery(nameof(NotSubtasksQuery))]
+    public partial Task<List<TaskHead>> NotSubtasksOfAsync(string parentTitle, CancellationToken ct);
+
     [LinqQuery(nameof(PagedTasksQuery))]
     public partial Task<(List<TaskHead> Tasks, List<ExecutionOfTask> Executions)> PagedTasksWithExecutionsAsync(int skip, int take, CancellationToken ct);
 
     [LinqQuery(nameof(PagedProjectsQuery))]
     public partial Task<(List<ProjectLine> Projects, List<ProjectTask> Tasks)> PagedProjectsWithTasksAsync(int skip, int take, CancellationToken ct);
+
+    // The sub-tasks of the tasks titled parentTitle, through the nullable ParentTaskId. The id is
+    // cast to Guid? so Contains takes the nullable key; a task without a parent is not a sub-task.
+    private static IQuery<TaskHead> SubtasksQuery(string parentTitle) =>
+        Sql.Table<TaskEntity>()
+            .Where(t => Sql.Table<TaskEntity>().Where(p => string.Equals(p.Title, parentTitle, StringComparison.Ordinal)).Select(p => (Guid?)p.Id).Contains(t.ParentTaskId))
+            .OrderBy(t => t.Title)
+            .Select(t => new TaskHead(t.Id, t.Title));
+
+    // Every other task, those without a parent included, as C#'s !Contains(null) is true.
+    private static IQuery<TaskHead> NotSubtasksQuery(string parentTitle) =>
+        Sql.Table<TaskEntity>()
+            .Where(t => !Sql.Table<TaskEntity>().Where(p => string.Equals(p.Title, parentTitle, StringComparison.Ordinal)).Select(p => (Guid?)p.Id).Contains(t.ParentTaskId))
+            .OrderBy(t => t.Title)
+            .Select(t => new TaskHead(t.Id, t.Title));
 
     // TaskQueryService: newest tasks first, Id breaking ties, and the executions of that page.
     private static (IQuery<TaskHead>, IQuery<ExecutionOfTask>) PagedTasksQuery(int skip, int take) =>

@@ -240,15 +240,16 @@ internal sealed record SqlAnyExpression(SqlExpression Operand, SqlExpression Arr
 /// <c>query.Select(p =&gt; p.Col).Contains(operand)</c>: <c>operand IN (SELECT "Col" FROM ... WHERE
 /// ... ORDER BY ... LIMIT ... OFFSET ...)</c>, or <c>NOT IN</c> when <paramref name="Negated"/>. The
 /// ordering and the paging stay inside the subquery, so a paged parent set selects exactly the
-/// parents' ids. Both the operand and the selected column are non-nullable, which the reader
-/// checks, so the test is never NULL and NOT IN has no NULL trap.
+/// parents' ids. The selected column is non-nullable, which the reader checks, so NOT IN has no
+/// NULL trap. The operand may be null: the test is then NULL, and C#'s <c>!</c> over it takes
+/// IS NOT TRUE rather than NOT IN.
 /// </summary>
 /// <param name="Operand">The outer value, a column or parameter of the outer query.</param>
 /// <param name="Subquery">
 /// The uncorrelated subquery, projecting exactly one column. Its sources are aliased <c>s0</c>,
 /// <c>s1</c>, ... only when it has a join, and it binds through its own name scope.
 /// </param>
-/// <param name="Negated">Whether the test is NOT IN, C#'s <c>!</c> over the Contains.</param>
+/// <param name="Negated">Whether the test is NOT IN, C#'s <c>!</c> over the Contains of a non-nullable operand.</param>
 internal sealed record SqlInSubqueryExpression(SqlExpression Operand, SqlSelectStatement Subquery, bool Negated) : SqlExpression;
 
 /// <summary>

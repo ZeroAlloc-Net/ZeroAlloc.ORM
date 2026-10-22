@@ -15,14 +15,15 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 // a statement of its own with its own row and null knowledge. Its ordering and paging stay inside
 // the subquery, so the children of a paged parent list filter on exactly the parents' ids.
 //
-// C#'s Contains never errs on a null, where SQL's IN is NULL for a NULL operand and NOT IN is
-// NULL for every row once the subquery selects one NULL. So the selected column and the outer
-// value must both be non-nullable; a filter `p.Col != null` in the subquery makes a nullable
-// column eligible. A subquery that reads the outer row would be correlated, ZAO102.
+// C#'s Contains never errs on a null, where SQL's NOT IN is NULL for every row once the subquery
+// selects one NULL. So the selected column must be non-nullable; a filter `p.Col != null` in the
+// subquery makes a nullable column eligible. The outer value may be null: over a set without
+// NULL, `NULL IN (...)` is NULL, which a WHERE drops as C#'s false, and its negation takes IS NOT
+// TRUE, true as in C#; see Negate. A subquery that reads the outer row would be correlated, ZAO102.
 internal static partial class LinqQueryReader
 {
     // `query.Select(p => p.Col).Contains(value)`: `value IN (SELECT "Col" ...)`. C#'s `!` over it
-    // makes it NOT IN; see Negate.
+    // makes it NOT IN, or IS NOT TRUE for a value that can be null; see Negate.
     private static SqlInSubqueryExpression? ReadSubqueryContains(IInvocationOperation invocation, IParameterSymbol? row, ReaderContext context)
     {
         var subquery = ReadSubquery(ArgumentFor(invocation, 0), row, context);
@@ -30,16 +31,7 @@ internal static partial class LinqQueryReader
 
         var value = ArgumentFor(invocation, 1);
         var operand = ReadComparand(value, row, context);
-        if (operand is null) return null;
-        if (MayBeNull(operand, context.NullableValues))
-        {
-            var at = Unwrap(value).Syntax;
-            context.Report(LinqDiagnostics.Unsupported(
-                "'" + at + "', which can be null, as the value of an IQuery Contains, whose IN and NOT IN treat NULL unlike C#,",
-                at.GetLocation()));
-            return null;
-        }
-        return new SqlInSubqueryExpression(operand, subquery, Negated: false);
+        return operand is null ? null : new SqlInSubqueryExpression(operand, subquery, Negated: false);
     }
 
     // The subquery's chain, read with a context of its own: its lambdas' row, the values it knows
@@ -128,7 +120,7 @@ internal static partial class LinqQueryReader
         if (chain.Group is not null)
             return Unsupported(invocation, "'GroupBy' in the source of an IQuery Contains", context);
 
-        var value = Unwrap(returned);
+        var value = UnwrapNullableCast(Unwrap(returned));
         var read = ReadOperand(value, row, context, out var column);
         if (read == OperandRead.Reported) return false;
         if (read != OperandRead.Read || column is not SqlMemberExpression)
@@ -143,6 +135,14 @@ internal static partial class LinqQueryReader
         chain.SubqueryColumn = value;
         return true;
     }
+
+    // `(Guid?)t.Id`: the column itself. The cast only widens the selected type to a nullable one,
+    // so that Contains takes a nullable outer value; the column still selects no NULL.
+    private static IOperation UnwrapNullableCast(IOperation op)
+        => op is IConversionOperation { Conversion: { IsNullable: true, IsUserDefined: false }, Operand: var operand }
+            && op.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+                ? Unwrap(operand)
+                : op;
 
     // Whether a condition of the subquery, in its WHERE or a join's ON, is `column IS NOT NULL`:
     // then the column selects no NULL, whatever its declared type.

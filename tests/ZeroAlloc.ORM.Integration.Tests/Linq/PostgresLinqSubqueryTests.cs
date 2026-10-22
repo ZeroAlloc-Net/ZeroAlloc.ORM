@@ -103,6 +103,30 @@ public sealed class PostgresLinqSubqueryTests
         restTasks.Should().Equal(last);
     }
 
+    // A nullable foreign key: Contains keeps the sub-tasks of the matching parents and drops the
+    // tasks without a parent, as C#'s Contains(null) is false; !Contains keeps those, as C#'s
+    // !Contains(null) is true, along with the sub-tasks of other parents.
+    [Fact]
+    public async Task Nullable_foreign_key_contains_and_not_contains_follow_csharp()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqSubqueryRepo(fx.Connection);
+        var project = Guid.NewGuid();
+        var parent = new TaskHead(Guid.NewGuid(), "a parent");
+        var other = new TaskHead(Guid.NewGuid(), "b other");
+        var child = new TaskHead(Guid.NewGuid(), "c child");
+        var otherChild = new TaskHead(Guid.NewGuid(), "d other child");
+        await repo.InsertSubtaskAsync(parent.Id, project, parent.Title, null, CancellationToken.None).ConfigureAwait(false);
+        await repo.InsertSubtaskAsync(other.Id, project, other.Title, null, CancellationToken.None).ConfigureAwait(false);
+        await repo.InsertSubtaskAsync(child.Id, project, child.Title, parent.Id, CancellationToken.None).ConfigureAwait(false);
+        await repo.InsertSubtaskAsync(otherChild.Id, project, otherChild.Title, other.Id, CancellationToken.None).ConfigureAwait(false);
+
+        (await repo.SubtasksOfAsync(parent.Title, CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(child);
+        (await repo.NotSubtasksOfAsync(parent.Title, CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(parent, other, otherChild);
+    }
+
     // Parents whose order key ties: every task has the same CreatedAt, so only the Id tie-breaker
     // orders them. The page and the subquery order alike, so the children are exactly those of the
     // returned parents, page after page, and the pages cover every task once.
