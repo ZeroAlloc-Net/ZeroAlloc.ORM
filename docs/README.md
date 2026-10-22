@@ -100,7 +100,7 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 **Parameters and columns**
 
 - Primitives: `int`, `long`, `short`, `byte`, `bool`, `decimal`, `double`, `float`, `string`, `Guid`, `DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, `byte[]`, and their nullable forms.
-- PostgreSQL arrays: `T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long` or `Guid` bind as parameters (for `= ANY(@ids)`) and read as columns, including as members of composites and bulk-insert rows. `null` binds `NULL`. They need Npgsql referenced, otherwise ZAO082. See [provider quirks](cookbook/provider-quirks.md#postgresql-arrays).
+- PostgreSQL arrays: `T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long`, `float`, `double` or `Guid` bind as parameters (for `= ANY(@ids)`) and read as columns, including as members of composites and bulk-insert rows. `null` binds `NULL`. They need Npgsql referenced, otherwise ZAO082. See [provider quirks](cookbook/provider-quirks.md#postgresql-arrays).
 - PostgreSQL `jsonb`: mark a `string` or `string?` parameter, record or constructor parameter, composite member or bulk-insert row property with `[Json]` and it binds as `jsonb`, so the SQL needs no `::jsonb` cast. `null` binds `NULL`. Columns read as plain strings. `[Json]` needs Npgsql referenced (ZAO082) and a string (ZAO083). See [provider quirks](cookbook/provider-quirks.md#postgresql-jsonb).
 - Enums round-trip as their underlying integer, or as the member name with `[StoreAsString]`.
 - Value objects (`[ValueObject]` from [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects), or any type with a single-argument constructor or static `From` factory) bind through their primitive.

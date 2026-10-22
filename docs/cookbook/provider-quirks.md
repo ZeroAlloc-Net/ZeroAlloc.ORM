@@ -259,7 +259,7 @@ covers the procedure path; the function path is exercised by the regular
 
 ### PostgreSQL arrays
 
-`T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long` and `Guid` work as parameters and as
+`T[]`, `List<T>` and `IReadOnlyList<T>` of `string`, `int`, `long`, `float`, `double` and `Guid` work as parameters and as
 columns. Parameters bind as the CLR value, so Npgsql maps `string[]` to `text[]` and `Guid[]` to `uuid[]`:
 
 ```csharp
@@ -278,6 +278,8 @@ public sealed partial class TagRepo(IAsyncDbConnection connection)
   column reads back `null` through an `IsDBNull` guard.
 - An `IReadOnlyList<T>` that is neither a `T[]` nor a `List<T>` is copied to an array before binding,
   because Npgsql does not bind an arbitrary `IReadOnlyList<T>` as an array.
+- A `float[]` parameter binds as `real[]` and a `double[]` as `double precision[]`. pgvector can cast a
+  `float[]` with `@embedding::vector`. Columns read back as `float[]` and `double[]`, not widened.
 - Columns read with `GetFieldValue<T[]>`; a `List<T>` column wraps that array in a new `List<T>`.
 - `[Query] Task<T[]>` returns a single array column, and `[Command(Kind = CommandKind.Scalar)]` can
   return `Task<T[]>` too.
