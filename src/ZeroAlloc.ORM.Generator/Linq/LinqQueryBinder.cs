@@ -18,6 +18,14 @@ internal static class LinqQueryBinder
     // Several statements, a tuple companion's, bind as one: each in its own name scope, and an
     // enum parameter binds one way for all of them, since every batch command binds it alike.
     public static LinqBoundQuery Bind(EquatableArray<SqlStatement> statements, EquatableArray<EntityMapModel> maps)
+        => Bind(statements, maps, default);
+
+    // `lifted` are the translation's projected members of possibly optional owned objects: ZAO107
+    // for each whose owner the map declares owned.
+    public static LinqBoundQuery Bind(
+        EquatableArray<SqlStatement> statements,
+        EquatableArray<EntityMapModel> maps,
+        EquatableArray<LinqLiftedProjection> lifted)
     {
         var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
         foreach (var statement in statements)
@@ -42,8 +50,14 @@ internal static class LinqQueryBinder
         {
             var names = scopes[i].Names;
             names.NameBoundParameters = byName;
+            if (statements[i] is SqlSelectStatement select) names.Projected(select.Projection);
             sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
             diagnostics.AddRange(names.Diagnostics);
+        }
+        foreach (var projection in lifted)
+        {
+            if (scopes[projection.Statement].Names.IsOwned(projection.Owner, projection.SourceAlias))
+                diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(projection.Reason, projection.Location));
         }
         if (diagnostics.Count > 0)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));

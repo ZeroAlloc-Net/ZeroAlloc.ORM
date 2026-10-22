@@ -184,12 +184,6 @@ internal static partial class LinqQueryReader
         ReaderContext context)
     {
         var unwrapped = Unwrap(testedOperation);
-        if (NestedOwnedReason(unwrapped, row, context) is { } nested)
-        {
-            context.Report(LinqDiagnostics.Unsupported(nested, unwrapped.Syntax.GetLocation()));
-            return null;
-        }
-
         if (WholeObjectMemberType(unwrapped, row, context) is { } whole
             && TryReadRowMember(unwrapped, row, context, out var member, out _, out var alias))
         {

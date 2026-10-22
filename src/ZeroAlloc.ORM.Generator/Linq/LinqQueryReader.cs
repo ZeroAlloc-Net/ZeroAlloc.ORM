@@ -76,6 +76,7 @@ internal static partial class LinqQueryReader
             // Each chain reads its own table: what one knows of its values says nothing of another's.
             context.NullableValues.Clear();
             context.LiftedValues.Clear();
+            context.StatementIndex = i;
             var statement = ReadStatement(companion.Bodies[i], shapes[i], context);
             if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
@@ -96,7 +97,10 @@ internal static partial class LinqQueryReader
             companion.IsTuple ? LinqResultShape.MultiResult : shapes[0],
             facets,
             comment,
-            new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()));
+            new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()))
+        {
+            LiftedProjections = new EquatableArray<LinqLiftedProjection>(context.LiftedProjections.ToImmutableArray()),
+        };
     }
 
     // ZAO112, at the method's return type.
@@ -238,6 +242,13 @@ internal static partial class LinqQueryReader
         // Members of an optional owned object whose own type cannot be null, lifted to one that
         // can; see TryReadRowMember. Also in NullableValues.
         public HashSet<SqlExpression> LiftedValues { get; } = new();
+
+        // Projected lifted members whose constructor parameter cannot take a null, for the binder
+        // to report when the map owns their owner; see RecordLiftedProjection.
+        public List<LinqLiftedProjection> LiftedProjections { get; } = new();
+
+        // The statement being read: 0, or the tuple element's index.
+        public int StatementIndex { get; set; }
 
         // The row parameters of the predicates an IN subquery is read inside, innermost last. A
         // subquery that reads one of them would be correlated, which is not translated.

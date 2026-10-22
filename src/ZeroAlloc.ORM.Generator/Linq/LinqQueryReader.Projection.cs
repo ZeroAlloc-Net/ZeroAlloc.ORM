@@ -52,7 +52,8 @@ internal static partial class LinqQueryReader
             var item = chain.Group is { } group
                 ? ReadGroupedItem(argument.Value, row, group, context)
                 : ReadProjectionItem(argument.Value, row, context);
-            if (item is null || RejectsNull(item, argument.Value, parameter.Type, context)) return false;
+            if (item is null) return false;
+            RecordLiftedProjection(item, argument.Value, parameter.Type, context);
             items[parameter.Ordinal] = item;
         }
 
@@ -65,11 +66,6 @@ internal static partial class LinqQueryReader
     private static SqlExpression? ReadProjectionItem(IOperation value, IParameterSymbol? row, ReaderContext context)
     {
         var op = Unwrap(value);
-        if (NestedOwnedReason(op, row, context) is { } nested)
-        {
-            RejectProjection(nested, value, context);
-            return null;
-        }
 
         // A member whose type is an object: the map decides what it is when the query is bound,
         // an owned object, ZAO107, a composite column, ZAO102, or a plain column.
@@ -106,29 +102,35 @@ internal static partial class LinqQueryReader
 
     // One rule for every projected value, a column, g.Key or an aggregate over one: a member of
     // an optional owned object, which reads NULL when the object is absent where C# would throw,
-    // goes to a parameter that takes a null. ZAO107 when the parameter cannot take it. Only
-    // values the owned branch lifted are checked; a plain nullable column keeps its old behaviour.
-    private static bool RejectsNull(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
+    // goes to a parameter that takes a null. Whether its owner is owned is the map's to say, so
+    // the check is recorded here and decided when the query is bound: ZAO107 there when the map
+    // owns it. Only values the owned branch lifted are recorded; a plain nullable column keeps its
+    // old behaviour.
+    private static void RecordLiftedProjection(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
     {
-        if (CanBeNull(target) || !IsLifted(item, context.LiftedValues)) return false;
+        if (CanBeNull(target) || LiftedMember(item, context.LiftedValues) is not { } member) return;
 
         var declared = Unwrap(value).Type ?? target;
-        RejectProjection(
+        var dot = member.Member.IndexOf('.');
+        context.LiftedProjections.Add(new LinqLiftedProjection(
+            context.StatementIndex,
+            dot < 0 ? member.Member : member.Member.Substring(0, dot),
+            member.SourceAlias,
             "'" + value.Syntax + "' reads NULL when its optional owned object is absent; declare the parameter '"
                 + declared.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString() + "?'",
-            value,
-            context);
-        return true;
+            LocationInfo.From(value.Syntax.GetLocation())));
     }
 
-    // A lifted member, or a Min, Max or Average over one, which is NULL when every value is.
-    private static bool IsLifted(SqlExpression item, HashSet<SqlExpression> lifted) => item switch
+    // The lifted member a value reads: itself, or under a Min, Max or Average, which is NULL when
+    // every value is, a cast or a date_trunc.
+    private static SqlMemberExpression? LiftedMember(SqlExpression item, HashSet<SqlExpression> lifted) => item switch
     {
         SqlAggregateCallExpression { Function: not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum), Argument: { } argument }
-            => IsLifted(argument, lifted),
-        SqlCastExpression cast => IsLifted(cast.Operand, lifted),
-        SqlDateTruncExpression dateTrunc => IsLifted(dateTrunc.Operand, lifted),
-        _ => lifted.Contains(item),
+            => LiftedMember(argument, lifted),
+        SqlCastExpression cast => LiftedMember(cast.Operand, lifted),
+        SqlDateTruncExpression dateTrunc => LiftedMember(dateTrunc.Operand, lifted),
+        SqlMemberExpression member when lifted.Contains(member) => member,
+        _ => null,
     };
 
     private static bool RejectProjection(string reason, IOperation at, ReaderContext context)

@@ -613,6 +613,32 @@ public class LinqOwnedTypeTests
             "__p_platform.Value = @platform.ToString();");
     }
 
+    // Only the parameter a whole object feeds is left to the binder: another composite parameter
+    // of the same row still reports at the return type that it reads several columns.
+    [Fact]
+    public void Other_composite_parameter_still_reports_at_the_return_type()
+    {
+        var (d, located) = Single(Prelude + Reviewed + """
+            public sealed record Money(decimal Amount, string Currency);
+
+            public sealed record WithReview(Guid Id, Review Review, Money Price);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ReviewStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(AllQuery))]
+                public partial Task<List<WithReview>> All(CancellationToken ct);
+
+                private static IQuery<WithReview> AllQuery() =>
+                    Sql.Table<ReviewedRequest>().Select(r => new WithReview(r.Id, r.Review!, null!));
+            }
+            """);
+
+        Assert.Equal("ZAO107", d.Id);
+        Assert.Equal("Task<List<WithReview>>", located);
+        Assert.Contains("Price", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // A whole owned object maps to several columns, while a projected row reads one column per
     // constructor parameter.
     [Fact]
@@ -643,7 +669,6 @@ public class LinqOwnedTypeTests
     [Theory]
     [InlineData("Where(r => r.Repository.Origin.FilePath == \"x\")", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.FilePath")]
     [InlineData("OrderBy(r => r.Repository.Origin.StartLine)", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin.StartLine")]
-    [InlineData("Where(r => r.Repository.Origin == null)", "r.Id, r.Repository.Url", "ZAO102", "r.Repository.Origin")]
     [InlineData("Where(r => true)", "r.Id, r.Repository.Origin.FilePath", "ZAO107", "r.Repository.Origin.FilePath")]
     [InlineData("Where(r => true)", "r.Id, r.Repository.Spot.FilePath", "ZAO107", "r.Repository.Spot.FilePath")]
     public void Member_of_a_type_nested_in_an_owned_type_is_a_build_error(
@@ -673,6 +698,153 @@ public class LinqOwnedTypeTests
         Assert.Equal(expectedId, d.Id);
         Assert.Equal(expectedLocation, located);
         Assert.Contains("a type nested in the owned 'Repository'; [OwnedMap] maps one level", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    // A navigation to another entity is no owned object: its paths are not mapped, ZAO105, in a
+    // condition, a null test and a projection alike, also through an optional navigation, which
+    // is not lifted as an optional owned object would be.
+    [Theory]
+    [InlineData("Where(e => e.Task.Owner == null)", "e.Id, e.Name", "e.Task.Owner", "Task.Owner")]
+    [InlineData("Where(e => e.Task.Title == \"x\")", "e.Id, e.Name", "e.Task.Title", "Task.Title")]
+    [InlineData("Where(e => true)", "e.Id, e.Task.Title", "e.Task.Title", "Task.Title")]
+    [InlineData("Where(e => true)", "e.Id, e.Parent!.Title", "e.Parent!.Title", "Parent.Title")]
+    public void Navigation_path_reports_ZAO105(string filter, string projection, string expectedLocation, string expectedPath)
+    {
+        var (d, located) = Single("""
+            #nullable enable
+            using System;
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+            using ZeroAlloc.ORM.Linq;
+
+            namespace TestApp;
+
+            public sealed class Person
+            {
+                public Guid Id { get; private set; }
+                public string Name { get; private set; } = "";
+            }
+
+            public sealed class WorkItem
+            {
+                public Guid Id { get; private set; }
+                public string Title { get; private set; } = "";
+                public Person Owner { get; private set; } = null!;
+            }
+
+            public sealed class Execution
+            {
+                public Guid Id { get; private set; }
+                public string Name { get; private set; } = "";
+                public WorkItem Task { get; private set; } = null!;
+                public WorkItem? Parent { get; private set; }
+            }
+
+            [TableMap(typeof(Execution), "Executions")]
+            [ColumnMap(nameof(Execution.Task), Ignore = true)]
+            [ColumnMap(nameof(Execution.Parent), Ignore = true)]
+            internal static class ExecutionMap;
+
+            public sealed record Line(Guid Id, string Name);
+
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class ExecutionStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(AllQuery))]
+                public partial Task<List<Line>> All(CancellationToken ct);
+
+                private static IQuery<Line> AllQuery() =>
+                    Sql.Table<Execution>().FILTER.Select(e => new Line(PROJECTION));
+            }
+            """.Replace("FILTER", filter, StringComparison.Ordinal).Replace("PROJECTION", projection, StringComparison.Ordinal));
+
+        Assert.Equal("ZAO105", d.Id);
+        Assert.Equal(expectedLocation, located);
+        Assert.Contains("'" + expectedPath + "'", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
+    private const string Homepages = """
+        #nullable enable
+        using System;
+        using System.Collections.Generic;
+        using System.Data.Async;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using ZeroAlloc.ORM;
+        using ZeroAlloc.ORM.Linq;
+
+        namespace TestApp;
+
+        public sealed class Homepage
+        {
+            public Uri? Link { get; private set; }
+            public string Title { get; private set; } = "";
+        }
+
+        public sealed class Company
+        {
+            public Guid Id { get; private set; }
+            public Homepage? Home { get; private set; }
+        }
+
+        [TableMap(typeof(Company), "Companies")]
+        [OwnedMap(nameof(Company.Home))]
+        internal static class CompanyMap;
+
+        public sealed record CompanyLine(Guid Id, string? Title);
+
+
+        [Dialect(SqlDialect.PostgreSql)]
+        public sealed partial class CompanyStore(IAsyncDbConnection connection)
+        {
+            [LinqQuery(nameof(LinkedQuery))]
+            public partial Task<List<CompanyLine>> Linked(CancellationToken ct);
+
+            [LinqQuery(nameof(UnlinkedQuery))]
+            public partial Task<List<CompanyLine>> Unlinked(CancellationToken ct);
+
+            private static IQuery<CompanyLine> LinkedQuery() =>
+                Sql.Table<Company>().Where(c => c.Home!.Link != null).Select(c => new CompanyLine(c.Id, c.Home!.Title));
+
+            private static IQuery<CompanyLine> UnlinkedQuery() =>
+                Sql.Table<Company>().Where(c => c.Home!.Link == null).Select(c => new CompanyLine(c.Id, c.Home!.Title));
+        }
+        """;
+
+    // An owned member whose type is itself an object with one column, a Uri, is the column the
+    // map gives it: its null test is "Home_Link" IS [NOT] NULL, and it projects as that column.
+    [Fact]
+    public void Owned_member_of_an_object_type_is_its_column()
+    {
+        VerifyCompiled(Homepages,
+            "SELECT \"Id\", \"Home_Title\" FROM \"Companies\" WHERE \"Home_Link\" IS NOT NULL",
+            "SELECT \"Id\", \"Home_Title\" FROM \"Companies\" WHERE \"Home_Link\" IS NULL",
+            "Linked(",
+            "Unlinked(");
+    }
+
+    // Projected, it binds as its column: the one diagnostic left is the materializer's own ZAO022
+    // for a Uri, which no row type reads today, plain column or owned.
+    [Fact]
+    public void Owned_member_of_an_object_type_projects_as_its_column()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorOnFile(Homepages.Replace(
+            "public sealed record CompanyLine(Guid Id, string? Title);",
+            "public sealed record CompanyLine(Guid Id, string? Title);\n\npublic sealed record LinkLine(Guid Id, Uri? Link);",
+            StringComparison.Ordinal).Replace(
+            "    [LinqQuery(nameof(LinkedQuery))]",
+            "    [LinqQuery(nameof(LinksQuery))]\n    public partial Task<List<LinkLine>> Links(CancellationToken ct);\n\n"
+                + "    private static IQuery<LinkLine> LinksQuery() =>\n"
+                + "        Sql.Table<Company>().Select(c => new LinkLine(c.Id, c.Home!.Link));\n\n"
+                + "    [LinqQuery(nameof(LinkedQuery))]",
+            StringComparison.Ordinal));
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO022", diagnostic.Id);
+        Assert.Contains("Links", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
     }
 
     // The map declares only Repository owned: Location's members are not mapped.

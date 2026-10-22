@@ -290,19 +290,44 @@ internal static partial class LinqQueryReader
         // bool? and string becomes string?, and the null rules compensate for it. This differs
         // on purpose from the Value of a nullable value object, which is rejected: a member of an
         // optional owned object would otherwise be unusable.
-        if (op is IPropertyReferenceOperation
-            && owner is IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } entity } ownedProperty
-            && ShapeAt(entity, row, context.Row) is { IsEntity: true } entityShape
-            && EntityMapReader.IsOwnable(ownedProperty.Property.Type, context.Conventions))
+        //
+        // A longer path through object members, r.Repository.Origin.FilePath or a navigation
+        // e.Task.Owner, reads the same way, as one dotted path. The map decides when the query
+        // is bound: a path it does not map is ZAO105, and one through a type nested in an owned
+        // type gets that reason. The lift is a guess the map confirms: a path whose first member
+        // the map does not own fails the build there, so its lifted SQL is never used.
+        if (op is IPropertyReferenceOperation && ObjectPath(owner, row, context) is { } path)
         {
-            name = ownedProperty.Property.Name + "." + name;
-            alias = entityShape.Alias;
-            if (ownedProperty.Property.NullableAnnotation == NullableAnnotation.Annotated)
-                type = Lifted(type, context);
+            name = path.Prefix + "." + name;
+            alias = path.Alias;
+            if (path.Depth == 1 && path.FirstOptional) type = Lifted(type, context);
             return true;
         }
 
         return false;
+    }
+
+    // A chain of object members from an entity row, such as r.Repository or e.Task.Owner: its
+    // dotted path, its depth, whether its first member is annotated `?`, and the entity's alias.
+    private static (string Prefix, int Depth, bool FirstOptional, string? Alias)? ObjectPath(
+        IOperation op,
+        IParameterSymbol row,
+        ReaderContext context)
+    {
+        if (op is not IPropertyReferenceOperation { Arguments.Length: 0, Instance: { } instance } property
+            || !IsObjectType(property.Property.Type, context))
+        {
+            return null;
+        }
+
+        if (ShapeAt(instance, row, context.Row) is { IsEntity: true } shape)
+        {
+            return (property.Property.Name, 1, property.Property.NullableAnnotation == NullableAnnotation.Annotated, shape.Alias);
+        }
+
+        return ObjectPath(instance, row, context) is { } inner
+            ? (inner.Prefix + "." + property.Property.Name, inner.Depth + 1, inner.FirstOptional, inner.Alias)
+            : null;
     }
 
     // The type as one that can be null: Nullable<T> for a value type, annotated for a reference type.
@@ -315,43 +340,14 @@ internal static partial class LinqQueryReader
     }
 
     // A row member whose type is an object rather than one value, such as an owned r.Repository,
-    // a composite r.Price or a Uri: what it maps to is the map's to decide. Null for any other
-    // operation, and for a member of an owned object, which NestedOwnedReason covers.
+    // a composite r.Price, a Uri, or a member of an owned object that is one: what it maps to is
+    // the map's to decide. Null for any other operation.
     private static ITypeSymbol? WholeObjectMemberType(IOperation op, IParameterSymbol? row, ReaderContext context)
-        => TryReadRowMember(op, row, context, out var name, out var type, out _)
-            && name.IndexOf('.') < 0
+        => TryReadRowMember(op, row, context, out _, out var type, out _)
             && IsObjectType(type, context)
                 ? UnwrapNullable(type)
                 : null;
 
     private static bool IsObjectType(ITypeSymbol type, ReaderContext context)
         => EntityMapReader.IsOwnable(UnwrapNullable(type), context.Conventions) || IsComposite(type, context.Conventions);
-
-    // A type nested in an owned type: r.Repository.Origin, or a member of it such as
-    // r.Repository.Origin.FilePath. [OwnedMap] maps one level, so neither is a column; the one
-    // reason is reported as ZAO102 in a condition or an ordering and ZAO107 in a projection.
-    private static string? NestedOwnedReason(IOperation op, IParameterSymbol? row, ReaderContext context)
-    {
-        var nested = op;
-        if (!IsNestedObject(nested, row, context))
-        {
-            if (op is not IPropertyReferenceOperation { Instance: { } instance }) return null;
-            nested = Unwrap(instance);
-            if (!IsNestedObject(nested, row, context)) return null;
-        }
-
-        var path = ((IPropertyReferenceOperation)nested).Property;
-        var owner = ((IPropertyReferenceOperation)nested).Instance is IPropertyReferenceOperation ownerProperty
-            ? ownerProperty.Property.Name
-            : string.Empty;
-        return "'" + op.Syntax + "' reads '" + path.Name + "', a type nested in the owned '" + owner
-            + "'; [OwnedMap] maps one level";
-    }
-
-    // A member of an owned object whose own type is an object.
-    private static bool IsNestedObject(IOperation op, IParameterSymbol? row, ReaderContext context)
-        => op is IPropertyReferenceOperation
-            && TryReadRowMember(op, row, context, out var name, out var type, out _)
-            && name.IndexOf('.') >= 0
-            && IsObjectType(type, context);
 }

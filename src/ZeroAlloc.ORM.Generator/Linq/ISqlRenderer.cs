@@ -33,6 +33,7 @@ internal sealed class SqlNameScope
     private readonly Dictionary<SqlSelectStatement, SqlNameScope> _subqueries = new();
     private readonly List<DiagnosticInfo> _diagnostics;
     private readonly HashSet<DiagnosticInfo> _unmapped;
+    private readonly HashSet<SqlExpression> _projected = new();
     private ImmutableHashSet<string> _nameBoundParameters = ImmutableHashSet<string>.Empty;
 
     /// <param name="map">The FROM entity's map.</param>
@@ -97,9 +98,48 @@ internal sealed class SqlNameScope
         }
 
         if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
-        var unmapped = LinqDiagnostics.UnmappedMember(member.Member, source.EntityDisplay, member.Location);
-        if (_unmapped.Add(unmapped)) _diagnostics.Add(unmapped);
+        Unmapped(source, member.Member, member.Location, _projected.Contains(member));
         return member.Member;
+    }
+
+    /// <summary>
+    /// The statement's SELECT list, so a member that is not mapped there reports in a
+    /// projection's terms, ZAO107, and elsewhere ZAO102 or ZAO105.
+    /// </summary>
+    public void Projected(EquatableArray<SqlExpression> projection)
+    {
+        foreach (var item in projection) _projected.Add(item);
+    }
+
+    /// <summary>Whether the map of the source <paramref name="alias"/> names declares the property owned.</summary>
+    public bool IsOwned(string owner, string? alias) => IsOwned(SourceOf(alias), owner);
+
+    // A path the map has no column for. Through a type nested in an owned object, such as
+    // Repository.Origin.FilePath, it says so: [OwnedMap] maps one level, ZAO107 in a projection
+    // and ZAO102 elsewhere. Any other path is ZAO105, a navigation such as Task.Title included.
+    private void Unmapped(Source source, string path, LocationInfo? location, bool projected)
+    {
+        var segments = path.Split('.');
+        if (segments.Length >= 3 && IsOwned(source, segments[0]))
+        {
+            var reason = "'" + path + "' reads '" + segments[1] + "', a type nested in the owned '" + segments[0]
+                + "'; [OwnedMap] maps one level";
+            Record(projected
+                ? LinqDiagnostics.UnsupportedProjectionAt(reason, location)
+                : LinqDiagnostics.UnsupportedAt(reason, location));
+            return;
+        }
+
+        Record(LinqDiagnostics.UnmappedMember(path, source.EntityDisplay, location));
+    }
+
+    private static bool IsOwned(Source source, string owner)
+    {
+        foreach (var column in source.Map.Columns)
+        {
+            if (string.Equals(column.Owner, owner, StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -155,7 +195,7 @@ internal sealed class SqlNameScope
 
         if (source.Columns.TryGetValue(member, out var plain)) return plain.Column;
 
-        Record(LinqDiagnostics.UnmappedMember(member, source.EntityDisplay, location));
+        Unmapped(source, member, location, projected);
         return null;
     }
 

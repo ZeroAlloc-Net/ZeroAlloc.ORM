@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
@@ -62,7 +63,7 @@ public sealed partial class OrmGenerator
             AttributePipelineKind.LinqQuery,
             sql: string.Empty,
             new LinqOverrides(translation.Facets, translation.SourceComment));
-        if (core is not null && !ProjectsWholeObject(translation) && ReadsSeveralColumns(core.Method) is { } member)
+        if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {
             var location = ((MethodDeclarationSyntax)ctx.TargetNode).ReturnType.GetLocation();
             var error = LinqDiagnostics.UnsupportedProjection(
@@ -75,44 +76,50 @@ public sealed partial class OrmGenerator
         return new LinqMethodRead(translation, core);
     }
 
-    // A projected row member whose type is an object is decided by the map when the query is
-    // bound, at the member: an owned object is ZAO107 and a composite column ZAO102 there.
-    private static bool ProjectsWholeObject(LinqTranslation translation)
-    {
-        foreach (var statement in translation.Statements)
-        {
-            if (statement is not SqlSelectStatement select) continue;
-            foreach (var item in select.Projection)
-            {
-                if (item is SqlMemberExpression { WholeObject: not null }) return true;
-            }
-        }
-        return false;
-    }
-
     // A composite or [Materialize] factory member of the row expands to several reader columns,
-    // while the projection gives it one. Every element of a tuple is checked.
-    private static string? ReadsSeveralColumns(QueryMethodModel method)
+    // while the projection gives it one. Every element of a tuple is checked, element i against
+    // statement i. A parameter fed a row member whose type is an object is left to the binder,
+    // where the map decides at the member: an owned object is ZAO107, a composite column ZAO102.
+    private static string? ReadsSeveralColumns(QueryMethodModel method, LinqTranslation translation)
     {
-        if (method.Materialization is { } materialization && ReadsSeveralColumns(materialization.Columns) is { } member)
+        if (method.Materialization is { } materialization
+            && ReadsSeveralColumns(materialization.Columns, WholeObjectItems(translation, 0)) is { } member)
+        {
             return member;
+        }
         if (method.MultiResultMaterialization is { } multi)
         {
-            foreach (var element in multi.Elements)
+            for (var i = 0; i < multi.Elements.Length; i++)
             {
-                if (ReadsSeveralColumns(element.Columns) is { } elementMember) return elementMember;
+                if (ReadsSeveralColumns(multi.Elements[i].Columns, WholeObjectItems(translation, i)) is { } elementMember)
+                    return elementMember;
             }
         }
         return null;
     }
 
-    private static string? ReadsSeveralColumns(EquatableArray<ColumnBinding> columns)
+    private static string? ReadsSeveralColumns(EquatableArray<ColumnBinding> columns, HashSet<int> skipped)
     {
-        foreach (var column in columns)
+        for (var i = 0; i < columns.Length; i++)
         {
-            if (column.InnerColumns.Length > 0) return column.CtorArgName ?? column.TypeName;
+            if (columns[i].InnerColumns.Length > 0 && !skipped.Contains(i))
+                return columns[i].CtorArgName ?? columns[i].TypeName;
         }
         return null;
+    }
+
+    // The SELECT positions of statement `index` that read a row member whose type is an object.
+    private static HashSet<int> WholeObjectItems(LinqTranslation translation, int index)
+    {
+        var positions = new HashSet<int>();
+        if (index < translation.Statements.Length && translation.Statements[index] is SqlSelectStatement select)
+        {
+            for (var i = 0; i < select.Projection.Length; i++)
+            {
+                if (select.Projection[i] is SqlMemberExpression { WholeObject: not null }) positions.Add(i);
+            }
+        }
+        return positions;
     }
 
     private static LinqMethodResult BindLinqMethod(LinqMethodRead read, EquatableArray<EntityMapModel> maps)
@@ -121,7 +128,7 @@ public sealed partial class OrmGenerator
             return new LinqMethodResult(null, read.Translation.Diagnostics);
 
         var statements = read.Translation.Statements;
-        var bound = LinqQueryBinder.Bind(statements, maps);
+        var bound = LinqQueryBinder.Bind(statements, maps, read.Translation.LiftedProjections);
         if (bound.Diagnostics.Length > 0) return new LinqMethodResult(null, bound.Diagnostics);
 
         var method = core.Method with

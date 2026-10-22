@@ -52,7 +52,30 @@ internal sealed record LinqTranslation(
         => new(default, LinqResultShape.List, default, sourceComment, diagnostics);
 
     public bool Succeeded => Statements.Length > 0;
+
+    /// <summary>
+    /// Projected members of an object that may be an optional owned one, in constructor
+    /// parameters that cannot take a null; the binder reports ZAO107 for those the map owns.
+    /// </summary>
+    public EquatableArray<LinqLiftedProjection> LiftedProjections { get; init; }
 }
+
+/// <summary>
+/// A projected member of an optional object, such as <c>r.Outcome!.HasFailedValidation</c>, whose
+/// constructor parameter cannot take the NULL it reads when the object is absent. ZAO107 when
+/// the map declares <paramref name="Owner"/> owned; otherwise the path is unmapped, ZAO105.
+/// </summary>
+/// <param name="Statement">The statement the projection belongs to.</param>
+/// <param name="Owner">The entity property the member is reached through, such as <c>Outcome</c>.</param>
+/// <param name="SourceAlias">The owner's source alias in a query with a join.</param>
+/// <param name="Reason">The ZAO107 message.</param>
+/// <param name="Location">The projected value.</param>
+internal sealed record LinqLiftedProjection(
+    int Statement,
+    string Owner,
+    string? SourceAlias,
+    string Reason,
+    LocationInfo? Location);
 
 /// <summary>
 /// A translation bound to the entity maps: the rendered SQL, and what the materializer must read

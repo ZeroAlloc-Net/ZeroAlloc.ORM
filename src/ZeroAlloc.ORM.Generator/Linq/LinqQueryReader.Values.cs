@@ -36,13 +36,6 @@ internal static partial class LinqQueryReader
         out SqlExpression? expression)
     {
         var op = Unwrap(value);
-        if (NestedOwnedReason(op, row, context) is { } nested)
-        {
-            expression = null;
-            context.Report(LinqDiagnostics.Unsupported(nested, op.Syntax.GetLocation()));
-            return OperandRead.Reported;
-        }
-
         if (CompositeMemberType(op, row, context) is { } composite)
         {
             expression = null;
