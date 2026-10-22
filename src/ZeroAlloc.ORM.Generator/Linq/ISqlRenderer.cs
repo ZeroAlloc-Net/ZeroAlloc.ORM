@@ -35,6 +35,7 @@ internal sealed class SqlNameScope
     private readonly HashSet<DiagnosticInfo> _unmapped;
     private readonly HashSet<SqlExpression> _projected = new();
     private ImmutableHashSet<string> _nameBoundParameters = ImmutableHashSet<string>.Empty;
+    private ImmutableHashSet<string> _xidParameters = ImmutableHashSet<string>.Empty;
 
     /// <param name="map">The FROM entity's map.</param>
     /// <param name="entityDisplay">The FROM entity as messages show it.</param>
@@ -97,9 +98,47 @@ internal sealed class SqlNameScope
                 ?? member.Member;
         }
 
-        if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
+        if (source.Columns.TryGetValue(member.Member, out var column))
+        {
+            if (IsXminColumn(column.Column) && !XminAllowed)
+            {
+                Record(LinqDiagnostics.UnsupportedAt(
+                    "'" + member.Member + "', whose column is xmin, outside a projection or an == or != test with a uint "
+                        + "parameter, since xmin is a transaction id, compared only for equality,",
+                    member.Location));
+            }
+            return column.Column;
+        }
         Unmapped(source, member.Member, member.Location, _projected.Contains(member));
         return member.Member;
+    }
+
+    /// <summary>
+    /// Whether a member that maps to xmin renders without ZAO102: set by the render while it
+    /// renders a statement's projection item or an == or != test with an xid parameter, the two
+    /// places xmin is read. Never set in an IN subquery's scope.
+    /// </summary>
+    public bool XminAllowed { get; set; }
+
+    /// <summary>Whether this is a statement's scope rather than an IN subquery's.</summary>
+    public bool IsStatement => _parent is null;
+
+    /// <summary>The member's mapped column, or null when the map has none; records nothing.</summary>
+    public string? MappedColumn(SqlMemberExpression member)
+        => member.WholeObject is null && SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column)
+            ? column.Column
+            : null;
+
+    /// <summary>Whether a column is PostgreSQL's xmin, which a quoted name in another case is not.</summary>
+    public static bool IsXminColumn(string column) => string.Equals(column, "xmin", StringComparison.Ordinal);
+
+    /// <summary>
+    /// C# names of the uint parameters that bind as xid, compared with xmin; decided by the reader.
+    /// </summary>
+    public ImmutableHashSet<string> XidParameters
+    {
+        get => _parent?.XidParameters ?? _xidParameters;
+        set => _xidParameters = value;
     }
 
     /// <summary>

@@ -25,6 +25,15 @@ public sealed class AuthoringSurfaceTests
         act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
     }
 
+    // Sql.Xmin names the row's xmin system column; like every marker it only runs by mistake.
+    [Fact]
+    public void Xmin_throws()
+    {
+        var act = () => Sql.Xmin(new Order());
+
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
+    }
+
     [Fact]
     public void Operators_throw()
     {

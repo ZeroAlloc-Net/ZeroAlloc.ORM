@@ -150,7 +150,7 @@ internal static class EnumParameterStorage
                 case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
                     or SqlIsNullExpression or SqlCastExpression or SqlLikeExpression or SqlILikeExpression
                     or SqlAnyExpression or SqlPagingCountExpression or SqlAggregateCallExpression
-                    or SqlDateTruncExpression or SqlObjectIsNullExpression:
+                    or SqlDateTruncExpression or SqlObjectIsNullExpression or SqlSystemColumnExpression:
                     break;
                 default:
                     throw new InvalidOperationException("No enum storage walk for " + expression.GetType().Name + ".");

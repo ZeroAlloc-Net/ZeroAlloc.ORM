@@ -36,6 +36,14 @@ internal static partial class LinqQueryReader
         out SqlExpression? expression)
     {
         var op = Unwrap(value);
+        if (IsXminCall(op)) return ReadXmin((IInvocationOperation)op, row, context, out expression);
+        if (op is IBinaryOperation xminArithmetic && !op.ConstantValue.HasValue && ContainsXmin(xminArithmetic))
+        {
+            expression = null;
+            ReportXminArithmetic(xminArithmetic, context);
+            return OperandRead.Reported;
+        }
+
         if (CompositeMemberType(op, row, context) is { } composite)
         {
             expression = null;
@@ -123,6 +131,12 @@ internal static partial class LinqQueryReader
     // whose NULL operand makes the result NULL as in C#. Each operand is a setter value itself.
     private static SqlArithmeticExpression? ReadArithmetic(IBinaryOperation binary, IParameterSymbol? row, ReaderContext context)
     {
+        if (ContainsXmin(binary))
+        {
+            ReportXminArithmetic(binary, context);
+            return null;
+        }
+
         var arithmetic = binary.OperatorKind switch
         {
             BinaryOperatorKind.Add => SqlArithmeticOperator.Add,
@@ -178,11 +192,13 @@ internal static partial class LinqQueryReader
         else if (op is IParameterReferenceOperation p && context.SqlNames.TryGetValue(p.Parameter, out var sqlName))
         {
             type = p.Parameter.Type;
-            expression = new SqlParameterExpression(
+            var parameter = new SqlParameterExpression(
                 sqlName,
                 p.Parameter.Name,
                 ColumnPicksEnumStorage(type),
                 LocationInfo.From(op.Syntax.GetLocation()));
+            if (type.SpecialType == SpecialType.System_UInt32) context.UintParameterUses.Add(parameter);
+            expression = parameter;
         }
         else
         {

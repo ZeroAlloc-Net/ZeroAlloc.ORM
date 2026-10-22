@@ -171,6 +171,17 @@ internal sealed record SqlMemberExpression(
     string? SourceAlias = null,
     SqlWholeObject? WholeObject = null) : SqlExpression;
 
+/// <summary>
+/// A PostgreSQL system column of a row, named by a marker rather than by the map: <c>Sql.Xmin(r)</c>
+/// is <c>"xmin"</c>, or <c>t0."xmin"</c> in a query with a join. xmin is a transaction id, read as a
+/// <c>uint</c> and compared, by <c>==</c> or <c>!=</c> only, with a <c>uint</c> parameter, which
+/// binds as <c>xid</c>; the reader rejects it anywhere else. A property the map maps to xmin is a
+/// <see cref="SqlMemberExpression"/> whose column the render recognises; see SqlNameScope.
+/// </summary>
+/// <param name="Name">The column, <c>xmin</c>.</param>
+/// <param name="Alias">The alias of the row's source in a query with a join; null without one.</param>
+internal sealed record SqlSystemColumnExpression(string Name, string? Alias) : SqlExpression;
+
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
 /// <param name="ClrName">The C# parameter name, as diagnostics show it.</param>

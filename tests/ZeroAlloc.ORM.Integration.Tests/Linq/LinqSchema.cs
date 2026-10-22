@@ -13,6 +13,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.Linq;
 // messages, which load together as a parent with its children. "AnalysisIterations" are the
 // iterations of a code analysis request, which load with their request the same way.
 // "AgentSessions" is Daedalus' agent session, whose state and counters are updated in place.
+// "VersionedDocuments" holds a bytea row version the application writes with every change.
 internal static class LinqSchema
 {
     public const string Ddl = """
@@ -98,6 +99,11 @@ internal static class LinqSchema
             "TurnCount" int NOT NULL,
             "TotalInputTokens" bigint NOT NULL,
             "EndedAt" timestamptz NULL
+        );
+        CREATE TABLE "VersionedDocuments" (
+            "Id" uuid PRIMARY KEY,
+            "Body" text NOT NULL,
+            "Version" bytea NOT NULL
         );
         """;
 }

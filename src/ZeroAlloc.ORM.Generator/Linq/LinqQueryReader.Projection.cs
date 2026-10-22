@@ -49,10 +49,13 @@ internal static partial class LinqQueryReader
         {
             if (argument.Parameter is not { } parameter || argument.ArgumentKind == ArgumentKind.ParamArray)
                 return RejectProjection("a params argument is not supported", argument, context);
+            context.XminAllowed = chain.Group is null;
             var item = chain.Group is { } group
                 ? ReadGroupedItem(argument.Value, row, group, context)
                 : ReadProjectionItem(argument.Value, row, context);
+            context.XminAllowed = false;
             if (item is null) return false;
+            if (!CheckXminProjection(item, argument.Value, parameter.Type, context)) return false;
             RecordLiftedProjection(item, argument.Value, parameter.Type, context);
             items[parameter.Ordinal] = item;
         }
@@ -132,6 +135,32 @@ internal static partial class LinqQueryReader
         SqlMemberExpression member when lifted.Contains(member) => member,
         _ => null,
     };
+
+    // xmin reads as a uint, through GetFieldValue<uint>, and a uint parameter reads nothing else:
+    // Sql.Xmin or a uint member, which the binder checks maps to xmin, fills a uint parameter
+    // and nothing else does. ZAO107 for either mismatch.
+    private static bool CheckXminProjection(SqlExpression item, IOperation value, ITypeSymbol target, ReaderContext context)
+    {
+        var readsXmin = item is SqlSystemColumnExpression || IsUintMember(value, item);
+        var fillsUint = target.SpecialType == SpecialType.System_UInt32;
+        if (readsXmin && !fillsUint)
+            return RejectProjection("'" + Unwrap(value).Syntax + "' reads xmin, a uint; declare the parameter 'uint'", Unwrap(value), context);
+        if (fillsUint && !readsXmin)
+        {
+            return RejectProjection(
+                "'" + Unwrap(value).Syntax + "' fills a uint, which only xmin reads as; project Sql.Xmin or a property mapped to xmin",
+                Unwrap(value),
+                context);
+        }
+        if (readsXmin && item is SqlMemberExpression member)
+        {
+            context.XminProjections.Add(new LinqXminProjection(
+                context.StatementIndex,
+                member,
+                LocationInfo.From(Unwrap(value).Syntax.GetLocation())));
+        }
+        return true;
+    }
 
     private static bool RejectProjection(string reason, IOperation at, ReaderContext context)
     {

@@ -64,6 +64,7 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlObjectIsNullExpression), expressions);
         Assert.Contains(typeof(SqlInSubqueryExpression), expressions);
         Assert.Contains(typeof(SqlArithmeticExpression), expressions);
+        Assert.Contains(typeof(SqlSystemColumnExpression), expressions);
         Assert.Equal(
             [
                 typeof(SqlAggregateStatement), typeof(SqlDeleteStatement), typeof(SqlScalarAggregateStatement),
@@ -125,6 +126,7 @@ public class SqlAstExhaustivenessTests
     {
         SqlMemberExpression member => member with { SourceAlias = null },
         SqlObjectIsNullExpression test => test with { SourceAlias = null },
+        SqlSystemColumnExpression system => system with { Alias = null },
         _ => expression,
     };
 

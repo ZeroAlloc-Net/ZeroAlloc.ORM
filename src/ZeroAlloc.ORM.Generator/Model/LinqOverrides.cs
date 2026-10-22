@@ -22,6 +22,10 @@ internal sealed record LinqOverrides(
     // [LinqCommand] ExecuteUpdate -- the C# names of the value parameters set into a [Json]
     // column, which bind as jsonb as if they carried [Json] themselves. Empty otherwise.
     public EquatableArray<string> JsonParameters { get; init; }
+
+    // [LinqQuery] and [LinqCommand] -- the C# names of the uint value parameters compared with
+    // xmin, which bind as NpgsqlDbType.Xid. Empty otherwise.
+    public EquatableArray<string> XidParameters { get; init; }
 }
 
 // One parameter's DbType facet from the LINQ translation. Applied to the matching

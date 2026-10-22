@@ -70,7 +70,29 @@ internal sealed record LinqTranslation(
     /// column, in ordinal order: they bind as jsonb, as a <c>[Json]</c> parameter does.
     /// </summary>
     public EquatableArray<string> JsonParameters { get; init; }
+
+    /// <summary>
+    /// The C# names of the <c>uint</c> value parameters compared with xmin, through
+    /// <c>Sql.Xmin</c> or a <c>uint</c> property the binder checks maps to xmin, sorted by
+    /// name: they bind as <c>xid</c>.
+    /// </summary>
+    public EquatableArray<string> XidParameters { get; init; }
+
+    /// <summary>
+    /// Projected <c>uint</c> members, read as xmin: the binder reports ZAO107 for each whose
+    /// column is not xmin.
+    /// </summary>
+    public EquatableArray<LinqXminProjection> XminProjections { get; init; }
 }
+
+/// <summary>
+/// A projected <c>uint</c> member, such as <c>t.RowVersion</c>, which the row reads with
+/// <c>GetFieldValue&lt;uint&gt;</c>: only xmin reads as one, so its map must map it to xmin.
+/// </summary>
+/// <param name="Statement">The statement the projection belongs to.</param>
+/// <param name="Member">The projected member.</param>
+/// <param name="Location">The projected value.</param>
+internal sealed record LinqXminProjection(int Statement, SqlMemberExpression Member, LocationInfo? Location);
 
 /// <summary>
 /// A projected member of an optional object, such as <c>r.Outcome!.HasFailedValidation</c>, whose

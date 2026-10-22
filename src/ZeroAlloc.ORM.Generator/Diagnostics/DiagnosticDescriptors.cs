@@ -583,14 +583,15 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO081"));
 
-    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array,
-    // or a string marked [Json] that binds as jsonb. The generator detects Npgsql by looking up
+    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array, a string
+    // marked [Json] that binds as jsonb, or a LINQ uint compared with xmin that binds as xid.
+    // The generator detects Npgsql by looking up
     // `Npgsql.NpgsqlParameter` in the compilation; ZeroAlloc.ORM itself never
     // references Npgsql.
     //
     // MessageArgs:
     //   {0} = the parameter or column name
-    //   {1} = what needs Npgsql: "a PostgreSQL array" or "[Json]"
+    //   {1} = what needs Npgsql: "a PostgreSQL array", "[Json]" or "an xid"
     public static readonly DiagnosticDescriptor ZAO082_ProviderTypeRequiresNpgsql = new(
         id: "ZAO082",
         title: "Provider-specific type requires Npgsql",
@@ -636,8 +637,8 @@ internal static class DiagnosticDescriptors
 
     // ZAO106 — an entity map the LINQ translator cannot rely on: a second [TableMap] for an entity,
     // a [ColumnMap] for a property the entity lacks, a property mapped twice, EnumAsString on a
-    // property that is not an enum, or DateTimeStorage on one that is not a DateTime. Reported at
-    // the offending attribute.
+    // property that is not an enum, DateTimeStorage on one that is not a DateTime, or xmin as the
+    // column of a property that is not a uint. Reported at the offending attribute.
     //
     // MessageArgs:
     //   {0} = what is wrong with the map

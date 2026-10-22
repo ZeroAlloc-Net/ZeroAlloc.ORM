@@ -105,6 +105,7 @@ internal static partial class LinqQueryReader
             }
             statements.Add(statement);
         }
+        if (!CheckXidParameters(context)) return Failed(comment, context.Diagnostics.ToArray());
 
         // What is left in the diagnostics are warnings, such as ZAO110.
         return new LinqTranslation(
@@ -116,6 +117,8 @@ internal static partial class LinqQueryReader
         {
             LiftedProjections = new EquatableArray<LinqLiftedProjection>(context.LiftedProjections.ToImmutableArray()),
             JsonParameters = new EquatableArray<string>(context.JsonParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
+            XidParameters = new EquatableArray<string>(context.XidParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
+            XminProjections = new EquatableArray<LinqXminProjection>(context.XminProjections.ToImmutableArray()),
         };
     }
 
@@ -272,6 +275,19 @@ internal static partial class LinqQueryReader
         // Value parameters, by C# name, that an ExecuteUpdate sets into a [Json] column: they bind
         // as jsonb, as a [Json] parameter does.
         public HashSet<string> JsonParameters { get; } = new(StringComparer.Ordinal);
+
+        // Value parameters, by C# name, of type uint compared with xmin: they bind as xid.
+        public HashSet<string> XidParameters { get; } = new(StringComparer.Ordinal);
+
+        // Every read of a uint parameter other than a comparison with xmin, for ZAO102 when the
+        // parameter binds as xid; see CheckXidParameters.
+        public List<SqlParameterExpression> UintParameterUses { get; } = new();
+
+        // Whether Sql.Xmin reads as a value: set while a projection's item is read.
+        public bool XminAllowed { get; set; }
+
+        // Projected uint members, which the binder checks map to xmin.
+        public List<LinqXminProjection> XminProjections { get; } = new();
 
         // The row parameters of the predicates an IN subquery is read inside, innermost last. A
         // subquery that reads one of them would be correlated, which is not translated.

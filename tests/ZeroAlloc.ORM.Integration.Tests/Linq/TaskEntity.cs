@@ -19,4 +19,7 @@ public sealed class TaskEntity
     public WorkKind? Category { get; private set; }
     public float Score { get; private set; }
     public Guid? ParentTaskId { get; private set; }
+
+    // PostgreSQL's xmin, mapped by TaskMap as Daedalus maps its concurrency token.
+    public uint RowVersion { get; private set; }
 }

@@ -155,6 +155,13 @@ internal static partial class LinqQueryReader
     private static SqlMemberExpression? ReadSetterTarget(IOperation op, IParameterSymbol row, ReaderContext context, out bool json)
     {
         json = false;
+        if (IsXminCall(op))
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + op.Syntax + "' as a setter target, since xmin is a system column PostgreSQL sets itself,",
+                op.Syntax.GetLocation()));
+            return null;
+        }
         if (!TryReadRowMember(op, row, context, out var name, out var type, out var alias))
         {
             context.Report(LinqDiagnostics.Unsupported(

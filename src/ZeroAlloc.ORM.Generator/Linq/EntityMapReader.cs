@@ -113,6 +113,15 @@ internal static class EntityMapReader
             }
             else
             {
+                // xmin is the transaction id that wrote the row, which Npgsql reads as a uint. EF Core's
+                // SQL Server row version, a byte[], mapped there would read the wrong type.
+                if (string.Equals(column, "xmin", StringComparison.Ordinal) && property.Type.SpecialType != SpecialType.System_UInt32)
+                {
+                    diagnostics.Add(Invalid(
+                        $"property '{propertyName}' of {entityName} maps to xmin, PostgreSQL's transaction id, so it must be a uint, not '{property.Type.ToDisplayString()}'",
+                        location));
+                }
+
                 if (enumAsString && !IsEnum(property.Type))
                 {
                     diagnostics.Add(Invalid(

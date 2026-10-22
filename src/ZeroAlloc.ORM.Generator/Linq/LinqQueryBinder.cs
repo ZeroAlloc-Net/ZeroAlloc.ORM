@@ -26,6 +26,17 @@ internal static class LinqQueryBinder
         EquatableArray<SqlStatement> statements,
         EquatableArray<EntityMapModel> maps,
         EquatableArray<LinqLiftedProjection> lifted)
+        => Bind(statements, maps, lifted, default, default);
+
+    // `xidParameters` are the uint parameters the reader binds as xid, compared with xmin; a
+    // member they meet must map to xmin. `xminProjections` are the projected uint members: ZAO107
+    // for each whose column is not xmin, the one uint a row reads.
+    public static LinqBoundQuery Bind(
+        EquatableArray<SqlStatement> statements,
+        EquatableArray<EntityMapModel> maps,
+        EquatableArray<LinqLiftedProjection> lifted,
+        EquatableArray<string> xidParameters,
+        EquatableArray<LinqXminProjection> xminProjections)
     {
         var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
         foreach (var statement in statements)
@@ -45,15 +56,26 @@ internal static class LinqQueryBinder
         // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
         var storage = EnumParameterStorage.Decide(scopes);
         var byName = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
+        var xid = xidParameters.ToImmutableHashSet(StringComparer.Ordinal);
         var sql = new string[statements.Length];
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
         for (var i = 0; i < statements.Length; i++)
         {
             var names = scopes[i].Names;
             names.NameBoundParameters = byName;
+            names.XidParameters = xid;
             if (statements[i] is SqlSelectStatement select) names.Projected(select.Projection);
             sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
             diagnostics.AddRange(names.Diagnostics);
+        }
+        foreach (var projection in xminProjections)
+        {
+            if (scopes[projection.Statement].Names.MappedColumn(projection.Member) is { } column && !SqlNameScope.IsXminColumn(column))
+            {
+                diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(
+                    "'" + projection.Member.Member + "' reads a uint, which only xmin reads as, but its column is " + column,
+                    projection.Location));
+            }
         }
         foreach (var projection in lifted)
         {

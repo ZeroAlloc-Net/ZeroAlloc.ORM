@@ -45,7 +45,14 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     private static void RenderSelect(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
     {
         sb.Append("SELECT ");
-        AppendList(sb, select.Projection, names);
+        // A statement's projected member may be xmin, read as a uint; the reader checked its type.
+        for (var i = 0; i < select.Projection.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            names.XminAllowed = names.IsStatement && select.Projection[i] is SqlMemberExpression;
+            RenderExpression(sb, select.Projection[i], names);
+            names.XminAllowed = false;
+        }
         RenderFromWhere(sb, select, names);
         if (select.GroupBy.Length > 0)
         {
@@ -321,6 +328,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlParameterExpression parameter:
                 sb.Append('@').Append(parameter.Name);
                 break;
+            case SqlSystemColumnExpression system:
+                AppendQualified(sb, system.Alias, system.Name, names);
+                break;
             case SqlLiteralExpression literal:
                 AppendLiteral(sb, literal);
                 break;
@@ -480,10 +490,31 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             ReportOrderedNameColumn(binary.Right, names);
         }
 
+        // An xid parameter meets xmin: Sql.Xmin, or a member its map maps to xmin, which only an
+        // == or != test reads. Any other column would meet the xid as the wrong type.
+        var xid = XidParameter(binary.Left, names) ?? XidParameter(binary.Right, names);
+        if (xid is not null)
+        {
+            var other = ReferenceEquals(xid, binary.Left) ? binary.Right : binary.Left;
+            if (other is SqlMemberExpression member && names.MappedColumn(member) is { } column && !SqlNameScope.IsXminColumn(column))
+            {
+                names.Report(LinqDiagnostics.UnsupportedAt(
+                    "Comparing '" + member.Member + "', whose column " + column + " is not xmin, with '" + xid.ClrName
+                        + "', a uint parameter that binds as an xmin transaction id,",
+                    member.Location));
+            }
+            names.XminAllowed = binary.Operator is SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual;
+        }
+
         RenderComparand(sb, binary.Left, binary.Right, names);
         sb.Append(ComparisonText(binary.Operator));
         RenderComparand(sb, binary.Right, binary.Left, names);
+        names.XminAllowed = false;
     }
+
+    // The side when it is a parameter that binds as xid; null for anything else.
+    private static SqlParameterExpression? XidParameter(SqlExpression side, SqlNameScope names)
+        => side is SqlParameterExpression parameter && names.XidParameters.Contains(parameter.ClrName) ? parameter : null;
 
     private static string ComparisonText(SqlBinaryOperator comparison) => comparison switch
     {

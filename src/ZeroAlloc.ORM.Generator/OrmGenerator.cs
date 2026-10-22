@@ -824,7 +824,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             diagnostics,
             LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
             methodSql,
-            hasNpgsql);
+            hasNpgsql,
+            readsXmin: linq is not null);
 
         // ZAO082 — a PostgreSQL array column reads only through Npgsql, like an array
         // parameter. Checked on the classified result, so every row, composite, tuple
@@ -1221,6 +1222,27 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         CompositeTypeFullName: null,
                         Facets: paramFacets,
                         IsBulkInsertCollection: true);
+                }
+                // A [LinqQuery] or [LinqCommand] uint compared with xmin binds as an xid, which only
+                // Npgsql can send. uint is no convention of its own: anywhere else it is ZAO041.
+                if (!isCt
+                    && linq is not null
+                    && p.Type.SpecialType == SpecialType.System_UInt32
+                    && linq.XidParameters.Contains(p.Name, StringComparer.Ordinal))
+                {
+                    diagnostics.Add(RequiresNpgsql(p.Name, "an xid", LocationInfo.From(p.Locations.FirstOrDefault())));
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        IsTransaction: false,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: false,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null,
+                        Facets: paramFacets,
+                        IsXid: true);
                 }
                 if (!isCt)
                 {
@@ -1625,7 +1647,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         LocationInfo? returnTypeLocation,
         string sql,
-        bool hasNpgsql)
+        bool hasNpgsql,
+        bool readsXmin)
     {
         // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
         //   * Task<int>, ValueTask<int>  — return rows-affected count.
@@ -1737,7 +1760,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             && string.Equals(named.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
         {
             var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext);
+            var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext, readsXmin: readsXmin);
             if (streamFlat is not null)
                 return (EmitShape.Streaming, null, streamFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             var streamDomain = TryBuildDomainEntityMaterialization(streamElement, conventionContext);
@@ -1772,7 +1795,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             && string.Equals(listInner.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
         {
             var listElement = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
+            var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext, readsXmin: readsXmin);
             if (listFlat is not null)
             {
                 // v1.6 — EmitListResultSet now recurses into non-nullable
@@ -1994,7 +2017,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             // Peel the nullable annotation so we look at the underlying record type.
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var flat = TryBuildFlatRowMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation);
+            var flat = TryBuildFlatRowMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation, readsXmin);
             if (flat is not null)
                 return (EmitShape.FlatRow, null, flat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
@@ -2630,6 +2653,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return PrimitiveCatalog.GetScalarReaderMethod(underlying);
     }
 
+    // The reader of a [LinqQuery] row's xmin column; see TryBuildFlatRowMaterialization.
+    internal const string XminReader = "GetFieldValue<uint>";
+
     // Attempt to classify `elementType` as a positional record whose constructor params
     // resolve to known conventions. Returns null if the type isn't a record, has no
     // public ctor with parameters, or any parameter falls outside the conventions
@@ -2644,7 +2670,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         ConventionContext conventionContext,
         ImmutableArray<DiagnosticInfo>.Builder? diagnostics = null,
         string? methodName = null,
-        LocationInfo? location = null)
+        LocationInfo? location = null,
+        bool readsXmin = false)
     {
         if (elementType is not INamedTypeSymbol named || !named.IsRecord) return null;
 
@@ -2754,6 +2781,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             // SingleArgCtor / StaticFactory we read the underlying primitive then
             // pass it to the factory.
             string? reader = ResolveColumnReader(underlying, resolution);
+
+            // A [LinqQuery] row reads a uint from PostgreSQL's xmin, an xid Npgsql reads as
+            // uint; the LINQ reader and binder reject a uint parameter fed by anything else.
+            // uint stays no general-purpose primitive: Npgsql would bind one as an oid.
+            if (reader is null && readsXmin && p.Type.SpecialType == SpecialType.System_UInt32)
+                reader = XminReader;
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -5861,7 +5894,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
             sb.AppendLine($"                    {paramLocal}.ParameterName = {cache}.{BulkInsertNamesField(binding, i)}[__i];");
-            EmitValueAssignment(sb, "                    ", paramLocal, BuildBoundValue(valueExpr, isNullable: true, binding.Convention), binding.IsJson);
+            EmitValueAssignment(sb, "                    ", paramLocal, BuildBoundValue(valueExpr, isNullable: true, binding.Convention), binding.IsJson ? Jsonb : null);
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
         sb.AppendLine("                }");
@@ -8193,7 +8226,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8275,7 +8308,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output: null);
             }
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
@@ -8464,7 +8497,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8760,7 +8793,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
     }
@@ -8769,17 +8802,24 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // it: the four method-parameter sites, composite members and bulk-insert rows.
     //
     // A string marked [Json] then gets NpgsqlDbType.Jsonb, so the SQL needs no `::jsonb`
-    // cast. Set whatever the value, DBNull included: Npgsql sends a typed NULL. The
-    // check names Npgsql only in the adopter's code; ZAO082 guarantees the adopter
-    // references it. The pattern local, `__np_x` for `__p_x`, is unique in its block
-    // because the parameter local is.
-    private static void EmitValueAssignment(StringBuilder sb, string indent, string local, string value, bool isJson)
+    // cast, and a [LinqQuery] or [LinqCommand] uint compared with xmin gets NpgsqlDbType.Xid,
+    // so it meets xmin as an xid rather than the oid Npgsql would infer. Set whatever the
+    // value, DBNull included: Npgsql sends a typed NULL. The check names Npgsql only in the
+    // adopter's code; ZAO082 guarantees the adopter references it. The pattern local,
+    // `__np_x` for `__p_x`, is unique in its block because the parameter local is.
+    private static void EmitValueAssignment(StringBuilder sb, string indent, string local, string value, string? npgsqlDbType)
     {
         sb.AppendLine($"{indent}{local}.Value = {value};");
-        if (!isJson) return;
+        if (npgsqlDbType is null) return;
         var npgsqlLocal = "__np" + local.Substring("__p".Length);
-        sb.AppendLine($"{indent}if ({local} is global::Npgsql.NpgsqlParameter {npgsqlLocal}) {npgsqlLocal}.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;");
+        sb.AppendLine($"{indent}if ({local} is global::Npgsql.NpgsqlParameter {npgsqlLocal}) {npgsqlLocal}.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.{npgsqlDbType};");
     }
+
+    private const string Jsonb = "Jsonb";
+
+    // The NpgsqlDbType member a method parameter binds with, or null for the provider's own
+    // inference.
+    private static string? NpgsqlDbTypeOf(ParameterInfo p) => p.IsJson ? Jsonb : p.IsXid ? "Xid" : null;
 
     // The right-hand side of `__p_x.Value = ...;` for one method parameter. The four
     // binding sites, single-command and batch, with and without indent, share it.
@@ -8955,7 +8995,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
-                EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson);
+                EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson ? Jsonb : null);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8977,7 +9017,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 // between the parameter name and the field accessor.
                 var valueExpr = HoistArrayCopySubject(
                     sb, indent + "    ", local, BuildCompositeFieldValueExpressionForNullable(p.Name, field), field.Convention);
-                EmitValueAssignment(sb, indent + "    ", local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
+                EmitValueAssignment(sb, indent + "    ", local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson ? Jsonb : null);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8994,7 +9034,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
             var valueExpr = HoistArrayCopySubject(
                 sb, indent, local, BuildCompositeFieldValueExpression(p.Name, field), field.Convention);
-            EmitValueAssignment(sb, indent, local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson ? Jsonb : null);
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }

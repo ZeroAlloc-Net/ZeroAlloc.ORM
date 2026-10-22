@@ -1,6 +1,7 @@
 #nullable enable
 static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteDelete<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> int
 static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteUpdate<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!, ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!>! setters) -> int
+static ZeroAlloc.ORM.Linq.Sql.Xmin<T>(T row) -> uint
 ZeroAlloc.ORM.Linq.LinqCommandAttribute
 ZeroAlloc.ORM.Linq.LinqCommandAttribute.Companion.get -> string!
 ZeroAlloc.ORM.Linq.LinqCommandAttribute.LinqCommandAttribute(string! companion) -> void

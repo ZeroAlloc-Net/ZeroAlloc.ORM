@@ -95,6 +95,7 @@ public sealed partial class OrmGenerator
             {
                 NoRowsMessage = isCommand && ThrowsOnNoRows(ctx) ? NoRowsMessage(ctx) : null,
                 JsonParameters = translation.JsonParameters,
+                XidParameters = translation.XidParameters,
             });
         if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {
@@ -177,7 +178,8 @@ public sealed partial class OrmGenerator
             return new LinqMethodResult(null, read.Translation.Diagnostics);
 
         var statements = read.Translation.Statements;
-        var bound = LinqQueryBinder.Bind(statements, maps, read.Translation.LiftedProjections);
+        var bound = LinqQueryBinder.Bind(
+            statements, maps, read.Translation.LiftedProjections, read.Translation.XidParameters, read.Translation.XminProjections);
         if (bound.Diagnostics.Length > 0) return new LinqMethodResult(null, bound.Diagnostics);
 
         var method = core.Method with

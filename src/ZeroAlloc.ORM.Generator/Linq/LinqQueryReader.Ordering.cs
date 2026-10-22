@@ -25,6 +25,13 @@ internal static partial class LinqQueryReader
         if (chain.Group is { } group)
             return ReadGroupOrdering(name, returned, row, group, chain, context);
 
+        if (IsXminCall(Unwrap(returned)))
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + Unwrap(returned).Syntax + "' in an ordering, " + XminReason, Unwrap(returned).Syntax.GetLocation()));
+            return false;
+        }
+
         var key = ReadComparand(returned, row, context);
         if (key is null) return false;
         if (key is not SqlMemberExpression)
