@@ -5,7 +5,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Diagnostics;
 // ZAO040 fires when the return-type element doesn't match ANY construction
 // strategy on the ConventionDiscovery priority ladder — no [ValueObject], no
 // static factory, no single-arg-ctor record, no multi-arg ctor, no enum, no
-// primitive. Distinct from ZAO022 (info: shape-level "not yet supported") in
+// primitive. Distinct from ZAO022 (error: a shape [Query] cannot materialize) in
 // that ZAO040 is the type-level "can't be constructed at all" error.
 public class ZAO040Tests
 {

@@ -290,7 +290,7 @@ syntax, and more).
 
 ## Related diagnostics
 
-- [`ZAO022`](../diagnostics/ZAO022.md) — Return type shape not yet supported.
+- [`ZAO022`](../diagnostics/ZAO022.md) — Return type shape not supported.
 - [`ZAO040`](../diagnostics/ZAO040.md) — No construction strategy resolved for
   the composite type (no factory, no positional ctor, no convention match).
 - [`ZAO041`](../diagnostics/ZAO041.md) — No binding strategy resolved for the

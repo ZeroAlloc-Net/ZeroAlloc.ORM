@@ -1072,10 +1072,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         //                        ctor, no multi-arg ctor with named-param convention,
         //                        no enum, no primitive). This is an adopter-facing
         //                        modeling problem — they need to add a factory.
-        //   * ZAO022 (Info)   -- the element type IS classifiable (ConventionDiscovery
+        //   * ZAO022 (Error)  -- the element type IS classifiable (ConventionDiscovery
         //                        returns a known Kind) but the surrounding return-type
-        //                        shape (e.g. multi-result tuple) isn't yet emittable.
-        //                        Pure "generator hasn't shipped this yet" noise.
+        //                        shape isn't one [Query] materializes, such as a
+        //                        non-nullable row, an array of rows or IEnumerable<T>.
+        //                        #400 — an Error, formerly an Info that the build output
+        //                        hid behind the CS8795 for the missing body; the reason
+        //                        argument names the shape to use instead.
         //
         // ZAO007 covers IAsyncEnumerable<T>-without-EnumeratorCancellation separately,
         // so we suppress both ZAO022 and ZAO040 for IAsyncEnumerable to avoid the
@@ -1120,7 +1123,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var elementKind = elementType is not null
                 ? ConventionDiscovery.Resolve(elementType, conventionContext).Kind
                 : ConventionKind.Unknown;
-            var elementIsContainerShape = elementType is INamedTypeSymbol en && en.IsGenericType;
+            // #400 — an array of rows, `Task<TRow[]>`, is a container shape too. Arrays
+            // that read, a PostgreSQL array column, never get here.
+            var elementIsContainerShape = elementType is IArrayTypeSymbol
+                || (elementType is INamedTypeSymbol en && en.IsGenericType);
             if (elementType is not null
                 && elementKind == ConventionKind.Unknown
                 && !elementIsContainerShape)
@@ -1138,7 +1144,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     Location: LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
                     MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
                         method.Name,
-                        method.ReturnType.ToDisplayString()))));
+                        method.ReturnType.ToDisplayString(),
+                        DescribeUnsupportedQueryShape(method, conventionContext, isStoredProcedureAttribute, readsXmin: linq is not null)))));
             }
         }
 
@@ -2170,6 +2177,99 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var readerWord = isIdentity ? "identity" : "scalar";
         return $"'{unwrapped.ToDisplayString()}' has no {readerWord} reader; supported types are {supportedTypesText}";
     }
+
+    // #400 — the reason argument of ZAO022: why ClassifyEmitShape found no emit shape
+    // for a [Query] return type, and the shape to use instead. Called only after the
+    // classifier returned Unknown without a more specific diagnostic, so each check
+    // below re-derives one cause the classifier rejects, most specific first.
+    private static string DescribeUnsupportedQueryShape(
+        IMethodSymbol method,
+        ConventionContext conventionContext,
+        bool isStoredProcedure,
+        bool readsXmin)
+    {
+        if (method.ReturnType is not INamedTypeSymbol { Name: "Task" or "ValueTask" } named)
+            return UnsupportedQueryShapeFallback;
+        if (named.Arity == 0)
+            return $"[Query] reads a result, and a bare {named.Name} carries none; use [Command] to run a statement without one";
+
+        var wrapper = named.Name;
+        var inner = named.TypeArguments[0];
+
+        // A list whose element is not a row: the classifier's list branch claims every
+        // List<T>, IReadOnlyList<T> and IList<T> before any other shape.
+        if (inner is INamedTypeSymbol listInner
+            && listInner.MetadataName is "IReadOnlyList`1" or "List`1" or "IList`1"
+            && string.Equals(listInner.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
+        {
+            var element = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+            var row = TryBuildFlatRowMaterialization(element, conventionContext, readsXmin: readsXmin)
+                ?? TryBuildDomainEntityMaterialization(element, conventionContext);
+            if (row is not null && HasNullableCompositeColumn(row.Columns))
+            {
+                return $"a list row with a nullable composite column is not supported yet; make the composite in '{element.ToDisplayString()}' "
+                    + $"non-nullable, or read one row at a time as {wrapper}<{element.ToDisplayString()}?>";
+            }
+            return $"the list element '{listInner.TypeArguments[0].ToDisplayString()}' is neither a row type nor a supported scalar; "
+                + "use a row record whose constructor parameters each bind to a column, or a scalar element such as int, string or Guid";
+        }
+
+        // A tuple of result sets with an element no result set reads, or a stored
+        // procedure tuple the output-parameter path rejects.
+        var tupleCandidate = UnwrapNullableValueType(inner);
+        if (tupleCandidate is INamedTypeSymbol { IsTupleType: true } tuple && tuple.TupleElements.Length >= 2)
+        {
+            if (isStoredProcedure)
+            {
+                var tupleIsNullable = inner.NullableAnnotation == NullableAnnotation.Annotated
+                    || !ReferenceEquals(tupleCandidate, inner);
+                if (tupleIsNullable && SprocHasAnyOutputParamMatch(tuple, method.Parameters))
+                {
+                    return "a stored procedure tuple that binds output parameters cannot be nullable; remove the '?' from the tuple";
+                }
+                if (SprocHasArrayOutputParamMatch(tuple, method.Parameters, conventionContext))
+                {
+                    return "a PostgreSQL array cannot bind as a stored procedure output parameter; return it as a result column instead";
+                }
+            }
+            return "a tuple of result sets takes one element per result set, each a scalar, a row or a list of rows";
+        }
+
+        var bare = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+        // An array whose element is no PostgreSQL array element, such as `TRow[]`.
+        if (bare is IArrayTypeSymbol array)
+        {
+            return $"an array return reads one PostgreSQL array column, and '{array.ElementType.ToDisplayString()}' is no array element; "
+                + "return rows as List<T>, IReadOnlyList<T> or IList<T>, or stream them as IAsyncEnumerable<T>";
+        }
+
+        // Any other collection: IEnumerable<T>, ICollection<T>, HashSet<T> and so on.
+        if (bare.SpecialType != SpecialType.System_String
+            && (bare.SpecialType == SpecialType.System_Collections_IEnumerable
+                || bare.AllInterfaces.Any(static i => i.SpecialType == SpecialType.System_Collections_IEnumerable)))
+        {
+            return $"'{bare.ToDisplayString()}' is not a supported collection; "
+                + "return List<T>, IReadOnlyList<T> or IList<T>, or stream rows as IAsyncEnumerable<T>";
+        }
+
+        // A row type declared non-nullable. The no-row case has nothing to return, so
+        // the row shape is only Task<TRow?>.
+        if (inner.IsReferenceType
+            && inner.NullableAnnotation != NullableAnnotation.Annotated
+            && (TryBuildFlatRowMaterialization(bare, conventionContext, readsXmin: readsXmin)
+                ?? TryBuildDomainEntityMaterialization(bare, conventionContext)) is not null)
+        {
+            return $"a single row must be nullable; use {wrapper}<{bare.ToDisplayString()}?>, which returns null when the result set is empty";
+        }
+
+        return UnsupportedQueryShapeFallback;
+    }
+
+    private const string UnsupportedQueryShapeFallback =
+        "supported shapes are a scalar such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
+        + "a list of rows or scalars as List<T>, IReadOnlyList<T> or IList<T>, a tuple of result sets, "
+        + "a PostgreSQL array T[], or IAsyncEnumerable<TRow>";
 
     // v1.3 — [Command(Kind = BulkInsert)] classifier. Runs four shape checks; any
     // failure adds a hard ZAO070-073 diagnostic and returns EmitShape.Unknown so
