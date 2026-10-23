@@ -255,7 +255,7 @@ public class ZAO082Tests
     // it reads as a list of a scalar now, with or without Npgsql, and is never
     // reported as an array.
     [Fact]
-    public void List_of_string_return_is_a_list_of_rows_not_an_array_column()
+    public void List_of_string_return_is_a_scalar_list_not_an_array_column()
     {
         var source = ColumnUsings + """
             public sealed partial class Repo(IAsyncDbConnection connection)
