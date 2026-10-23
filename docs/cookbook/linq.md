@@ -93,12 +93,6 @@ internal static class TaskMap;
   `DateTimeStorage.Timestamp` marks one `timestamp` column under a `TimestampTz` default.
   A `DateTimeStorage` of `Timestamp` or `TimestampTz` on a property that is not a `DateTime` or
   `DateTime?` reports ZAO106.
-- A `string` property stored as a `jsonb` document is declared with
-  `[ColumnMap(nameof(E.P), Json = true)]`, so the domain class needs no attribute. A `[LinqCommand]`
-  update then binds the value it sets into the column as `jsonb`, see
-  [Set-based writes](#set-based-writes). `[Json]` on the property, or on the record constructor
-  parameter that feeds it, says the same. A jsonb column reads as a string either way. `Json` on a
-  property that is not a `string` reports ZAO106.
 
   ```csharp
   // EF Core's Npgsql default
@@ -108,6 +102,12 @@ internal static class TaskMap;
   [ColumnMap(nameof(Execution.LocalDay), DateTimeStorage = DateTimeStorage.Timestamp)]
   internal static class ExecutionMap;
   ```
+- A `string` property stored as a `jsonb` document is declared with
+  `[ColumnMap(nameof(E.P), Json = true)]`, so the domain class needs no attribute. A `[LinqCommand]`
+  update then binds the value it sets into the column as `jsonb`, see
+  [Set-based writes](#set-based-writes). `[Json]` on the property, or on the record constructor
+  parameter that feeds it, says the same. A jsonb column reads as a string either way. `Json` on a
+  property that is not a `string` reports ZAO106.
 
 ### Owned types
 

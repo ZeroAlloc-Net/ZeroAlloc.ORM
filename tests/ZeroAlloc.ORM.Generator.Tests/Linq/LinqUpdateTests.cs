@@ -524,6 +524,21 @@ public class LinqUpdateTests
         "ZAO102",
         "n.Title",
         "'Title' set into the jsonb 'Body', rather than a parameter, a constant, null or another jsonb column, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<NoteEntity>().Where(n => n.Title == doc).ExecuteUpdate(set => set.SetProperty(n => n.Body, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Body', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<NoteEntity>().ExecuteUpdate(set => set.SetProperty(n => n.Body, doc).SetProperty(n => n.Title, doc))",
+        "ZAO102",
+        "doc",
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Body', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<DocEntity>().ExecuteUpdate(set => set.SetProperty(d => d.Body, d => d.Summary))",
+        "ZAO102",
+        "d.Summary",
+        "'Summary' set into the jsonb 'Body', rather than a parameter, a constant, null or another jsonb column, is not supported in a [LinqCommand] chain")]
     public void Setter_reports(string chain, string id, string located, string message)
     {
         var (d, at) = Single(Repo + """
