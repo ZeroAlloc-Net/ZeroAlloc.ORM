@@ -72,7 +72,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 - `ZAO082`–`ZAO084` — provider-specific types and their markers: PostgreSQL arrays and `[Json]` strings need Npgsql, `[Json]` needs a string, and both only work on a PostgreSQL repository.
-- `ZAO100`–`ZAO199` — `[LinqQuery]` translation and its `[TableMap]` / `[ColumnMap]` entity maps. `ZAO106` is an invalid entity map; `ZAO109` is a call to a companion, which never runs; `ZAO110` is a warning about paging without an order; `ZAO113` is a warning about a row lock without a transaction; the others report a companion, chain, projection, parameter, dialect or return type the translator cannot use.
+- `ZAO100`–`ZAO199` — `[LinqQuery]` and `[LinqCommand]` translation and their `[TableMap]` / `[ColumnMap]` entity maps. `ZAO106` is an invalid entity map; `ZAO109` is a call to a companion, which never runs; `ZAO110` is a warning about paging without an order; `ZAO113` is a warning about a row lock without a transaction; the others report a companion, chain, projection, parameter, dialect or return type the translator cannot use.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.
 
