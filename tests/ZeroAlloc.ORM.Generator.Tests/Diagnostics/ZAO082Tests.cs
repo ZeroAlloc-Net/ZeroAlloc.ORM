@@ -251,9 +251,9 @@ public class ZAO082Tests
         Assert.Empty(compileDiagnostics);
     }
 
-    // `Task<List<string>>` is a list of rows, the existing list-result shape, not one
-    // array column. A string is no row, so it stays unsupported the way it was, with
-    // or without Npgsql, and is never reported as an array.
+    // `Task<List<string>>` is a list, one column per row, not one array column. #400 —
+    // it reads as a list of a scalar now, with or without Npgsql, and is never
+    // reported as an array.
     [Fact]
     public void List_of_string_return_is_a_list_of_rows_not_an_array_column()
     {
@@ -268,8 +268,8 @@ public class ZAO082Tests
         var without = GeneratorHarness.RunGenerator(source).Results[0].Diagnostics;
         var with = GeneratorHarness.RunGenerator(source, NpgsqlStub.Source).Results[0].Diagnostics;
 
-        Assert.Equal("ZAO022", Assert.Single(without).Id);
-        Assert.Equal("ZAO022", Assert.Single(with).Id);
+        Assert.Empty(without);
+        Assert.Empty(with);
     }
 
     // Each source binds one [Json] string: a method parameter, a composite member and

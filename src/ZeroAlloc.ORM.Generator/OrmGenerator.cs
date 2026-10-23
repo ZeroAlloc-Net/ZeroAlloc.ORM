@@ -1823,6 +1823,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
                 return (EmitShape.ListResultSet, null, listDomain, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             }
+            // #400 — a list of a primitive scalar, one column per row. After the row
+            // models, so a row type keeps winning.
+            if (TryBuildScalarColumnMaterialization(listInner.TypeArguments[0]) is { } scalarList)
+                return (EmitShape.ScalarList, null, scalarList, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Element type not classifiable — fall through to Unknown so the
             // existing ZAO022 / ZAO040 path surfaces the gap.
             return (EmitShape.Unknown, null, null, null, HasReturnValue: false, SprocOutputParams: null, BulkInsertMaterialization: null);
@@ -1894,7 +1898,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         // A PostgreSQL array at scalar position, `Task<string[]>` or `Task<string[]?>`.
         // Only `T[]` gets here: the list branch above claims List<T> and
-        // IReadOnlyList<T> as a list of rows.
+        // IReadOnlyList<T> as a list of rows or of a scalar.
         var scalarArray = ClassifyScalarLikeReturn(
             method,
             conventionContext,
@@ -1953,6 +1957,16 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // LINQ Average and Sum. Same ordering rule as bool / long above.
         if (inner.SpecialType == SpecialType.System_Double) return (EmitShape.ScalarDouble, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         if (inner.SpecialType == SpecialType.System_Decimal) return (EmitShape.ScalarDecimal, null, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+
+        // #400 — every other non-nullable primitive with a reader: Guid, DateTime,
+        // DateTimeOffset, TimeSpan, DateOnly, TimeOnly, short, float, byte, byte[] and a
+        // non-nullable or oblivious string. The nullable forms returned NullableScalar
+        // above. Same ordering rule as bool / long, so [Materialize(Factory)] keeps winning.
+        if (inner.NullableAnnotation != NullableAnnotation.Annotated
+            && TryBuildScalarColumnMaterialization(inner) is { } requiredScalar)
+        {
+            return (EmitShape.RequiredScalar, null, requiredScalar, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+        }
 
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
         // `Money(decimal Amount, string Currency)` constructs the composite type
@@ -2015,9 +2029,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // FlatRow (Task 5.1) — positional record with ctor params resolvable to known
         // conventions. v0.2 Phase C extends column resolution from "primitive only" to
         // anything ConventionDiscovery surfaces (ValueObject, SingleArgCtor, StaticFactory).
-        // v0.1 only handles Task<T?> (nullable reference) so an empty result set maps
-        // cleanly to `return null;`. Non-nullable Task<T> would require an exception
-        // on empty and is deferred to v0.2.
+        // Only Task<T?> (nullable reference), so an empty result set maps cleanly to
+        // `return null;`. #400 — a non-nullable Task<TRow> stays unsupported by design
+        // and reports ZAO022 with a reason that points at Task<TRow?>.
         if (inner.IsReferenceType && inner.NullableAnnotation == NullableAnnotation.Annotated)
         {
             // Peel the nullable annotation so we look at the underlying record type.
@@ -2066,7 +2080,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             // string-backed enums. Container / unsupported types fall through
             // to a null reader → Unknown.
             // A PostgreSQL array is accepted as `T[]` only, as on a [Query]: a List<T>
-            // or IReadOnlyList<T> return reads as rows everywhere, so it stays a
+            // or IReadOnlyList<T> return reads one row per element there, so it stays a
             // ZAO002 here. EmitScalarMaterialization casts the provider's `T[]`.
             resolveReader: static (unwrapped, resolution) =>
                 resolution.Kind == ConventionKind.PrimitiveArray && resolution.ArrayShape != PrimitiveArrayShape.Array
@@ -4800,6 +4814,26 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return type;
     }
 
+    // #400 — the one-column model of a primitive scalar read from column 0: the
+    // RequiredScalar return and each ScalarList element. Null when the type has no
+    // reader in PrimitiveCatalog. IsNullable is set for `T?` and Nullable<T>; an
+    // oblivious reference type reads as non-nullable. TargetTypeFullName is the type
+    // as declared, `?` included, which ScalarList names its List<T> with.
+    private static MaterializationModel? TryBuildScalarColumnMaterialization(ITypeSymbol type)
+    {
+        var unwrapped = UnwrapNullableValueType(type).WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+        var reader = GetScalarPrimitiveReaderInfo(unwrapped);
+        if (reader is null) return null;
+        var isNullable = !ReferenceEquals(UnwrapNullableValueType(type), type)
+            || (type.IsReferenceType && type.NullableAnnotation == NullableAnnotation.Annotated);
+        var typeName = unwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return new MaterializationModel(
+            Kind: MaterializationKind.ScalarPrimitive,
+            TargetTypeFullName: isNullable ? typeName + "?" : typeName,
+            Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(
+                new ColumnBinding(GetterMethod: reader, IsNullable: isNullable, TypeName: typeName))));
+    }
+
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
     // strongly-typed-reads it. Thin pass-through to PrimitiveCatalog so the rest of
     // the generator keeps its existing call shape; the canonical table lives in
@@ -5452,6 +5486,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     break;
                 case EmitShape.ScalarArray:
                     EmitScalarArray(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.RequiredScalar:
+                    EmitRequiredScalar(sb, m, repo.ConnectionAccess);
+                    break;
+                case EmitShape.ScalarList:
+                    EmitScalarList(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.FlatRow:
                     EmitFlatRow(sb, m, repo.ConnectionAccess);
@@ -6946,6 +6986,96 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             };
             EmitNullGuarded(sb, "            ", checks, "__NullColumn", $"            return {BuildPositionalReadExpression(col, 0)};\n");
         }
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // #400 — a [Query] returning a non-nullable primitive scalar outside the
+    // Convert-based shapes. It reads as EmitNullableScalar does, through
+    // ExecuteReaderAsync, which tells no row from NULL, and throws
+    // ZeroAllocOrmMaterializationException for each instead of returning null. The
+    // messages match the Scalar command's and point at the nullable return type.
+    private static void EmitRequiredScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null || mat.Columns.Length != 1)
+        {
+            // Defensive — classification never assigns RequiredScalar without a column.
+            sb.AppendLine($"    // TODO: RequiredScalar without single-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var col = mat.Columns[0];
+        var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
+        var typeDisplay = DisplayTypeName(col.TypeName);
+        var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+            $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+        var nullValue = $"Query '{method}' returned NULL, but its return type is the non-nullable " +
+            $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitParameterBinding(sb, m);
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
+        sb.AppendLine("            if (__reader.IsDBNull(0))");
+        sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
+        sb.AppendLine($"            return __reader.{col.GetterMethod}(0);");
+        BuildConnectionEpilogue(sb, "        ");
+        sb.AppendLine("    }");
+    }
+
+    // #400 — a [Query] returning a list of a primitive scalar: column 0 of every row,
+    // buffered as EmitListResultSet buffers rows. A nullable element maps NULL to
+    // null. A non-nullable element throws ZeroAllocOrmMaterializationException for a
+    // NULL, naming the method and the zero-based row index, which is the list's count
+    // so far; the message is built only on that path.
+    private static void EmitScalarList(StringBuilder sb, QueryMethodModel m, string connectionAccess)
+    {
+        var mat = m.Materialization;
+        if (mat is null || mat.Columns.Length != 1)
+        {
+            // Defensive — classification never assigns ScalarList without a column.
+            sb.AppendLine($"    // TODO: ScalarList without single-column Materialization for {m.MethodName}");
+            return;
+        }
+
+        var col = mat.Columns[0];
+        var paramList = BuildParameterList(m.MethodParameters);
+        var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
+        sb.AppendLine($"    {GeneratedCodeAttribute}");
+        sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
+        sb.AppendLine("    {");
+        BuildConnectionPrologue(sb, connectionAccess, ct, "        ");
+        sb.AppendLine("            await using var __cmd = __conn.CreateCommand();");
+        EmitTransactionAssignment(sb, m, "            ");
+        BuildCommandTextAssignment(sb, m, "__cmd", "            ");
+        EmitParameterBindingWithIndent(sb, m, "            ");
+        sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
+        sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+        sb.AppendLine("            {");
+        if (!col.IsNullable)
+        {
+            var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
+            var typeDisplay = DisplayTypeName(col.TypeName);
+            var head = $"Query '{method}' returned NULL at row index ";
+            var tail = $", but its list element type is the non-nullable '{typeDisplay}'. " +
+                $"Declare the element as '{typeDisplay}?' to receive null.";
+            sb.AppendLine("                if (__reader.IsDBNull(0))");
+            sb.AppendLine("                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(");
+            sb.AppendLine($"                        {SymbolDisplay.FormatLiteral(head, quote: true)} + __list.Count.ToString(global::System.Globalization.CultureInfo.InvariantCulture) + {SymbolDisplay.FormatLiteral(tail, quote: true)});");
+        }
+        sb.AppendLine($"                __list.Add({BuildPositionalReadExpression(col, 0)});");
+        sb.AppendLine("            }");
+        sb.AppendLine("            return __list;");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }

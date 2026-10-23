@@ -94,7 +94,7 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 
 **Return shapes**
 
-- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>`, `Task<decimal>`, `Task<T?>`; as with `Task<int>`, no row gives `false` or `0` and a NULL value throws), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form.
+- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>`, `Task<decimal>`, `Task<T?>`; as with `Task<int>`, no row gives `false` or `0` and a NULL value throws; every other primitive, such as `Task<Guid>`, `Task<string>` or `Task<DateTimeOffset>`, throws `ZeroAllocOrmMaterializationException` for no row and for NULL), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) of rows or of one scalar column, and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form. An unsupported shape is a build error, ZAO022, that names the shape to use instead.
 - Multi-result-set tuples, such as `Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?>`, map one tuple element to each `;`-separated statement. `[Query(Batch = BatchMode.Auto)]`, the default, uses `IAsyncDbBatch` when the provider supports it and falls back to one command with `NextResultAsync`. Tuple/statement arity mismatches are build errors (ZAO032, ZAO033). On PostgreSQL a `[LinqQuery]` companion can return the same tuple from LINQ chains, which replaces EF Core's `Include`; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#parents-with-children).
 
 **Parameters and columns**
