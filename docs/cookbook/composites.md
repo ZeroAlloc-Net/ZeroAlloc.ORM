@@ -19,8 +19,11 @@ custom validation, provider-specific decoding).
 
 ## Recipe 1 — Simple multi-column composite
 
-Declare the composite as a positional record (struct or class) with N
-constructor parameters. Each parameter must resolve to a single column — a
+Declare the composite as a positional record struct with N constructor
+parameters. At the return position only a value type may be non-nullable, as
+`Task<Money>` below; a record class returned on its own is a row, which must be
+`Task<Money?>` ([ZAO022](../diagnostics/ZAO022.md)). Nested inside a row, a
+composite may be either. Each parameter must resolve to a single column — a
 primitive, an enum, a value object, or a `static From(...)` factory:
 
 ```csharp
@@ -290,7 +293,7 @@ syntax, and more).
 
 ## Related diagnostics
 
-- [`ZAO022`](../diagnostics/ZAO022.md) — Return type shape not yet supported.
+- [`ZAO022`](../diagnostics/ZAO022.md) — Return type shape not supported.
 - [`ZAO040`](../diagnostics/ZAO040.md) — No construction strategy resolved for
   the composite type (no factory, no positional ctor, no convention match).
 - [`ZAO041`](../diagnostics/ZAO041.md) — No binding strategy resolved for the

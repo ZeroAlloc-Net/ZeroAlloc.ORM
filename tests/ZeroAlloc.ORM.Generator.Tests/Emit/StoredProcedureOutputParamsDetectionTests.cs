@@ -190,7 +190,12 @@ public class StoredProcedureOutputParamsDetectionTests
             .AsEnumerable()
             .Where(d => string.Equals(d.Id, "ZAO022", System.StringComparison.Ordinal))
             .ToArray();
-        Assert.Single(zao022);
+        var single = Assert.Single(zao022);
+        // #400 — the reason names the fix.
+        Assert.EndsWith(
+            "a stored procedure tuple that binds output parameters cannot be nullable; remove the '?' from the tuple",
+            single.GetMessage(System.Globalization.CultureInfo.InvariantCulture),
+            System.StringComparison.Ordinal);
     }
 
     [Fact]

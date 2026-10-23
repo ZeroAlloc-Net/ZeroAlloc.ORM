@@ -47,8 +47,10 @@ internal static partial class LinqQueryReader
 
         if (counted || IsTerminalValue(rowType))
         {
-            // The one value of a terminal, read as Task<T> or ValueTask<T>. [Query] reads a string
-            // scalar only as string?, null for no row and for NULL.
+            // The one value of a terminal, read as Task<T> or ValueTask<T>. [LinqQuery] takes a
+            // string terminal only as string?, null for no row and for NULL. [Query] reads a
+            // non-null string too, throwing for both, but LINQ's Min and Max semantics for that
+            // case are not decided, so the restriction is LINQ's.
             return IsRow(result, rowType)
                 && (!result.IsReferenceType || result.NullableAnnotation == NullableAnnotation.Annotated)
                     ? LinqResultShape.Scalar
@@ -67,7 +69,8 @@ internal static partial class LinqQueryReader
     // LongCount and Any; and from Sum, Average, Min and Max a non-null int, long, double or
     // decimal through Convert, a nullable one of those, DateTime or DateTimeOffset through the
     // nullable scalar's reader, or a string. Others, such as Guid, which PostgreSQL has no min
-    // for, or a non-null DateTime, which [Query] does not read as a scalar, are ZAO112.
+    // for, or a non-null DateTime, are ZAO112. [Query] reads a non-null DateTime scalar, but
+    // [LinqQuery] does not take one as a terminal value: that restriction is LINQ's.
     private static bool IsTerminalValue(ITypeSymbol type)
     {
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)

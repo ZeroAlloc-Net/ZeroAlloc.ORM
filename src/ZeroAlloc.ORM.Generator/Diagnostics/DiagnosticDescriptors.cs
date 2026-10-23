@@ -151,12 +151,15 @@ internal static class DiagnosticDescriptors
     // EmitMultiResultSet*). The v0.1 info diagnostic is no longer accurate; its removal
     // is recorded in AnalyzerReleases.Shipped.md, under "Removed Rules" in Release 0.3.0.
 
+    // #400 — an Error, formerly an Info. As an Info it was hidden by the build output, so the
+    // adopter saw only the CS8795 for the body that was never emitted. {2} is the reason,
+    // built by DescribeUnsupportedQueryShape, and names the shape to use instead.
     public static readonly DiagnosticDescriptor ZAO022_UnknownReturnShape = new(
         id: "ZAO022",
-        title: "Return type shape not yet supported in v0.1",
-        messageFormat: "Method '{0}' has return type '{1}' which the v0.1 generator cannot materialize. Supported v0.1 shapes: Task<int>, Task<T?> (single-row scalar for 11 primitive types), Task<TRow?> (FlatRow positional record). Other shapes (multi-result tuples, IAsyncEnumerable<T>, etc.) are deferred to later milestones.",
+        title: "Return type shape not supported",
+        messageFormat: "Method '{0}' returns '{1}', which [Query] cannot materialize: {2}",
         category: Category,
-        defaultSeverity: DiagnosticSeverity.Info,
+        defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO022"));
 

@@ -106,8 +106,22 @@ internal enum EmitShape
     // column 0 of the first row, read through `GetFieldValue<T[]>`. m.Materialization
     // carries the one ColumnBinding. A non-nullable return throws on no row or NULL;
     // a nullable one returns null. List<T> and IReadOnlyList<T> returns stay
-    // ListResultSet, a list of rows.
+    // ListResultSet, a list of rows, or ScalarList.
     ScalarArray,
+    // #400 — a [Query] returning a non-nullable primitive scalar that is none of the
+    // ScalarInt / ScalarBool / ScalarLong / ScalarDouble / ScalarDecimal shapes:
+    // `Task<Guid>`, `Task<string>`, `ValueTask<DateTimeOffset>` and so on. Column 0 of
+    // the first row, read the way NullableScalar reads it. No row and NULL both throw
+    // ZeroAllocOrmMaterializationException. m.Materialization carries the one
+    // ColumnBinding.
+    RequiredScalar,
+    // #400 — a [Query] returning a list of a primitive scalar: `Task<List<T>>`,
+    // `Task<IReadOnlyList<T>>` or `Task<IList<T>>`, T nullable or not. Column 0 of
+    // every row. A NULL into a non-nullable element throws; a nullable element reads
+    // null. m.Materialization carries the one ColumnBinding, and its
+    // TargetTypeFullName is the element type as the list declares it. A row element
+    // stays ListResultSet.
+    ScalarList,
 }
 
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side

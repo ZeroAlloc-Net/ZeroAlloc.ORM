@@ -7,7 +7,6 @@ where each ctor parameter reads exactly one column, in declaration order.
 | Pattern                          | Use when                                                          |
 | -------------------------------- | ----------------------------------------------------------------- |
 | `Task<T?>` (nullable)            | Zero or one row — `null` means "no row matched".                  |
-| `Task<T>` (non-nullable)         | Exactly one row guaranteed — empty result throws.                 |
 | Positional record                | Column → ctor-parameter mapping is purely by **order**.           |
 | Single-ctor class (DomainEntity) | Column → ctor-parameter mapping is by **name** (`GetOrdinal`).    |
 
@@ -51,16 +50,20 @@ var order = await repo.GetByIdAsync(42, ct).ConfigureAwait(false);
 if (order is null) { /* no order with id = 42 */ }
 ```
 
-The `?` on `Task<OrderRow?>` signals "no row matched → return null". If you
-prefer to throw on empty result, drop the `?`:
+The `?` on `Task<OrderRow?>` signals "no row matched → return null". A single
+row is always `Task<TRow?>`: if you need an exception when no row matches, throw
+at the call site:
 
 ```csharp
-[Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
-public partial Task<OrderRow> GetByIdOrThrowAsync(int id, CancellationToken ct);
+var order = await repo.GetByIdAsync(42, ct).ConfigureAwait(false)
+    ?? throw new InvalidOperationException("Order 42 not found.");
 ```
 
-A non-nullable single-row return throws `ZeroAllocOrmMaterializationException`
-when the result set is empty.
+A non-nullable `Task<OrderRow>` for a record or class row is a build error,
+[ZAO022](../diagnostics/ZAO022.md), whose message points at `Task<OrderRow?>`.
+A value-type composite at scalar position, such as `Task<Money>` for a
+`readonly record struct Money(decimal Amount, string Currency)`, may still be
+declared non-nullable; see [composites.md](composites.md).
 
 ## Recipe 2 — Single-row read with value-object fields
 

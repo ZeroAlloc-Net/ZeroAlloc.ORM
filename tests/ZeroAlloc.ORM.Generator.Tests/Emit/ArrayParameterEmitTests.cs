@@ -204,7 +204,13 @@ public class ArrayParameterEmitTests
             }
             """, NpgsqlStub.Source);
 
-        Assert.Equal("ZAO022", Assert.Single(result.Results[0].Diagnostics).Id);
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO022", diagnostic.Id);
+        // #400 — the reason names the fix.
+        Assert.EndsWith(
+            "a PostgreSQL array cannot bind as a stored procedure output parameter; return it as a result column instead",
+            diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture),
+            System.StringComparison.Ordinal);
     }
 
     [Fact]
