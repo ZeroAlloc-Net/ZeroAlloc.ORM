@@ -142,8 +142,23 @@ public sealed class PostgresLinqUpdateTests
         session.TotalInputTokens.Should().Be(0);
     }
 
+    // [Json] on the entity property makes the column jsonb as the map's Json does: the parameter
+    // binds as jsonb, and PostgreSQL stores it normalised.
+    [Fact]
+    public async Task Json_property_setter_writes_jsonb()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqUpdateRepo(fx.Connection);
+        var id = await InsertAsync(repo, AgentSessionState.Idle).ConfigureAwait(false);
+
+        (await repo.SetMetadataAsync(id, """{"model":"m1","tags":[1, 2]}""", CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+        (await repo.GetMetadataAsync(id, CancellationToken.None).ConfigureAwait(false))!.Metadata
+            .Should().Be("""{"tags": [1, 2], "model": "m1"}""");
+    }
+
     // Owned members are set through the map: the renamed "RepositoryUrl", and the optional
-    // Outcome's default-named columns, whose [Json] ValidationResult binds as jsonb.
+    // Outcome's default-named columns, whose ValidationResult the map declares jsonb.
     [Fact]
     public async Task Owned_member_setter_writes_its_column()
     {

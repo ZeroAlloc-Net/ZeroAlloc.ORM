@@ -1,1 +1,3 @@
 #nullable enable
+ZeroAlloc.ORM.ColumnMapAttribute.Json.get -> bool
+ZeroAlloc.ORM.ColumnMapAttribute.Json.init -> void

@@ -81,6 +81,24 @@ public class LinqUpdateTests
             public AnalysisOutcome? Outcome { get; private set; }
         }
 
+        // A positional record carries [Json] on its constructor parameter; a domain class needs no
+        // attribute when its map declares the column jsonb.
+        public sealed record DocEntity(Guid Id, [Json] string? Body, string? Summary);
+
+        public sealed class NoteEntity
+        {
+            public Guid Id { get; private set; }
+            public string? Body { get; private set; }
+            public string? Title { get; private set; }
+        }
+
+        [TableMap(typeof(DocEntity), "Docs")]
+        internal static class DocMap;
+
+        [TableMap(typeof(NoteEntity), "Notes")]
+        [ColumnMap(nameof(NoteEntity.Body), Json = true)]
+        internal static class NoteMap;
+
         [TableMap(typeof(AgentSessionEntity), "AgentSessions")]
         [ColumnMap(nameof(AgentSessionEntity.State), EnumAsString = true)]
         [ColumnMap(nameof(AgentSessionEntity.Version), Column = "xmin")]
@@ -312,6 +330,63 @@ public class LinqUpdateTests
         Assert.Contains("NpgsqlDbType.Jsonb", generated, StringComparison.Ordinal);
     }
 
+    // [Json] on a positional record's constructor parameter makes its column jsonb, as on a property.
+    [Fact]
+    public void Update_json_record_constructor_parameter()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqCommand(nameof(WriteQuery))]
+                public partial Task<int> Write(Guid id, string? body, string? summary, CancellationToken ct);
+
+                private static int WriteQuery(Guid id, string? body, string? summary) =>
+                    Sql.Table<DocEntity>().Where(d => d.Id == id).ExecuteUpdate(set => set
+                        .SetProperty(d => d.Body, body)
+                        .SetProperty(d => d.Summary, summary));
+            }
+            """,
+            "UPDATE \"Docs\" SET \"Body\" = @body, \"Summary\" = @summary WHERE \"Id\" = @id",
+            "if (__p_body is global::Npgsql.NpgsqlParameter __np_body) __np_body.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;",
+            NpgsqlStub.Source);
+    }
+
+    // The map's Json = true makes a column jsonb on a class that carries no attribute at all.
+    [Fact]
+    public void Update_json_column_from_the_map()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqCommand(nameof(WriteQuery))]
+                public partial Task<int> Write(Guid id, string? body, CancellationToken ct);
+
+                private static int WriteQuery(Guid id, string? body) =>
+                    Sql.Table<NoteEntity>().Where(n => n.Id == id).ExecuteUpdate(set => set.SetProperty(n => n.Body, body));
+            }
+            """,
+            "UPDATE \"Notes\" SET \"Body\" = @body WHERE \"Id\" = @id",
+            "if (__p_body is global::Npgsql.NpgsqlParameter __np_body) __np_body.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;",
+            NpgsqlStub.Source);
+    }
+
+    // Without Npgsql, a parameter set into a column the map declares jsonb reports ZAO082 at its
+    // use in the setter, as a [Json] parameter does at its declaration.
+    [Fact]
+    public void Json_column_from_the_map_without_npgsql_reports_ZAO082()
+    {
+        var (d, located) = Single(Repo + """
+                [LinqCommand(nameof(WriteQuery))]
+                public partial Task<int> Write(Guid id, string? body, CancellationToken ct);
+
+                private static int WriteQuery(Guid id, string? body) =>
+                    Sql.Table<NoteEntity>().Where(n => n.Id == id).ExecuteUpdate(set => set.SetProperty(n => n.Body, body));
+            }
+            """);
+
+        Assert.Equal("ZAO082", d.Id);
+        Assert.Equal("body", located);
+        Assert.Contains("[Json]", d.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // What a setter cannot be, each reported at the construct with a message that names it.
     [Theory]
     [InlineData(
@@ -418,32 +493,37 @@ public class LinqUpdateTests
         "Sql.Table<AgentSessionEntity>().Where(s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc).SetProperty(s => s.Note, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, s => s.Note))",
         "ZAO102",
         "s.Note",
-        "'s.Note' set into the [Json] 'Payload', rather than a parameter, a constant, null or another [Json] column, is not supported in a [LinqCommand] chain")]
+        "'Note' set into the jsonb 'Payload', rather than a parameter, a constant, null or another jsonb column, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().Where(s => Sql.Table<SkillEntity>().Where(k => k.Id == doc).Select(k => k.Id).Contains(s.Note!)).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().WhereIf(doc != null, s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().Where(s => s.Snapshot == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the [Json] 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        "Sql.Table<NoteEntity>().ExecuteUpdate(set => set.SetProperty(n => n.Body, n => n.Title))",
+        "ZAO102",
+        "n.Title",
+        "'Title' set into the jsonb 'Body', rather than a parameter, a constant, null or another jsonb column, is not supported in a [LinqCommand] chain")]
     public void Setter_reports(string chain, string id, string located, string message)
     {
         var (d, at) = Single(Repo + """

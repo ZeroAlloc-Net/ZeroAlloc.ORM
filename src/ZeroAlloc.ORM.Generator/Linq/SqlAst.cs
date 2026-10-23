@@ -158,7 +158,13 @@ internal sealed record SqlUpdateStatement(
 /// A column of the row, a companion parameter, a literal, or a <see cref="SqlArithmeticExpression"/>
 /// over those.
 /// </param>
-internal sealed record SqlSetter(SqlMemberExpression Column, SqlExpression Value);
+/// <param name="ColumnJson">
+/// The target is a string marked <c>[Json]</c> on its property or on the record constructor
+/// parameter that feeds it. The binder also counts a map's <c>Json = true</c>; either makes the
+/// column jsonb, see <see cref="JsonSetters"/>.
+/// </param>
+/// <param name="ValueJson">The same for a column of the row the value copies; false for any other value.</param>
+internal sealed record SqlSetter(SqlMemberExpression Column, SqlExpression Value, bool ColumnJson = false, bool ValueJson = false);
 
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>

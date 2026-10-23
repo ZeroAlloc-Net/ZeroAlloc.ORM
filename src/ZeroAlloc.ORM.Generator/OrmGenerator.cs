@@ -135,7 +135,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var linqQueryMethods = LinqQueryMethods(context, entityMaps);
 
         // [LinqCommand] -- the same for a write: the SQL comes from a chain ending in
-        // ExecuteDelete, and the method takes the [Command] non-query path.
+        // ExecuteDelete or ExecuteUpdate, and the method takes the [Command] non-query path.
         var linqCommandMethods = LinqCommandMethods(context, entityMaps);
 
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
@@ -1389,11 +1389,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
                 }
 
-                // A string marked [Json] binds as jsonb, which only Npgsql can send. So does one a
-                // [LinqCommand] update sets into a [Json] column.
-                var isJson = !isCt && (IsJsonString(p, p.Type)
-                    || (linq is not null && p.Type.SpecialType == SpecialType.System_String
-                        && linq.JsonParameters.Contains(p.Name, StringComparer.Ordinal)));
+                // A string marked [Json] binds as jsonb, which only Npgsql can send. One a
+                // [LinqCommand] update sets into a jsonb column is switched when bound to the maps.
+                var isJson = !isCt && IsJsonString(p, p.Type);
                 if (isJson)
                 {
                     diagnostics.Add(JsonRequiresNpgsql(p.Name, LocationInfo.From(p.Locations.FirstOrDefault())));
@@ -4974,7 +4972,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
     // Whether a value binds as jsonb: it carries [Json] and is a string. [Json] on any
     // other type is ZAO083, reported by its own pipeline, and binds as it would unmarked.
-    internal static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
+    private static bool IsJsonString(ISymbol symbol, ITypeSymbol type)
         => type.SpecialType == SpecialType.System_String && HasJsonAttribute(symbol);
 
     // A composite member binds through the property named exactly like the ctor
@@ -4996,7 +4994,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // parameter that feeds it in the constructor the row materializes through. The
     // parameter maps to the property case-insensitively, as a DomainEntity's ctor
     // parameters map to its columns, so a class's `doc` feeds `Doc`.
-    private static bool IsJsonRowProperty(INamedTypeSymbol? rowType, IPropertySymbol property)
+    internal static bool IsJsonRowProperty(INamedTypeSymbol? rowType, IPropertySymbol property)
     {
         if (property.Type.SpecialType != SpecialType.System_String) return false;
         if (HasJsonAttribute(property)) return true;

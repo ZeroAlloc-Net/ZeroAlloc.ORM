@@ -72,7 +72,7 @@ internal static class TaskMap;
   `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
 - A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
   leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
-  combined with `Column`, `EnumAsString` or `DateTimeStorage`. Either way a wrong guess fails the
+  combined with `Column`, `EnumAsString`, `DateTimeStorage` or `Json`. Either way a wrong guess fails the
   build with ZAO105, and one attribute fixes it:
 
   ```csharp
@@ -93,6 +93,12 @@ internal static class TaskMap;
   `DateTimeStorage.Timestamp` marks one `timestamp` column under a `TimestampTz` default.
   A `DateTimeStorage` of `Timestamp` or `TimestampTz` on a property that is not a `DateTime` or
   `DateTime?` reports ZAO106.
+- A `string` property stored as a `jsonb` document is declared with
+  `[ColumnMap(nameof(E.P), Json = true)]`, so the domain class needs no attribute. A `[LinqCommand]`
+  update then binds the value it sets into the column as `jsonb`, see
+  [Set-based writes](#set-based-writes). `[Json]` on the property, or on the record constructor
+  parameter that feeds it, says the same. A jsonb column reads as a string either way. `Json` on a
+  property that is not a `string` reports ZAO106.
 
   ```csharp
   // EF Core's Npgsql default
@@ -110,7 +116,7 @@ owner's table. `[OwnedMap(nameof(E.P))]` declares one, and each public readable 
 of the owned type that holds a value becomes a column, by the same rules as the entity's own
 properties. The column name is EF Core's default, `{Owner}_{Property}`, such as `Location_StartLine`.
 A `[ColumnMap]` with a dotted path, `Owner.Property`, overrides it and sets `EnumAsString`,
-`DateTimeStorage` or `Ignore` for the member as for any column:
+`DateTimeStorage`, `Json` or `Ignore` for the member as for any column:
 
 ```csharp
 public sealed class CodeAnalysisRequest
@@ -845,9 +851,11 @@ the row:
   into a column stored by name and compared with one stored as an integer reports
   [ZAO111](../diagnostics/ZAO111.md). An enum column set from another column that stores the enum the
   other way reports ZAO102.
-- A `[Json]` column takes a parameter, which binds as `jsonb`, a constant, `null` or another `[Json]`
-  column. That parameter may not appear in a condition or a non-`[Json]` setter as well, which reports
-  ZAO102: it would bind as `jsonb` there too.
+- A jsonb column is one the map declares with `[ColumnMap(nameof(E.P), Json = true)]`, or whose
+  property, or record constructor parameter, carries `[Json]`; a domain class needs no attribute. It
+  takes a parameter, which binds as `jsonb` without a marker of its own, a constant, `null` or another
+  jsonb column. Another column reports ZAO102. That parameter may not appear in a condition or in a
+  setter of another column as well, which reports ZAO102: it would bind as `jsonb` there too.
 - A `DateTime` parameter binds by its `DateTimeKind`, as in `[Command]`. The map's `DateTimeStorage`
   does not decide it yet; see [#403](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/403).
 
@@ -928,8 +936,10 @@ The rules for `xmin`, by either form:
 - It reads in a projection, also in a tuple element or through a join, into a `uint`.
 - Anything else reports ZAO102: an ordering, `<` or `>`, arithmetic, a comparison with a constant or a
   column, or `xmin` as a setter's target or value. A `uint` parameter compared with `xmin` may not be
-  used anywhere else in the chain. `uint` is supported for `xmin` only, so a `uint` parameter compared
-  with any other column reports ZAO102.
+  used anywhere else in the chain. `uint` is supported for `xmin` only: a `uint` parameter compared
+  with a `uint` column not mapped to `xmin` reports ZAO102, and one compared with a column of another
+  type, such as an `int`, is the core's [ZAO041](../diagnostics/ZAO041.md), a parameter type it
+  cannot bind.
 - PostgreSQL sets `xmin` on every write, so there is nothing to set. A failed guarded write leaves it
   as it was.
 
@@ -1122,7 +1132,7 @@ the row, in a projection, before it.
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
-| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, or an owned property whose type has no properties to map. |
+| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, `Json` on a non-`string`, or an owned property whose type has no properties to map. |
 | [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |

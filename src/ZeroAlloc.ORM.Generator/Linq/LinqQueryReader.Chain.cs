@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -69,9 +68,6 @@ internal static partial class LinqQueryReader
 
         // An ExecuteUpdate's SetProperty calls, in written order.
         public ImmutableArray<SqlSetter>.Builder Setters { get; } = ImmutableArray.CreateBuilder<SqlSetter>();
-
-        // The positions in Setters of those that write a [Json] column.
-        public List<int> JsonSetters { get; } = new();
 
         // The row lock; None without one.
         public SqlRowLock Lock { get; set; }

@@ -30,6 +30,12 @@ internal sealed partial class LinqUpdateRepo(IAsyncDbConnection connection)
     [LinqCommand(nameof(RecordOutcomeQuery))]
     public partial Task<int> RecordOutcomeAsync(Guid id, string url, string? pullRequestUrl, string? validation, CancellationToken ct);
 
+    [LinqCommand(nameof(SetMetadataQuery))]
+    public partial Task<int> SetMetadataAsync(Guid id, string? metadata, CancellationToken ct);
+
+    [LinqQuery(nameof(MetadataQuery))]
+    public partial Task<MetadataLine?> GetMetadataAsync(Guid id, CancellationToken ct);
+
     [LinqQuery(nameof(SessionQuery))]
     public partial Task<AgentSessionLine?> GetAsync(Guid id, CancellationToken ct);
 
@@ -71,6 +77,12 @@ internal sealed partial class LinqUpdateRepo(IAsyncDbConnection connection)
                 .SetProperty(r => r.Repository.Url, url)
                 .SetProperty(r => r.Outcome!.PullRequestUrl, pullRequestUrl)
                 .SetProperty(r => r.Outcome!.ValidationResult, validation));
+
+    private static int SetMetadataQuery(Guid id, string? metadata) =>
+        Sql.Table<AgentSessionEntity>().Where(s => s.Id == id).ExecuteUpdate(set => set.SetProperty(s => s.Metadata, metadata));
+
+    private static IQuery<MetadataLine> MetadataQuery(Guid id) =>
+        Sql.Table<AgentSessionEntity>().Where(s => s.Id == id).Select(s => new MetadataLine(s.Metadata));
 
     private static IQuery<AgentSessionLine> SessionQuery(Guid id) =>
         Sql.Table<AgentSessionEntity>()

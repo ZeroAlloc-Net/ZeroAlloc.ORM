@@ -98,7 +98,8 @@ internal static class LinqSchema
             "LastActivityAt" timestamptz NOT NULL,
             "TurnCount" int NOT NULL,
             "TotalInputTokens" bigint NOT NULL,
-            "EndedAt" timestamptz NULL
+            "EndedAt" timestamptz NULL,
+            "Metadata" jsonb NULL
         );
         CREATE TABLE "VersionedDocuments" (
             "Id" uuid PRIMARY KEY,

@@ -326,6 +326,10 @@ internal sealed class SqlNameScope
     /// <summary>Records a diagnostic the render found, such as an enum value with no name to compare by.</summary>
     public void Report(DiagnosticInfo diagnostic) => _diagnostics.Add(diagnostic);
 
+    /// <summary>Whether the member's <c>[ColumnMap]</c> declares its column a jsonb document, <c>Json = true</c>.</summary>
+    public bool IsJson(SqlMemberExpression member)
+        => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column) && column.Json;
+
     /// <summary>Whether the member maps to a column that stores an enum as its member name.</summary>
     public bool IsEnumAsString(SqlMemberExpression member)
         => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column) && column.EnumAsString;

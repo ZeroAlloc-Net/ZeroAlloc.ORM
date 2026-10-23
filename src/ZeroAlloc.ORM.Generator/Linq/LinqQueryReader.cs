@@ -116,7 +116,6 @@ internal static partial class LinqQueryReader
             new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()))
         {
             LiftedProjections = new EquatableArray<LinqLiftedProjection>(context.LiftedProjections.ToImmutableArray()),
-            JsonParameters = new EquatableArray<string>(context.JsonParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
             XidParameters = new EquatableArray<string>(context.XidParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
             XminProjections = new EquatableArray<LinqXminProjection>(context.XminProjections.ToImmutableArray()),
         };
@@ -271,10 +270,6 @@ internal static partial class LinqQueryReader
 
         // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate; null for a query.
         public string? WriteTerminal { get; init; }
-
-        // Value parameters, by C# name, that an ExecuteUpdate sets into a [Json] column: they bind
-        // as jsonb, as a [Json] parameter does.
-        public HashSet<string> JsonParameters { get; } = new(StringComparer.Ordinal);
 
         // Value parameters, by C# name, of type uint compared with xmin: they bind as xid.
         public HashSet<string> XidParameters { get; } = new(StringComparer.Ordinal);

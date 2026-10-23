@@ -66,12 +66,6 @@ internal sealed record LinqTranslation(
     public EquatableArray<LinqLiftedProjection> LiftedProjections { get; init; }
 
     /// <summary>
-    /// The C# names of the value parameters an <c>ExecuteUpdate</c> sets into a <c>[Json]</c>
-    /// column, in ordinal order: they bind as jsonb, as a <c>[Json]</c> parameter does.
-    /// </summary>
-    public EquatableArray<string> JsonParameters { get; init; }
-
-    /// <summary>
     /// The C# names of the <c>uint</c> value parameters compared with xmin, through
     /// <c>Sql.Xmin</c> or a <c>uint</c> property the binder checks maps to xmin, sorted by
     /// name: they bind as <c>xid</c>.
@@ -136,6 +130,12 @@ internal sealed record LinqBoundQuery(
 {
     /// <summary>Each statement's rendered SQL, in order; <see cref="Sql"/> is these joined.</summary>
     public EquatableArray<string> Statements { get; init; }
+
+    /// <summary>
+    /// The parameters an UPDATE sets into a jsonb column, by map or by <c>[Json]</c>, each at its
+    /// first such setter: they bind as jsonb, as a <c>[Json]</c> parameter does.
+    /// </summary>
+    public EquatableArray<SqlParameterExpression> JsonParameters { get; init; }
 }
 
 /// <summary>

@@ -38,7 +38,7 @@ internal static class EntityMapReader
         var order = new List<string>();
         var properties = ReadableProperties(entity, order);
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
-        var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)>(StringComparer.Ordinal);
+        var overrides = new Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage, bool Json)>(StringComparer.Ordinal);
         var overrideLocations = new Dictionary<string, LocationInfo?>(StringComparer.Ordinal);
         var entityName = entity.ToDisplayString();
         var rejectedOwners = new HashSet<string>(StringComparer.Ordinal);
@@ -69,6 +69,7 @@ internal static class EntityMapReader
             var ignore = false;
             var storageSet = false;
             var dateTimeStorage = 0;
+            var json = false;
             foreach (var named in attribute.NamedArguments)
             {
                 if (string.Equals(named.Key, "Column", StringComparison.Ordinal))
@@ -91,6 +92,11 @@ internal static class EntityMapReader
                     storageSet = true;
                     dateTimeStorage = named.Value.Value is int value ? value : 0;
                 }
+                else if (string.Equals(named.Key, "Json", StringComparison.Ordinal))
+                {
+                    storageSet = true;
+                    json = named.Value.Value is true;
+                }
             }
 
             var isDateTime = IsDateTime(property.Type);
@@ -98,7 +104,8 @@ internal static class EntityMapReader
                 column,
                 enumAsString && IsEnum(property.Type),
                 ignore,
-                isDateTime ? StorageOf(dateTimeStorage) : DateTimeColumnStorage.None);
+                isDateTime ? StorageOf(dateTimeStorage) : DateTimeColumnStorage.None,
+                json && property.Type.SpecialType == SpecialType.System_String);
             overrideLocations[propertyName] = location;
 
             if (ignore)
@@ -107,7 +114,7 @@ internal static class EntityMapReader
                 if (storageSet)
                 {
                     diagnostics.Add(Invalid(
-                        $"Ignore is set on '{propertyName}' of {entityName} together with Column, EnumAsString or DateTimeStorage; an ignored property has no column",
+                        $"Ignore is set on '{propertyName}' of {entityName} together with Column, EnumAsString, DateTimeStorage or Json; an ignored property has no column",
                         location));
                 }
             }
@@ -126,6 +133,13 @@ internal static class EntityMapReader
                 {
                     diagnostics.Add(Invalid(
                         $"EnumAsString is set on '{propertyName}' of {entityName}, which is not an enum",
+                        location));
+                }
+
+                if (json && property.Type.SpecialType != SpecialType.System_String)
+                {
+                    diagnostics.Add(Invalid(
+                        $"Json is set on '{propertyName}' of {entityName}, which is not a string",
                         location));
                 }
 
@@ -213,7 +227,7 @@ internal static class EntityMapReader
     // property without one is a column when it holds a value.
     private static void AddColumn(
         ImmutableArray<ColumnMapModel>.Builder columns,
-        Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage)> overrides,
+        Dictionary<string, (string Column, bool EnumAsString, bool Ignore, DateTimeColumnStorage DateTimeStorage, bool Json)> overrides,
         string? owner,
         string name,
         IPropertySymbol property,
@@ -223,7 +237,7 @@ internal static class EntityMapReader
         if (overrides.TryGetValue(path, out var o))
         {
             if (!o.Ignore)
-                columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString, o.DateTimeStorage, owner));
+                columns.Add(new ColumnMapModel(name, o.Column, o.EnumAsString, o.DateTimeStorage, owner, o.Json));
         }
         else if (IsStored(property))
         {

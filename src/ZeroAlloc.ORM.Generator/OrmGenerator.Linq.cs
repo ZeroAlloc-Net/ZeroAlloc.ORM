@@ -94,7 +94,6 @@ public sealed partial class OrmGenerator
             new LinqOverrides(translation.Facets, translation.SourceComment)
             {
                 NoRowsMessage = isCommand && ThrowsOnNoRows(ctx) ? NoRowsMessage(ctx) : null,
-                JsonParameters = translation.JsonParameters,
                 XidParameters = translation.XidParameters,
             });
         if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
@@ -229,6 +228,7 @@ public sealed partial class OrmGenerator
                 LinqStatements = bound.Statements,
             };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
+        method = BindJson(method, bound.JsonParameters);
         method = UnbindUnreferenced(method, ReferencedParameters(statements));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
     }
@@ -335,6 +335,40 @@ public sealed partial class OrmGenerator
         {
             MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
             DbTypeChecks = new EquatableArray<DbTypeCheck>(checks.ToImmutable()),
+        };
+    }
+
+    // A string parameter a [LinqCommand] update sets into a jsonb column binds as jsonb, the way a
+    // [Json] parameter does, whether the map or an attribute on the entity made the column jsonb.
+    // As for a [Json] parameter it is a PostgreSQL-only usage, for ZAO084, and needs Npgsql,
+    // ZAO082, reported at the setter's value since the method's parameter carries no marker.
+    private static QueryMethodModel BindJson(QueryMethodModel method, EquatableArray<SqlParameterExpression> json)
+    {
+        if (json.Length == 0) return method;
+        var parameters = method.MethodParameters.Values.ToBuilder();
+        var usages = method.PostgresOnlyUsages.Values.IsDefault
+            ? ImmutableArray.CreateBuilder<PostgresOnlyUsage>()
+            : method.PostgresOnlyUsages.Values.ToBuilder();
+        var diagnostics = method.Diagnostics.Values.IsDefault
+            ? ImmutableArray.CreateBuilder<DiagnosticInfo>()
+            : method.Diagnostics.Values.ToBuilder();
+        foreach (var setter in json)
+        {
+            for (var i = 0; i < parameters.Count; i++)
+            {
+                var parameter = parameters[i];
+                if (parameter.IsJson || !string.Equals(parameter.Name, setter.ClrName, System.StringComparison.Ordinal)) continue;
+                parameters[i] = parameter with { IsJson = true };
+                var usage = JsonRequiresNpgsql(parameter.Name, setter.Location);
+                usages.Add(new PostgresOnlyUsage(usage.MessageArgs.Values[0], usage.MessageArgs.Values[1], usage.Location));
+                if (!method.HasNpgsql) diagnostics.Add(usage);
+            }
+        }
+        return method with
+        {
+            MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
+            PostgresOnlyUsages = new EquatableArray<PostgresOnlyUsage>(usages.ToImmutable()),
+            Diagnostics = new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
         };
     }
 

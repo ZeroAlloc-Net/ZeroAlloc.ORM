@@ -82,6 +82,12 @@ internal static class LinqQueryBinder
             if (scopes[projection.Statement].Names.IsOwned(projection.Owner, projection.SourceAlias))
                 diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(projection.Reason, projection.Location));
         }
+        var jsonParameters = ImmutableArray.CreateBuilder<SqlParameterExpression>();
+        for (var i = 0; i < statements.Length; i++)
+        {
+            if (statements[i] is SqlUpdateStatement update)
+                jsonParameters.AddRange(JsonSetters.Check(update, scopes[i].Names, diagnostics));
+        }
         if (diagnostics.Count > 0)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
 
@@ -98,6 +104,7 @@ internal static class LinqQueryBinder
             default)
         {
             Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
+            JsonParameters = new EquatableArray<SqlParameterExpression>(jsonParameters.ToImmutable()),
         };
     }
 

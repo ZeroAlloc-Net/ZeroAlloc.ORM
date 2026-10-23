@@ -10,4 +10,8 @@ public sealed class AgentSessionEntity
     public int TurnCount { get; private set; }
     public long TotalInputTokens { get; private set; }
     public DateTimeOffset? EndedAt { get; private set; }
+
+    // A jsonb document, marked on the property itself rather than in the map.
+    [Json]
+    public string? Metadata { get; private set; }
 }

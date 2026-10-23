@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using ZeroAlloc.ORM.Generator.Model;
@@ -23,45 +21,7 @@ internal static partial class LinqQueryReader
         if (!ReadSetterCalls(body, calls, chain, context)) return false;
         if (chain.Setters.Count == 0)
             return Unsupported(invocation, "'ExecuteUpdate' without a SetProperty", context);
-        return CheckJsonParameters(chain, context);
-    }
-
-    // A parameter set into a [Json] column binds as jsonb wherever the statement names it. Named
-    // in a condition or in another setter too, it would meet a text or other column there as
-    // jsonb, which PostgreSQL rejects at run time. The conditions are read already: they come
-    // before the write.
-    //
-    // Conservative on purpose: a condition that compares the parameter with another [Json]
-    // column, `t.Snapshot == doc`, would bind as jsonb consistently and work, yet is rejected
-    // too. Telling it apart means knowing every column each use meets, nested subqueries and
-    // WhereIf included, which a jsonb document compared for equality does not justify; the
-    // predicate side is tracked as #402.
-    private static bool CheckJsonParameters(ChainBuilder chain, ReaderContext context)
-    {
-        var elsewhere = SqlParameterReferences.Collect(chain.Predicates);
-        for (var i = 0; i < chain.Setters.Count; i++)
-        {
-            if (!chain.JsonSetters.Contains(i)) elsewhere.UnionWith(SqlParameterReferences.Collect(new[] { chain.Setters[i].Value }));
-        }
-
-        var valid = true;
-        var reported = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var i in chain.JsonSetters)
-        {
-            var setter = chain.Setters[i];
-            if (setter.Value is not SqlParameterExpression parameter
-                || !elsewhere.Contains(parameter.Name)
-                || !reported.Add(parameter.Name))
-            {
-                continue;
-            }
-            context.Report(LinqDiagnostics.UnsupportedAt(
-                "Parameter '" + parameter.ClrName + "', which binds as jsonb for the [Json] '" + setter.Column.Member
-                    + "', used in a condition or another setter as well,",
-                parameter.Location));
-            valid = false;
-        }
-        return valid;
+        return true;
     }
 
     // The receiver first, so the setters keep the order they are written in.
@@ -121,37 +81,17 @@ internal static partial class LinqQueryReader
         }
         if (value is null) return false;
 
-        if (json)
-        {
-            // A jsonb column takes a document: a parameter, which binds as jsonb, a constant or
-            // null, which PostgreSQL types from the column, or another [Json] column. A text
-            // column's value would be rejected at run time, 42804.
-            var document = value is SqlParameterExpression or SqlLiteralExpression
-                || (value is SqlMemberExpression
-                    && valueOperation is IPropertyReferenceOperation { Property: var source }
-                    && OrmGenerator.IsJsonString(source, source.Type));
-            if (!document)
-            {
-                context.Report(LinqDiagnostics.Unsupported(
-                    "'" + valueOperation.Syntax + "' set into the [Json] '" + target.Member
-                        + "', rather than a parameter, a constant, null or another [Json] column,",
-                    valueOperation.Syntax.GetLocation()));
-                return false;
-            }
-
-            // The parameter binds as jsonb, as a [Json] parameter would.
-            if (value is SqlParameterExpression parameter) context.JsonParameters.Add(parameter.ClrName);
-            chain.JsonSetters.Add(chain.Setters.Count);
-        }
-
-        chain.Setters.Add(new SqlSetter(target, value));
+        // Whether the target, or a column the value copies, is a jsonb document by its own
+        // attribute; the binder adds what the map declares, and checks the pair there.
+        var valueJson = value is SqlMemberExpression && IsJsonMember(valueOperation);
+        chain.Setters.Add(new SqlSetter(target, value, json, valueJson));
         return true;
     }
 
     // The column a setter writes: a member of the row, which the map resolves when the statement
     // is bound, an owned member included. A member whose type is an object goes there whole, for
     // the map to decide: one plain column, or an owned object or a composite, ZAO102. `json` is
-    // whether the member is a string marked [Json], a jsonb document.
+    // whether its attribute declares the member a jsonb document; see IsJsonMember.
     private static SqlMemberExpression? ReadSetterTarget(IOperation op, IParameterSymbol row, ReaderContext context, out bool json)
     {
         json = false;
@@ -170,7 +110,7 @@ internal static partial class LinqQueryReader
             return null;
         }
 
-        json = op is IPropertyReferenceOperation { Property: var property } && OrmGenerator.IsJsonString(property, property.Type);
+        json = IsJsonMember(op);
         var whole = WholeObjectMemberType(op, row, context);
         return new SqlMemberExpression(
             name,
@@ -181,4 +121,11 @@ internal static partial class LinqQueryReader
                 ? null
                 : new SqlWholeObject(op.Syntax.ToString(), whole.ToDisplayString(), IsComposite(whole, context.Conventions) ? whole.ToDisplayString() : null));
     }
+
+    // A string property marked [Json] on itself, or on the constructor parameter that feeds it,
+    // as a positional record's `[Json] string? Body` is. A [ColumnMap] with Json = true says the
+    // same, which only the binder sees.
+    private static bool IsJsonMember(IOperation op)
+        => op is IPropertyReferenceOperation { Property: var property }
+            && OrmGenerator.IsJsonRowProperty(property.ContainingType, property);
 }

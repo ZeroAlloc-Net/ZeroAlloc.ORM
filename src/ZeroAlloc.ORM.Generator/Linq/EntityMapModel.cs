@@ -41,12 +41,17 @@ internal sealed record EntityMapModel(
 /// For a member of an owned object, the entity property an <c>[OwnedMap]</c> declares owned, such
 /// as <c>Repository</c>; null for a property of the entity itself.
 /// </param>
+/// <param name="Json">
+/// Whether its <c>[ColumnMap]</c> declares the string property a <c>jsonb</c> document, so a value a
+/// <c>[LinqCommand]</c> update sets into it binds as jsonb.
+/// </param>
 internal sealed record ColumnMapModel(
     string Property,
     string Column,
     bool EnumAsString,
     DateTimeColumnStorage DateTimeStorage = DateTimeColumnStorage.None,
-    string? Owner = null) : IEquatable<ColumnMapModel>
+    string? Owner = null,
+    bool Json = false) : IEquatable<ColumnMapModel>
 {
     /// <summary>
     /// The member path a query reads the column by: the property name, or <c>Owner.Property</c>
