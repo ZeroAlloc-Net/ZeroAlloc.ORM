@@ -30,6 +30,14 @@ static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQue
 static ZeroAlloc.ORM.Linq.QueryOperators.Average<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, long?>! selector) -> ZeroAlloc.ORM.Linq.IQuery<double?>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Contains<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, T value) -> bool
 static ZeroAlloc.ORM.Linq.QueryOperators.Count<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<int>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteDelete<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> int
+static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteUpdate<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!, ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!>! setters) -> int
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdate<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdate<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateNoWait<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateNoWait<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateSkipLocked<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateSkipLocked<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
 static ZeroAlloc.ORM.Linq.QueryOperators.GroupBy<T, TKey>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<T, TKey>! key) -> ZeroAlloc.ORM.Linq.IQuery<ZeroAlloc.ORM.Linq.IGroup<TKey, T>!>!
 static ZeroAlloc.ORM.Linq.QueryOperators.Join<TOuter, TInner, TKey, TResult>(this ZeroAlloc.ORM.Linq.IQuery<TOuter>! outer, ZeroAlloc.ORM.Linq.IQuery<TInner>! inner, System.Func<TOuter, TKey>! outerKey, System.Func<TInner, TKey>! innerKey, System.Func<TOuter, TInner, TResult>! result) -> ZeroAlloc.ORM.Linq.IQuery<TResult>!
 static ZeroAlloc.ORM.Linq.QueryOperators.LongCount<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<long>!
@@ -56,6 +64,7 @@ static ZeroAlloc.ORM.Linq.Sql.ILike(string? value, string? pattern) -> bool
 static ZeroAlloc.ORM.Linq.Sql.Row<T1, T2, T3>(T1 item1, T2 item2, T3 item3) -> ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>
 static ZeroAlloc.ORM.Linq.Sql.Row<T1, T2>(T1 item1, T2 item2) -> ZeroAlloc.ORM.Linq.SqlRow<T1, T2>
 static ZeroAlloc.ORM.Linq.Sql.Table<T>() -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.Sql.Xmin<T>(T row) -> uint
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>.operator <(ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> right) -> bool
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>.operator <=(ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> right) -> bool
 static ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>.operator >(ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> left, ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3> right) -> bool
@@ -69,10 +78,18 @@ ZeroAlloc.ORM.Linq.IGroup<TKey, T>
 ZeroAlloc.ORM.Linq.IGroup<TKey, T>.Key.get -> TKey
 ZeroAlloc.ORM.Linq.IOrderedQuery<T>
 ZeroAlloc.ORM.Linq.IQuery<T>
+ZeroAlloc.ORM.Linq.LinqCommandAttribute
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.Companion.get -> string!
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.LinqCommandAttribute(string! companion) -> void
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.get -> bool
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.init -> void
 ZeroAlloc.ORM.Linq.LinqQueryAttribute
 ZeroAlloc.ORM.Linq.LinqQueryAttribute.Companion.get -> string!
 ZeroAlloc.ORM.Linq.LinqQueryAttribute.LinqQueryAttribute(string! companion) -> void
 ZeroAlloc.ORM.Linq.QueryOperators
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>.SetProperty<TProperty>(System.Func<T, TProperty>! property, System.Func<T, TProperty>! value) -> ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>.SetProperty<TProperty>(System.Func<T, TProperty>! property, TProperty value) -> ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!
 ZeroAlloc.ORM.Linq.Sql
 ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>
 ZeroAlloc.ORM.Linq.SqlRow<T1, T2, T3>.SqlRow() -> void
