@@ -360,18 +360,21 @@ public class LinqConcurrencyTests
     }
 
     // Only xmin reads as a uint: a uint property the map leaves on a column of its own is no row
-    // version the projection can read.
-    [Fact]
-    public void Uint_column_other_than_xmin_projected_reports_ZAO107()
+    // version the projection can read, alone or as a tuple element, though a tuple companion
+    // reads every element with the method-wide xmin reader.
+    [Theory]
+    [InlineData(
+        "Task<List<TaskVersion>>",
+        "IQuery<TaskVersion>",
+        "Sql.Table<DocumentEntity>().Select(d => new TaskVersion(d.Id, d.Generation))")]
+    [InlineData(
+        "Task<(TaskVersion? Task, List<TaskVersion> Documents)>",
+        "(IQuery<TaskVersion>, IQuery<TaskVersion>)",
+        "(Sql.Table<TaskEntity>().Select(t => new TaskVersion(t.Id, t.RowVersion)), Sql.Table<DocumentEntity>().Select(d => new TaskVersion(d.Id, d.Generation)))")]
+    public void Uint_column_other_than_xmin_projected_reports_ZAO107(string returns, string companion, string chain)
     {
-        var (d, at) = Single(Repo + """
-                [LinqQuery(nameof(GenerationQuery))]
-                public partial Task<List<TaskVersion>> Run(CancellationToken ct);
-
-                private static IQuery<TaskVersion> GenerationQuery() =>
-                    Sql.Table<DocumentEntity>().Select(d => new TaskVersion(d.Id, d.Generation));
-            }
-            """);
+        var (d, at) = Single(Repo + "    [LinqQuery(nameof(GenerationQuery))]\n    public partial " + returns
+            + " Run(CancellationToken ct);\n\n    private static " + companion + " GenerationQuery() =>\n        " + chain + ";\n}\n");
 
         Assert.Equal("ZAO107", d.Id);
         Assert.Equal("d.Generation", at);
