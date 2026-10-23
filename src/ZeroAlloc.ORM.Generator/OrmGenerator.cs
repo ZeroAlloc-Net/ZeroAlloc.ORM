@@ -1876,7 +1876,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     return (EmitShape.SprocWithOutputParams, null, null, null, HasReturnValue: true, SprocOutputParams: sprocOutputs, BulkInsertMaterialization: null);
             }
 
-            var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext);
+            var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext, readsXmin);
             if (multi is not null)
                 return (EmitShape.MultiResultSet, null, null, multi, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Tuple shape but at least one element wasn't classifiable: fall through to
@@ -3582,7 +3582,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static MultiResultMaterializationModel? TryBuildMultiResultMaterialization(
         INamedTypeSymbol tupleType,
         bool returnsNullable,
-        ConventionContext conventionContext)
+        ConventionContext conventionContext,
+        bool readsXmin)
     {
         var elementsBuilder = ImmutableArray.CreateBuilder<MultiResultElement>(tupleType.TupleElements.Length);
         var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
@@ -3592,7 +3593,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         foreach (var field in tupleType.TupleElements)
         {
-            var element = TryClassifyTupleElement(field.Name, field.Type, conventionContext, typeDisplayFormat);
+            var element = TryClassifyTupleElement(field.Name, field.Type, conventionContext, typeDisplayFormat, readsXmin);
             if (element is null) return null;
             elementsBuilder.Add(element);
         }
@@ -3767,7 +3768,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 // Result position. Route through TryClassifyTupleElement so
                 // single-row / list / scalar shapes flow through unchanged.
                 var resultElement = TryClassifyTupleElement(
-                    field.Name, field.Type, conventionContext, typeDisplayFormat);
+                    field.Name, field.Type, conventionContext, typeDisplayFormat, readsXmin: false);
                 if (resultElement is null) return null;
                 resultBuilder.Add(resultElement);
                 orderBuilder.Add(new SprocTupleSlot(
@@ -3832,7 +3833,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         string tupleFieldName,
         ITypeSymbol elementType,
         ConventionContext conventionContext,
-        SymbolDisplayFormat typeDisplayFormat)
+        SymbolDisplayFormat typeDisplayFormat,
+        bool readsXmin)
     {
         // Strip the outer nullable annotation; per-element nullability flows via
         // IsNullable so the emit can wrap reads in IsDBNull guards.
@@ -3853,7 +3855,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
 
             // Inner element must materialize as a row — FlatRow or DomainEntity.
-            var flat = TryBuildFlatRowMaterialization(inner, conventionContext);
+            var flat = TryBuildFlatRowMaterialization(inner, conventionContext, readsXmin: readsXmin);
             if (flat is not null)
             {
                 return new MultiResultElement(
@@ -3883,7 +3885,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // (2/3) Row-kind: a single record or class instance per result set. Records take
         // the FlatRow positional path; classes with a single ctor take the DomainEntity
         // column-name path.
-        var rowFlat = TryBuildFlatRowMaterialization(unwrapped, conventionContext);
+        var rowFlat = TryBuildFlatRowMaterialization(unwrapped, conventionContext, readsXmin: readsXmin);
         if (rowFlat is not null)
         {
             return new MultiResultElement(

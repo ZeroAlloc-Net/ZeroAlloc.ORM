@@ -105,6 +105,47 @@ public sealed class PostgresLinqConcurrencyTests
         (await repo.GetTaskAsync(id, CancellationToken.None).ConfigureAwait(false))!.Title.Should().Be("Mine");
     }
 
+    // A task loaded with its executions in one tuple carries the RowVersion a guarded rename
+    // compares: it applies once, and the same RowVersion is stale after it.
+    [Fact]
+    public async Task Tuple_loaded_row_version_guards_rename()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqConcurrencyRepo(fx.Connection);
+        var seed = new LinqCommandRepo(fx.Connection);
+        var id = Guid.NewGuid();
+        await repo.InsertTaskAsync(id, "Draft", CancellationToken.None).ConfigureAwait(false);
+        await seed.InsertExecutionAsync(Guid.NewGuid(), id, CancellationToken.None).ConfigureAwait(false);
+        await seed.InsertExecutionAsync(Guid.NewGuid(), id, CancellationToken.None).ConfigureAwait(false);
+
+        var (task, executions) = await repo.GetTaskWithExecutionsAsync(id, CancellationToken.None).ConfigureAwait(false);
+        executions.Should().HaveCount(2);
+        task.Should().NotBeNull();
+        task!.RowVersion.Should().Be((await repo.GetTaskAsync(id, CancellationToken.None).ConfigureAwait(false))!.RowVersion);
+
+        await repo.RenameAsync(id, task.RowVersion, "Renamed", CancellationToken.None).ConfigureAwait(false);
+        (await repo.GetTaskAsync(id, CancellationToken.None).ConfigureAwait(false))!.Title.Should().Be("Renamed");
+
+        var stale = () => repo.RenameAsync(id, task.RowVersion, "Again", CancellationToken.None);
+        await stale.Should().ThrowAsync<ZeroAllocOrmConcurrencyException>().ConfigureAwait(false);
+    }
+
+    // != on xmin: a session reads as unchanged with its current xmin, and as changed once another
+    // writer updated it.
+    [Fact]
+    public async Task Xmin_not_equal_detects_a_change()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqConcurrencyRepo(fx.Connection);
+        var id = Guid.NewGuid();
+        await repo.InsertSessionAsync(id, CancellationToken.None).ConfigureAwait(false);
+        var read = (await repo.GetSessionAsync(id, CancellationToken.None).ConfigureAwait(false))!;
+
+        (await repo.ChangedSinceAsync(id, read.Version, CancellationToken.None).ConfigureAwait(false)).Should().BeFalse();
+        await repo.RecordTurnUnguardedAsync(id, CancellationToken.None).ConfigureAwait(false);
+        (await repo.ChangedSinceAsync(id, read.Version, CancellationToken.None).ConfigureAwait(false)).Should().BeTrue();
+    }
+
     // A bytea row version compares by value and the guarded update writes the next one: a second
     // writer that saved first leaves the first writer's version stale.
     [Fact]

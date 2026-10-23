@@ -37,7 +37,8 @@ internal static partial class LinqQueryReader
     {
         var op = Unwrap(value);
         if (IsXminCall(op)) return ReadXmin((IInvocationOperation)op, row, context, out expression);
-        if (op is IBinaryOperation xminArithmetic && !op.ConstantValue.HasValue && ContainsXmin(xminArithmetic))
+        if (op is IBinaryOperation xminArithmetic && !op.ConstantValue.HasValue
+            && (ContainsXmin(xminArithmetic) || HasUintRowMember(xminArithmetic, row, context)))
         {
             expression = null;
             ReportXminArithmetic(xminArithmetic, context);
@@ -131,7 +132,7 @@ internal static partial class LinqQueryReader
     // whose NULL operand makes the result NULL as in C#. Each operand is a setter value itself.
     private static SqlArithmeticExpression? ReadArithmetic(IBinaryOperation binary, IParameterSymbol? row, ReaderContext context)
     {
-        if (ContainsXmin(binary))
+        if (ContainsXmin(binary) || HasUintRowMember(binary, row, context))
         {
             ReportXminArithmetic(binary, context);
             return null;

@@ -42,6 +42,7 @@ public class LinqConcurrencyTests
             public string Title { get; private set; } = "";
             public int Status { get; private set; }
             public uint RowVersion { get; private set; }
+            public long Effort { get; private set; }
         }
 
         public sealed class DocumentEntity
@@ -156,6 +157,76 @@ public class LinqConcurrencyTests
             "__np_rowVersion.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Xid;");
     }
 
+    // Daedalus loads a task with its executions in one tuple, then renames the task guarded by
+    // the RowVersion it read: each tuple element reads xmin as a uint, mapped or through Sql.Xmin.
+    [Fact]
+    public void Xmin_read_in_tuple_companion()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqQuery(nameof(WithSessionsQuery))]
+                public partial Task<(TaskVersion? Task, List<SessionVersion> Sessions)> WithSessions(Guid id, CancellationToken ct);
+
+                private static (IQuery<TaskVersion>, IQuery<SessionVersion>) WithSessionsQuery(Guid id) =>
+                    (Sql.Table<TaskEntity>().Where(t => t.Id == id).Select(t => new TaskVersion(t.Id, t.RowVersion)),
+                     Sql.Table<AgentSessionEntity>().Where(s => s.Id == id).Select(s => new SessionVersion(s.Id, s.TurnCount, Sql.Xmin(s))));
+            }
+            """,
+            "SELECT \"Id\", \"xmin\" FROM \"Tasks\" WHERE \"Id\" = @id LIMIT 1",
+            "SELECT \"Id\", \"TurnCount\", \"xmin\" FROM \"AgentSessions\" WHERE \"Id\" = @id",
+            "GetFieldValue<uint>(2)");
+    }
+
+    // xmin compares with an xid parameter in every condition: a WhereIf, the Where of a Contains
+    // subquery, through Sql.Xmin or a mapped property, a guarded delete, and != for a row that
+    // changed since it was read.
+    [Fact]
+    public void Xmin_guards_in_conditions_and_deletes()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqCommand(nameof(DeleteIfQuery))]
+                public partial Task<int> DeleteIf(bool check, uint expected, CancellationToken ct);
+
+                [LinqCommand(nameof(DeleteTasksOfQuery))]
+                public partial Task<int> DeleteTasksOf(uint expected, CancellationToken ct);
+
+                [LinqCommand(nameof(DeleteSessionsOfQuery))]
+                public partial Task<int> DeleteSessionsOf(uint rowVersion, CancellationToken ct);
+
+                [LinqCommand(nameof(DeleteTaskQuery), ThrowOnNoRows = true)]
+                public partial Task DeleteTask(Guid id, uint rowVersion, CancellationToken ct);
+
+                [LinqQuery(nameof(ChangedQuery))]
+                public partial Task<bool> Changed(Guid id, uint seen, CancellationToken ct);
+
+                private static int DeleteIfQuery(bool check, uint expected) =>
+                    Sql.Table<AgentSessionEntity>().WhereIf(check, s => Sql.Xmin(s) == expected).ExecuteDelete();
+
+                private static int DeleteTasksOfQuery(uint expected) =>
+                    Sql.Table<TaskEntity>()
+                        .Where(t => Sql.Table<AgentSessionEntity>().Where(s => Sql.Xmin(s) == expected).Select(s => s.Id).Contains(t.Id))
+                        .ExecuteDelete();
+
+                private static int DeleteSessionsOfQuery(uint rowVersion) =>
+                    Sql.Table<AgentSessionEntity>()
+                        .Where(s => Sql.Table<TaskEntity>().Where(t => t.RowVersion == rowVersion).Select(t => t.Id).Contains(s.Id))
+                        .ExecuteDelete();
+
+                private static int DeleteTaskQuery(Guid id, uint rowVersion) =>
+                    Sql.Table<TaskEntity>().Where(t => t.Id == id && t.RowVersion == rowVersion).ExecuteDelete();
+
+                private static IQuery<bool> ChangedQuery(Guid id, uint seen) =>
+                    Sql.Table<AgentSessionEntity>().Where(s => s.Id == id && Sql.Xmin(s) != seen).Any();
+            }
+            """,
+            "DELETE FROM \"AgentSessions\" WHERE ((@check) IS NOT TRUE OR (\"xmin\" = @expected))",
+            "DELETE FROM \"Tasks\" WHERE \"Id\" IN (SELECT \"Id\" FROM \"AgentSessions\" WHERE \"xmin\" = @expected)",
+            "DELETE FROM \"AgentSessions\" WHERE \"Id\" IN (SELECT \"Id\" FROM \"Tasks\" WHERE \"xmin\" = @rowVersion)",
+            "DELETE FROM \"Tasks\" WHERE \"Id\" = @id AND \"xmin\" = @rowVersion",
+            "SELECT EXISTS (SELECT 1 FROM \"AgentSessions\" WHERE \"Id\" = @id AND \"xmin\" <> @seen)");
+    }
+
     // A byte[] row version PostgreSQL does not generate: the guard compares it as bytea, and the
     // same update writes the next version the application chose.
     [Fact]
@@ -229,7 +300,17 @@ public class LinqConcurrencyTests
         true,
         "Sql.Table<DocumentEntity>().Where(d => d.Generation == expected).ExecuteDelete()",
         "d.Generation",
-        "Comparing 'Generation', whose column Generation is not xmin, with 'expected', a uint parameter that binds as an xmin transaction id, is not supported in a [LinqCommand] chain")]
+        "'expected' is a uint parameter; uint binds only as xmin's transaction id, and 'Generation' is not xmin, so comparing them is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        true,
+        "Sql.Table<TaskEntity>().ExecuteUpdate(set => set.SetProperty(t => t.Effort, t => t.RowVersion + 1))",
+        "t.RowVersion + 1",
+        "'t.RowVersion + 1', since xmin is a transaction id, compared only for equality, is not supported in a [LinqCommand] chain")]
+    [InlineData(
+        true,
+        "Sql.Table<TaskEntity>().Where(t => t.RowVersion + 1 == expected).ExecuteDelete()",
+        "t.RowVersion + 1",
+        "'t.RowVersion + 1', since xmin is a transaction id, compared only for equality, is not supported in a [LinqCommand] chain")]
     public void Xmin_reports_ZAO102(bool command, string chain, string located, string message)
     {
         var method = command
@@ -382,6 +463,8 @@ public class LinqConcurrencyTests
         string expected1,
         string expected2,
         string? expected3 = null,
+        string? expected4 = null,
+        string? expected5 = null,
         [CallerFilePath] string testFilePath = "",
         [CallerMemberName] string testMethod = "")
     {
@@ -403,7 +486,10 @@ public class LinqConcurrencyTests
             .Replace("\\\"", "\"", StringComparison.Ordinal);
         Assert.Contains(expected1, generated, StringComparison.Ordinal);
         Assert.Contains(expected2, generated, StringComparison.Ordinal);
-        if (expected3 is not null) Assert.Contains(expected3, generated, StringComparison.Ordinal);
+        foreach (var expected in new[] { expected3, expected4, expected5 })
+        {
+            if (expected is not null) Assert.Contains(expected, generated, StringComparison.Ordinal);
+        }
 
         GeneratorSnapshot.Verify(result, testFilePath, testMethod);
     }

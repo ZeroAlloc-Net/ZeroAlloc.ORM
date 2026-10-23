@@ -34,6 +34,16 @@ internal static partial class LinqQueryReader
         _ => false,
     };
 
+    // Whether a binary operation has a uint row member among its operands, at any depth: only
+    // xmin is a uint column, through a property the map maps to it, so the arithmetic is over
+    // xmin as it is for Sql.Xmin. A column that is not xmin fails when bound regardless.
+    private static bool HasUintRowMember(IOperation op, IParameterSymbol? row, ReaderContext context) => Unwrap(op) switch
+    {
+        IBinaryOperation binary => HasUintRowMember(binary.LeftOperand, row, context) || HasUintRowMember(binary.RightOperand, row, context),
+        var unwrapped => unwrapped.Type?.SpecialType == SpecialType.System_UInt32
+            && TryReadRowMember(unwrapped, row, context, out _, out _, out _),
+    };
+
     // ZAO102 for xmin inside arithmetic, `Sql.Xmin(r) + 1`, in a setter or a condition.
     private static void ReportXminArithmetic(IBinaryOperation binary, ReaderContext context)
         => context.Report(LinqDiagnostics.Unsupported("'" + binary.Syntax + "', " + XminReason, binary.Syntax.GetLocation()));

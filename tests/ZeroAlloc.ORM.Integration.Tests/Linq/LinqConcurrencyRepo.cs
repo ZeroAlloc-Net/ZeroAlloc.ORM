@@ -42,6 +42,12 @@ internal sealed partial class LinqConcurrencyRepo(IAsyncDbConnection connection)
     [LinqCommand(nameof(RenameQuery), ThrowOnNoRows = true)]
     public partial Task RenameAsync(Guid id, uint rowVersion, string title, CancellationToken ct);
 
+    [LinqQuery(nameof(TaskWithExecutionsQuery))]
+    public partial Task<(TaskVersion? Task, List<ExecutionLine> Executions)> GetTaskWithExecutionsAsync(Guid id, CancellationToken ct);
+
+    [LinqQuery(nameof(ChangedQuery))]
+    public partial Task<bool> ChangedSinceAsync(Guid id, uint seen, CancellationToken ct);
+
     [LinqQuery(nameof(DocumentQuery))]
     public partial Task<DocumentVersion?> GetDocumentAsync(Guid id, CancellationToken ct);
 
@@ -72,6 +78,19 @@ internal sealed partial class LinqConcurrencyRepo(IAsyncDbConnection connection)
         Sql.Table<TaskEntity>()
             .Where(t => t.Id == id && t.RowVersion == rowVersion)
             .ExecuteUpdate(set => set.SetProperty(t => t.Title, title));
+
+    // Daedalus loads a task with its executions in one round trip, then guards a write with the
+    // RowVersion the tuple returned.
+    private static (IQuery<TaskVersion>, IQuery<ExecutionLine>) TaskWithExecutionsQuery(Guid id) =>
+        (Sql.Table<TaskEntity>().Where(t => t.Id == id).Select(t => new TaskVersion(t.Id, t.Title, t.RowVersion)),
+         Sql.Table<ExecutionEntity>()
+            .Where(e => e.TaskId == id)
+            .OrderBy(e => e.ExecutedAt)
+            .Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+
+    // Whether the session changed since its xmin was read: != on xmin.
+    private static IQuery<bool> ChangedQuery(Guid id, uint seen) =>
+        Sql.Table<AgentSessionEntity>().Where(s => s.Id == id && Sql.Xmin(s) != seen).Any();
 
     private static IQuery<DocumentVersion> DocumentQuery(Guid id) =>
         Sql.Table<VersionedDocumentEntity>()

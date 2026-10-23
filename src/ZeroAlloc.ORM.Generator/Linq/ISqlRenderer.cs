@@ -116,7 +116,8 @@ internal sealed class SqlNameScope
     /// <summary>
     /// Whether a member that maps to xmin renders without ZAO102: set by the render while it
     /// renders a statement's projection item or an == or != test with an xid parameter, the two
-    /// places xmin is read. Never set in an IN subquery's scope.
+    /// places xmin is read. An IN subquery's own WHERE reads such a test too; only the column
+    /// its Select picks is never xmin, since the projection allowance is a statement's alone.
     /// </summary>
     public bool XminAllowed { get; set; }
 

@@ -499,8 +499,8 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             if (other is SqlMemberExpression member && names.MappedColumn(member) is { } column && !SqlNameScope.IsXminColumn(column))
             {
                 names.Report(LinqDiagnostics.UnsupportedAt(
-                    "Comparing '" + member.Member + "', whose column " + column + " is not xmin, with '" + xid.ClrName
-                        + "', a uint parameter that binds as an xmin transaction id,",
+                    "'" + xid.ClrName + "' is a uint parameter; uint binds only as xmin's transaction id, and '"
+                        + member.Member + "' is not xmin, so comparing them",
                     member.Location));
             }
             names.XminAllowed = binary.Operator is SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual;
