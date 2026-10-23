@@ -2,8 +2,9 @@ namespace ZeroAlloc.ORM.Linq;
 
 /// <summary>
 /// The setters of an <see cref="QueryOperators.ExecuteUpdate{T}"/>, one <c>SET</c> item per
-/// <c>SetProperty</c>, in written order. Named as EF Core's, so a call site changes only its
-/// receiver. The generator reads the calls at build time; none of them run.
+/// <c>SetProperty</c>, in written order. Setters written as EF Core's <c>ExecuteUpdate</c> takes
+/// them, <c>set =&gt; set.SetProperty(...)</c>, keep compiling against it. The generator reads
+/// the calls at build time; none of them run.
 /// </summary>
 /// <typeparam name="T">The row type of the updated table.</typeparam>
 public sealed class SetPropertyCalls<T>

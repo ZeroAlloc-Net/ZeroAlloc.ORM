@@ -3,7 +3,7 @@ namespace ZeroAlloc.ORM.Linq;
 /// <summary>
 /// Marks a partial method whose SQL is a set-based write generated from a LINQ chain.
 /// <see cref="Companion"/> names a method in the same type that holds the chain, which ends in
-/// <c>ExecuteDelete()</c>; the companion is read at build time and never runs. The method returns
+/// <c>ExecuteDelete()</c> or <c>ExecuteUpdate(...)</c>; the companion is read at build time and never runs. The method returns
 /// <c>Task</c> or <c>ValueTask</c>, or <c>Task&lt;int&gt;</c> or <c>ValueTask&lt;int&gt;</c> for the
 /// number of rows affected.
 /// </summary>
