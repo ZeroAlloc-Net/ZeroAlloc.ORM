@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.9.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.8.0...v2.9.0) (2026-10-23)
+
+
+### Features
+
+* delete rows with a LinqCommand ExecuteDelete chain ([40e5b28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/40e5b28cb0254f173fb480d7217cc4fe2e4919d6))
+* guard LINQ writes with xmin and row-version columns ([40e5b28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/40e5b28cb0254f173fb480d7217cc4fe2e4919d6))
+* let the entity map declare jsonb columns for LinqCommand setters ([40e5b28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/40e5b28cb0254f173fb480d7217cc4fe2e4919d6))
+* lock LINQ query rows with ForUpdate, SkipLocked and NoWait ([40e5b28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/40e5b28cb0254f173fb480d7217cc4fe2e4919d6))
+* update rows with LinqCommand ExecuteUpdate setters ([40e5b28](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/40e5b28cb0254f173fb480d7217cc4fe2e4919d6))
+
 ## [2.8.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.7.0...v2.8.0) (2026-10-22)
 
 

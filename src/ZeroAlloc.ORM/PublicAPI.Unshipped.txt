@@ -1,5 +1,1 @@
 #nullable enable
-ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException
-ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException.ZeroAllocOrmConcurrencyException() -> void
-ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException.ZeroAllocOrmConcurrencyException(string! message) -> void
-ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException.ZeroAllocOrmConcurrencyException(string! message, System.Exception! inner) -> void

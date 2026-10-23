@@ -160,3 +160,11 @@ ZAO112  | ZeroAlloc.ORM | Error    | LINQ method return type does not fit the qu
 Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
 ZAO084  | ZeroAlloc.ORM | Error    | PostgreSQL-only type on another dialect
+
+## Release 2.9.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO113  | ZeroAlloc.ORM | Warning  | LINQ row lock without a transaction
