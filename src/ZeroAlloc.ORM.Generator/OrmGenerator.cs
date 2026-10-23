@@ -7034,9 +7034,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
     // #400 — a [Query] returning a list of a primitive scalar: column 0 of every row,
     // buffered as EmitListResultSet buffers rows. A nullable element maps NULL to
-    // null. A non-nullable element throws ZeroAllocOrmMaterializationException for a
-    // NULL, naming the method and the zero-based row index, which is the list's count
-    // so far; the message is built only on that path.
+    // null with IsDBNull, which it needs for correctness. A non-nullable element is
+    // read directly, under the #249 rule: the add sits in a try whose catch filter
+    // calls a static finder, so the valid path checks nothing. The finder returns
+    // ZeroAllocOrmMaterializationException when column 0 is NULL, naming the method
+    // and the zero-based row index, which the filter passes as `__list.Count`, an
+    // argument rather than a capture so the finder stays static and allocates no
+    // closure. The shared EmitNullGuarded finder takes no row index, so this shape
+    // emits its own.
     private static void EmitScalarList(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
@@ -7062,18 +7067,37 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("            {");
-        if (!col.IsNullable)
+        if (col.IsNullable)
+        {
+            sb.AppendLine($"                __list.Add({BuildPositionalReadExpression(col, 0)});");
+        }
+        else
         {
             var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
             var typeDisplay = DisplayTypeName(col.TypeName);
             var head = $"Query '{method}' returned NULL at row index ";
             var tail = $", but its list element type is the non-nullable '{typeDisplay}'. " +
                 $"Declare the element as '{typeDisplay}?' to receive null.";
-            sb.AppendLine("                if (__reader.IsDBNull(0))");
-            sb.AppendLine("                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(");
-            sb.AppendLine($"                        {SymbolDisplay.FormatLiteral(head, quote: true)} + __list.Count.ToString(global::System.Globalization.CultureInfo.InvariantCulture) + {SymbolDisplay.FormatLiteral(tail, quote: true)});");
+            sb.AppendLine("                try");
+            sb.AppendLine("                {");
+            sb.AppendLine($"                    __list.Add({BuildPositionalReadExpression(col, 0)});");
+            sb.AppendLine("                }");
+            sb.AppendLine("                catch (global::System.Exception __ex) when (__NullElement(__reader, __ex, __list.Count) is { } __nullElement)");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    throw __nullElement;");
+            sb.AppendLine("                }");
+            sb.AppendLine();
+            sb.AppendLine("                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]");
+            sb.AppendLine("                static global::System.Exception? __NullElement(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner, int __row)");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))");
+            sb.AppendLine("                        return null;");
+            sb.AppendLine("                    if (__r.IsDBNull(0))");
+            sb.AppendLine("                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(");
+            sb.AppendLine($"                            {SymbolDisplay.FormatLiteral(head, quote: true)} + __row.ToString(global::System.Globalization.CultureInfo.InvariantCulture) + {SymbolDisplay.FormatLiteral(tail, quote: true)}, __inner);");
+            sb.AppendLine("                    return null;");
+            sb.AppendLine("                }");
         }
-        sb.AppendLine($"                __list.Add({BuildPositionalReadExpression(col, 0)});");
         sb.AppendLine("            }");
         sb.AppendLine("            return __list;");
         BuildConnectionEpilogue(sb, "        ");

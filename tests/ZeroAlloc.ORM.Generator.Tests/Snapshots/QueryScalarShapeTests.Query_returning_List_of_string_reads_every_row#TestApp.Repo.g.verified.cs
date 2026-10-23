@@ -24,10 +24,25 @@ partial class Repo
             var __list = new global::System.Collections.Generic.List<string>();
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                if (__reader.IsDBNull(0))
-                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
-                        "Query 'TestApp.Repo.GetNamesAsync' returned NULL at row index " + __list.Count.ToString(global::System.Globalization.CultureInfo.InvariantCulture) + ", but its list element type is the non-nullable 'string'. Declare the element as 'string?' to receive null.");
-                __list.Add(__reader.GetString(0));
+                try
+                {
+                    __list.Add(__reader.GetString(0));
+                }
+                catch (global::System.Exception __ex) when (__NullElement(__reader, __ex, __list.Count) is { } __nullElement)
+                {
+                    throw __nullElement;
+                }
+
+                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                static global::System.Exception? __NullElement(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner, int __row)
+                {
+                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
+                        return null;
+                    if (__r.IsDBNull(0))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException(
+                            "Query 'TestApp.Repo.GetNamesAsync' returned NULL at row index " + __row.ToString(global::System.Globalization.CultureInfo.InvariantCulture) + ", but its list element type is the non-nullable 'string'. Declare the element as 'string?' to receive null.", __inner);
+                    return null;
+                }
             }
             return __list;
         }
