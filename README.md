@@ -20,7 +20,7 @@ with no runtime reflection and NativeAOT-ready.
   ones that share the build with other source generators, where EF Core's precompiled queries collide.
 - **Compile-time diagnostics instead of runtime surprises.** A non-partial method, a tuple that does not
   match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO082`,
-  and a LINQ chain that cannot be translated is one too, `ZAO100` to `ZAO112`.
+  and a LINQ chain that cannot be translated is one too, `ZAO100` to `ZAO113`.
 - **LINQ as a compile-time SQL source.** With `ZeroAlloc.ORM.Linq`, a query's SQL can be written as a
   LINQ chain that the generator translates to PostgreSQL at build time; the chain never runs.
 

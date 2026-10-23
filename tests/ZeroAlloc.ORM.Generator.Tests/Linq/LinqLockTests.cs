@@ -185,6 +185,23 @@ public class LinqLockTests
     [InlineData(
         """
         [LinqQuery(nameof(Q))]
+        public partial Task<bool> M(CancellationToken ct);
+        private static IQuery<bool> Q() => Sql.Table<TaskEntity>().ForUpdate().Any();
+        """,
+        "Any",
+        "'Any' after 'ForUpdate' is not supported in a [LinqQuery] chain")]
+    [InlineData(
+        """
+        [LinqQuery(nameof(Q))]
+        public partial Task<List<TaskLine>> M(CancellationToken ct);
+        private static IQuery<TaskLine> Q() =>
+            Sql.Table<TaskEntity>().Select(t => new TaskLine(t.Id, t.Title)).ForUpdate();
+        """,
+        "ForUpdate",
+        "'ForUpdate' after 'Select' is not supported in a [LinqQuery] chain")]
+    [InlineData(
+        """
+        [LinqQuery(nameof(Q))]
         public partial Task<long> M(CancellationToken ct);
         private static IQuery<long> Q() => Sql.Table<ExecutionEntity>().ForUpdateSkipLocked().Sum(e => e.InputTokens);
         """,
