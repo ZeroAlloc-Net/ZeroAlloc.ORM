@@ -923,8 +923,8 @@ must be a `uint`, or the map reports [ZAO106](../diagnostics/ZAO106.md).
 The rules for `xmin`, by either form:
 
 - It is a transaction id, so it is compared for equality only: `==` or `!=` with a `uint` companion
-  parameter. The parameter binds as `xid`, so the SQL needs no cast. `!=` needs PostgreSQL 13 or later,
-  which added `<>` for `xid`.
+  parameter. The parameter binds as `xid`, so the SQL needs no cast. `!=` renders `<>`, which the
+  integration tests run on PostgreSQL 18.
 - It reads in a projection, also in a tuple element or through a join, into a `uint`.
 - Anything else reports ZAO102: an ordering, `<` or `>`, arithmetic, a comparison with a constant or a
   column, or `xmin` as a setter's target or value. A `uint` parameter compared with `xmin` may not be
