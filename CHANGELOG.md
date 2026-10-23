@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.10.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.9.0...v2.10.0) (2026-10-23)
+
+
+### Features
+
+* return non-nullable scalars and lists of a scalar from [Query] ([e73a639](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e73a639319b17f184673de64a7813f566673a5d1))
+
+
+### Bug Fixes
+
+* report unsupported [Query] return shapes as ZAO022 errors ([e73a639](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e73a639319b17f184673de64a7813f566673a5d1))
+
 ## [2.9.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.8.0...v2.9.0) (2026-10-23)
 
 
