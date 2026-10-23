@@ -842,4 +842,20 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO112"));
+
+    // ZAO113 — a [LinqQuery] locks rows with ForUpdate, ForUpdateSkipLocked or ForUpdateNoWait,
+    // in its one statement or any tuple element's, but the method takes no IAsyncDbTransaction.
+    // A warning: the query runs as written, but outside a transaction its lock is released as
+    // soon as its own statement ends, so it guards nothing that follows. Reported at the method.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    public static readonly DiagnosticDescriptor ZAO113_LinqLockWithoutTransaction = new(
+        id: "ZAO113",
+        title: "LINQ row lock without a transaction",
+        messageFormat: "'{0}' locks rows but takes no IAsyncDbTransaction; the lock is released when its statement ends",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO113"));
 }

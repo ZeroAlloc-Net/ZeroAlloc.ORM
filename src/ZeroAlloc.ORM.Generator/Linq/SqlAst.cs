@@ -14,7 +14,7 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal abstract record SqlStatement;
 
 /// <summary>
-/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
+/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET] [FOR UPDATE ...]</c>.
 /// </summary>
 /// <param name="From">The queried entity.</param>
 /// <param name="Projection">The SELECT list, in the order the row type's constructor reads it.</param>
@@ -30,6 +30,10 @@ internal abstract record SqlStatement;
 /// The alias of <paramref name="From"/>, <c>t0</c>, set exactly when the query has a join. Then
 /// every member names its source's alias; without a join neither is aliased, as in 2.5.0.
 /// </param>
+/// <param name="Lock">
+/// The row lock, rendered after LIMIT and OFFSET; <see cref="SqlRowLock.None"/> renders nothing.
+/// Only a statement's own SELECT locks: never a subquery, a GROUP BY or an aggregate's source.
+/// </param>
 internal sealed record SqlSelectStatement(
     SqlTableSource From,
     EquatableArray<SqlExpression> Projection,
@@ -38,7 +42,24 @@ internal sealed record SqlSelectStatement(
     SqlPaging Paging,
     EquatableArray<SqlExpression> GroupBy = default,
     EquatableArray<SqlJoin> Joins = default,
-    string? Alias = null) : SqlStatement;
+    string? Alias = null,
+    SqlRowLock Lock = SqlRowLock.None) : SqlStatement;
+
+/// <summary>The row lock a SELECT takes: a <c>ForUpdate</c>, <c>ForUpdateSkipLocked</c> or <c>ForUpdateNoWait</c> operator.</summary>
+internal enum SqlRowLock
+{
+    /// <summary>No lock, and no clause.</summary>
+    None,
+
+    /// <summary><c>FOR UPDATE</c>: another writer or locker waits until the transaction ends.</summary>
+    Update,
+
+    /// <summary><c>FOR UPDATE SKIP LOCKED</c>: rows another transaction holds are passed over.</summary>
+    UpdateSkipLocked,
+
+    /// <summary><c>FOR UPDATE NOWAIT</c>: a row another transaction holds fails the statement, SQLSTATE 55P03.</summary>
+    UpdateNoWait,
+}
 
 /// <summary>
 /// <c>INNER JOIN table AS alias ON on [AND sourcePredicates]</c>: a <c>Join</c> operator. The

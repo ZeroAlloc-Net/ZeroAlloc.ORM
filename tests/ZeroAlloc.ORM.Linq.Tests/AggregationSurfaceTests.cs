@@ -53,6 +53,27 @@ public sealed class AggregationSurfaceTests
         Throws(() => table.ExecuteUpdate(set => set.SetProperty(e => e.OutputTokens, e => e.OutputTokens + 1)));
     }
 
+    // The row locks throw the build-time guidance; the ordered overloads keep the chain ordered,
+    // so ThenBy may follow them.
+    [Fact]
+    public void Lock_operators_throw()
+    {
+        IQuery<Event> table = null!;
+        IOrderedQuery<Event> ordered = null!;
+
+        Throws(() => table.ForUpdate());
+        Throws(() => table.ForUpdateSkipLocked());
+        Throws(() => table.ForUpdateNoWait());
+
+        Func<IOrderedQuery<Event>> forUpdate = () => ordered.ForUpdate();
+        Func<IOrderedQuery<Event>> skipLocked = () => ordered.ForUpdateSkipLocked();
+        Func<IOrderedQuery<Event>> noWait = () => ordered.ForUpdateNoWait();
+
+        Throws(() => forUpdate());
+        Throws(() => skipLocked());
+        Throws(() => noWait());
+    }
+
     [Fact]
     public void Scalar_aggregates_throw()
     {

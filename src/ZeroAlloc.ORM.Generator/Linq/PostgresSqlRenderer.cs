@@ -61,6 +61,21 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
         RenderOrdering(sb, select, names);
         RenderPaging(sb, select.Paging, names);
+        RenderLock(sb, select.Lock);
+    }
+
+    // The lock clause comes last, after LIMIT and OFFSET. Each lock names its clause here, so a
+    // new one cannot fall through.
+    private static void RenderLock(StringBuilder sb, SqlRowLock rowLock)
+    {
+        sb.Append(rowLock switch
+        {
+            SqlRowLock.None => string.Empty,
+            SqlRowLock.Update => " FOR UPDATE",
+            SqlRowLock.UpdateSkipLocked => " FOR UPDATE SKIP LOCKED",
+            SqlRowLock.UpdateNoWait => " FOR UPDATE NOWAIT",
+            _ => throw new InvalidOperationException("No PostgreSQL rendering for row lock " + rowLock + "."),
+        });
     }
 
     // count(*) reads the whole WHERE result, and a LIMIT next to it would limit the one row

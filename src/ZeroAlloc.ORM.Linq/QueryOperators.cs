@@ -78,6 +78,78 @@ public static class QueryOperators
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static IQuery<T> Take<T>(this IQuery<T> source, int count) => throw Guidance.Exception();
 
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends: <c>FOR UPDATE</c>, after <c>LIMIT</c> and <c>OFFSET</c>. Another transaction that writes or locks one of them waits until this one ends.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<T> ForUpdate<T>(this IQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends: <c>FOR UPDATE</c>, after <c>LIMIT</c> and <c>OFFSET</c>. Another transaction that writes or locks one of them waits until this one ends.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement. The ordered overload keeps the chain ordered, so <c>ThenBy</c> may follow it.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IOrderedQuery<T> ForUpdate<T>(this IOrderedQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends, passing over rows another transaction holds: <c>FOR UPDATE SKIP LOCKED</c>, after <c>LIMIT</c> and <c>OFFSET</c>. Two transactions claiming from one queue never get the same row.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<T> ForUpdateSkipLocked<T>(this IQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends, passing over rows another transaction holds: <c>FOR UPDATE SKIP LOCKED</c>, after <c>LIMIT</c> and <c>OFFSET</c>. Two transactions claiming from one queue never get the same row.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement. The ordered overload keeps the chain ordered, so <c>ThenBy</c> may follow it.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IOrderedQuery<T> ForUpdateSkipLocked<T>(this IOrderedQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends, failing at once when another transaction holds one: <c>FOR UPDATE NOWAIT</c>, after <c>LIMIT</c> and <c>OFFSET</c>. The query throws PostgreSQL's lock_not_available, SQLSTATE 55P03, instead of waiting.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IQuery<T> ForUpdateNoWait<T>(this IQuery<T> source) => throw Guidance.Exception();
+
+    /// <summary>
+    /// Locks the rows the query reads until the transaction ends, failing at once when another transaction holds one: <c>FOR UPDATE NOWAIT</c>, after <c>LIMIT</c> and <c>OFFSET</c>. The query throws PostgreSQL's lock_not_available, SQLSTATE 55P03, instead of waiting.
+    /// At most one lock per chain, before <c>Select</c>; not with <c>GroupBy</c>, an aggregate,
+    /// in a <c>Contains</c> subquery or in a write. Pass the method an <c>IAsyncDbTransaction</c>,
+    /// or the lock ends with its statement. The ordered overload keeps the chain ordered, so <c>ThenBy</c> may follow it.
+    /// </summary>
+    /// <typeparam name="T">The element type of the query.</typeparam>
+    /// <param name="source">The rows to lock.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static IOrderedQuery<T> ForUpdateNoWait<T>(this IOrderedQuery<T> source) => throw Guidance.Exception();
+
     /// <summary>Projects each row.</summary>
     /// <typeparam name="T">The element type of the query.</typeparam>
     /// <typeparam name="TResult">The projected element type.</typeparam>

@@ -107,7 +107,34 @@ public sealed partial class OrmGenerator
                 LinqTranslation.Failed(translation.SourceComment, new EquatableArray<DiagnosticInfo>(ImmutableArray.Create(error))),
                 null);
         }
+        if (core is not null && core.Method.TransactionParameterName is null && LocksRows(translation.Statements))
+            translation = WithLockWarning(translation, ctx);
         return new LinqMethodRead(translation, core);
+    }
+
+    // Whether any statement, a tuple element's included, takes a row lock. Only a statement's own
+    // SELECT can: the reader rejects a lock anywhere else.
+    private static bool LocksRows(EquatableArray<SqlStatement> statements)
+    {
+        foreach (var statement in statements)
+        {
+            if (statement is SqlSelectStatement { Lock: not SqlRowLock.None }) return true;
+        }
+        return false;
+    }
+
+    // ZAO113: a lock lasts until its transaction ends, and without an IAsyncDbTransaction the
+    // statement runs in its own, so the lock guards nothing after it. The core model found the
+    // transaction parameter already, as it binds it for every method.
+    private static LinqTranslation WithLockWarning(LinqTranslation translation, GeneratorAttributeSyntaxContext ctx)
+    {
+        var method = (MethodDeclarationSyntax)ctx.TargetNode;
+        var warning = LinqDiagnostics.LockWithoutTransaction(method.Identifier.Text, LocationInfo.From(method.Identifier.GetLocation()));
+        return translation with
+        {
+            Diagnostics = new EquatableArray<DiagnosticInfo>(
+                (translation.Diagnostics.Values.IsDefault ? ImmutableArray<DiagnosticInfo>.Empty : translation.Diagnostics.Values).Add(warning)),
+        };
     }
 
     // [LinqCommand(ThrowOnNoRows = true)].

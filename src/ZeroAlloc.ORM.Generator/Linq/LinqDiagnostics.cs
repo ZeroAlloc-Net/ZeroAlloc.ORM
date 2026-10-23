@@ -4,7 +4,7 @@ using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
-// The LINQ front end's diagnostics, ZAO100 to ZAO112 but ZAO109, built as cache-safe
+// The LINQ front end's diagnostics, ZAO100 to ZAO113 but ZAO109, built as cache-safe
 // DiagnosticInfo. ZAO109 is reported by LinqCompanionCallAnalyzer.
 // The descriptors live in DiagnosticDescriptors; their message arguments are documented there.
 // The messages that name the method's attribute take it as their last argument, which the
@@ -66,6 +66,10 @@ internal static class LinqDiagnostics
     // does not fit, `query` what it should fit, and `guidance` what fits.
     public static DiagnosticInfo ShapeMismatchAt(string method, string returned, string query, string guidance, Location? location)
         => Create("ZAO112", location, method, returned, query, guidance);
+
+    // ZAO113, at the method's name.
+    public static DiagnosticInfo LockWithoutTransaction(string method, LocationInfo? location)
+        => new("ZAO113", location, Args(method));
 
     private const string SingleShapes =
         "return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; "
