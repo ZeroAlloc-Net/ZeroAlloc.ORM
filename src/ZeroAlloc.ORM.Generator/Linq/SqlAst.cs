@@ -14,7 +14,7 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 internal abstract record SqlStatement;
 
 /// <summary>
-/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET]</c>.
+/// <c>SELECT projection FROM table [AS alias] [INNER JOIN ...] [WHERE predicates] [GROUP BY groupBy] [ORDER BY ordering] [LIMIT] [OFFSET] [FOR UPDATE ...]</c>.
 /// </summary>
 /// <param name="From">The queried entity.</param>
 /// <param name="Projection">The SELECT list, in the order the row type's constructor reads it.</param>
@@ -30,6 +30,10 @@ internal abstract record SqlStatement;
 /// The alias of <paramref name="From"/>, <c>t0</c>, set exactly when the query has a join. Then
 /// every member names its source's alias; without a join neither is aliased, as in 2.5.0.
 /// </param>
+/// <param name="Lock">
+/// The row lock, rendered after LIMIT and OFFSET; <see cref="SqlRowLock.None"/> renders nothing.
+/// Only a statement's own SELECT locks: never a subquery, a GROUP BY or an aggregate's source.
+/// </param>
 internal sealed record SqlSelectStatement(
     SqlTableSource From,
     EquatableArray<SqlExpression> Projection,
@@ -38,7 +42,24 @@ internal sealed record SqlSelectStatement(
     SqlPaging Paging,
     EquatableArray<SqlExpression> GroupBy = default,
     EquatableArray<SqlJoin> Joins = default,
-    string? Alias = null) : SqlStatement;
+    string? Alias = null,
+    SqlRowLock Lock = SqlRowLock.None) : SqlStatement;
+
+/// <summary>The row lock a SELECT takes: a <c>ForUpdate</c>, <c>ForUpdateSkipLocked</c> or <c>ForUpdateNoWait</c> operator.</summary>
+internal enum SqlRowLock
+{
+    /// <summary>No lock, and no clause.</summary>
+    None,
+
+    /// <summary><c>FOR UPDATE</c>: another writer or locker waits until the transaction ends.</summary>
+    Update,
+
+    /// <summary><c>FOR UPDATE SKIP LOCKED</c>: rows another transaction holds are passed over.</summary>
+    UpdateSkipLocked,
+
+    /// <summary><c>FOR UPDATE NOWAIT</c>: a row another transaction holds fails the statement, SQLSTATE 55P03.</summary>
+    UpdateNoWait,
+}
 
 /// <summary>
 /// <c>INNER JOIN table AS alias ON on [AND sourcePredicates]</c>: a <c>Join</c> operator. The
@@ -92,6 +113,59 @@ internal enum SqlAggregate
 /// </param>
 internal sealed record SqlScalarAggregateStatement(SqlAggregateCallExpression Call, SqlSelectStatement Source) : SqlStatement;
 
+/// <summary>
+/// <c>DELETE FROM table [WHERE predicates]</c>: an <c>ExecuteDelete()</c> terminal of a
+/// <c>[LinqCommand]</c> chain, whose rows affected the method returns. Without predicates it
+/// deletes every row, as EF Core's <c>ExecuteDelete</c> does; nothing is added.
+/// </summary>
+/// <param name="Table">The entity whose rows are deleted.</param>
+/// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
+/// <remarks>
+/// The table takes no alias. A command chain has no join, so every member names the table
+/// itself, and an IN subquery is uncorrelated: it binds through a scope of its own and aliases
+/// its sources s0, s1, ... only when it has a join, so nothing inside it names the outer table.
+/// An alias becomes needed only once a predicate can read the outer row from a subquery.
+/// </remarks>
+internal sealed record SqlDeleteStatement(SqlTableSource Table, EquatableArray<SqlExpression> Predicates) : SqlStatement;
+
+/// <summary>
+/// <c>UPDATE table SET a = x, b = y [WHERE predicates]</c>: an <c>ExecuteUpdate(...)</c> terminal of
+/// a <c>[LinqCommand]</c> chain, whose rows affected the method returns. Without predicates it
+/// updates every row, as EF Core's <c>ExecuteUpdate</c> does; nothing is added.
+/// </summary>
+/// <param name="Table">The entity whose rows are updated.</param>
+/// <param name="Setters">One SET item per <c>SetProperty</c>, in written order; never empty.</param>
+/// <param name="Predicates">WHERE conditions, joined with AND. Empty for no WHERE clause.</param>
+/// <remarks>
+/// The table takes no alias, for the reasons <see cref="SqlDeleteStatement"/> gives. A setter's
+/// value reads the row as it was before the statement, as every SET item does in PostgreSQL.
+/// </remarks>
+internal sealed record SqlUpdateStatement(
+    SqlTableSource Table,
+    EquatableArray<SqlSetter> Setters,
+    EquatableArray<SqlExpression> Predicates) : SqlStatement;
+
+/// <summary>
+/// One <c>SetProperty</c>: <c>"Col" = value</c>. The target names the entity member, as every
+/// member in the tree does; the map gives its column when the statement is bound, and decides
+/// there what an object member is: an owned object, a composite, or one plain column.
+/// </summary>
+/// <param name="Column">
+/// The member the setter writes, such as <c>State</c> or the owned <c>Outcome.PullRequestUrl</c>.
+/// Its location is the target lambda's body, where a target the map rejects is reported.
+/// </param>
+/// <param name="Value">
+/// A column of the row, a companion parameter, a literal, or a <see cref="SqlArithmeticExpression"/>
+/// over those.
+/// </param>
+/// <param name="ColumnJson">
+/// The target is a string marked <c>[Json]</c> on its property or on the record constructor
+/// parameter that feeds it. The binder also counts a map's <c>Json = true</c>; either makes the
+/// column jsonb, see <see cref="JsonSetters"/>.
+/// </param>
+/// <param name="ValueJson">The same for a column of the row the value copies; false for any other value.</param>
+internal sealed record SqlSetter(SqlMemberExpression Column, SqlExpression Value, bool ColumnJson = false, bool ValueJson = false);
+
 /// <summary>The entity a query reads, from <c>Sql.Table&lt;T&gt;()</c>.</summary>
 /// <param name="EntityTypeFullName">The entity type in the generator's TypeDisplayFormat, the key of its map.</param>
 /// <param name="Location">The <c>Sql.Table&lt;T&gt;()</c> call, where ZAO104 is reported.</param>
@@ -123,6 +197,17 @@ internal sealed record SqlMemberExpression(
     bool ColumnPicksEnumStorage,
     string? SourceAlias = null,
     SqlWholeObject? WholeObject = null) : SqlExpression;
+
+/// <summary>
+/// A PostgreSQL system column of a row, named by a marker rather than by the map: <c>Sql.Xmin(r)</c>
+/// is <c>"xmin"</c>, or <c>t0."xmin"</c> in a query with a join. xmin is a transaction id, read as a
+/// <c>uint</c> and compared, by <c>==</c> or <c>!=</c> only, with a <c>uint</c> parameter, which
+/// binds as <c>xid</c>; the reader rejects it anywhere else. A property the map maps to xmin is a
+/// <see cref="SqlMemberExpression"/> whose column the render recognises; see SqlNameScope.
+/// </summary>
+/// <param name="Name">The column, <c>xmin</c>.</param>
+/// <param name="Alias">The alias of the row's source in a query with a join; null without one.</param>
+internal sealed record SqlSystemColumnExpression(string Name, string? Alias) : SqlExpression;
 
 /// <summary>A companion parameter, by the SQL name the method binds it with.</summary>
 /// <param name="Name">The SQL name, without the <c>@</c>.</param>
@@ -172,6 +257,22 @@ internal enum SqlBinaryOperator
     GreaterThanOrEqual,
     And,
     Or,
+}
+
+/// <summary>
+/// <c>(left op right)</c>: C#'s <c>+</c>, <c>-</c> or <c>*</c> on <c>int</c>, <c>long</c>,
+/// <c>decimal</c>, <c>double</c> or <c>float</c>, read in a setter's value only. Always
+/// parenthesised, so the tree's grouping survives the flat text. A NULL operand makes it NULL,
+/// as C#'s lifted operators do. An integer result out of its type's range raises PostgreSQL's
+/// error, where unchecked C# would wrap: a known difference.
+/// </summary>
+internal sealed record SqlArithmeticExpression(SqlArithmeticOperator Operator, SqlExpression Left, SqlExpression Right) : SqlExpression;
+
+internal enum SqlArithmeticOperator
+{
+    Add,
+    Subtract,
+    Multiply,
 }
 
 /// <summary>

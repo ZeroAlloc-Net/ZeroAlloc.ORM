@@ -79,6 +79,9 @@ internal static partial class LinqQueryReader
                 return literal.Kind == SqlLiteralKind.Null;
             case SqlEnumLiteralExpression or SqlIsNullExpression or SqlIsNotTrueExpression or SqlObjectIsNullExpression:
                 return false;
+            case SqlSystemColumnExpression:
+                // xmin is set on every row version.
+                return false;
             case SqlInSubqueryExpression subquery:
                 // The selected column is never NULL, which the reader checks, so IN can be NULL only
                 // when its operand can.
@@ -89,6 +92,8 @@ internal static partial class LinqQueryReader
                 return MayBeNull(dateTrunc.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
+            case SqlArithmeticExpression arithmetic:
+                return MayBeNull(arithmetic.Left, nullableValues) || MayBeNull(arithmetic.Right, nullableValues);
             case SqlRowComparisonExpression rows:
                 return AnyMayBeNull(rows.Left, nullableValues) || AnyMayBeNull(rows.Right, nullableValues);
             case SqlNotExpression not:

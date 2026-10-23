@@ -26,6 +26,10 @@ namespace ZeroAlloc.ORM.Generator;
 // for ZAO008, which needs a multi-result return type for several statements; for ZAO032/033,
 // which it skips for [LinqQuery], since the translator renders one statement per tuple element;
 // and for the batch strategy, which the bind recomputes from the bound SQL.
+//
+// [LinqCommand] is wired the same way, as LinqCommandReads and LinqCommandMethods. Its core runs
+// as [Command] with Kind NonQuery, the attribute declaring no Kind, so the method takes the
+// [Command] non-query emit; ThrowOnNoRows adds the zero-rows check to it.
 public sealed partial class OrmGenerator
 {
     private static IncrementalValuesProvider<QueryMethodWithTypeContext> LinqQueryMethods(
@@ -36,16 +40,41 @@ public sealed partial class OrmGenerator
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: LinqQueryAttributeFullName,
                 predicate: static (node, _) => node is MethodDeclarationSyntax,
-                transform: static (ctx, ct) => ReadLinqMethod(ctx, ct))
+                transform: static (ctx, ct) => ReadLinqMethod(ctx, isCommand: false, ct))
             .WithTrackingName("LinqQueryReads")
             .Combine(entityMaps)
             .Select(static (pair, _) => BindLinqMethod(pair.Left, pair.Right))
             .WithTrackingName("LinqQueryMethods");
+        return ReportAndKeepBound(context, bound, LinqDiagnostics.LinqQuery);
+    }
 
-        context.RegisterSourceOutput(bound, static (sourceCtx, result) =>
+    private static IncrementalValuesProvider<QueryMethodWithTypeContext> LinqCommandMethods(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValueProvider<EquatableArray<EntityMapModel>> entityMaps)
+    {
+        var bound = context.SyntaxProvider
+            .ForAttributeWithMetadataName(
+                fullyQualifiedMetadataName: LinqCommandAttributeFullName,
+                predicate: static (node, _) => node is MethodDeclarationSyntax,
+                transform: static (ctx, ct) => ReadLinqMethod(ctx, isCommand: true, ct))
+            .WithTrackingName("LinqCommandReads")
+            .Combine(entityMaps)
+            .Select(static (pair, _) => BindLinqMethod(pair.Left, pair.Right))
+            .WithTrackingName("LinqCommandMethods");
+        return ReportAndKeepBound(context, bound, LinqDiagnostics.LinqCommand);
+    }
+
+    // Reports each method's LINQ diagnostics, with the attribute their messages name, and keeps
+    // the methods that bound.
+    private static IncrementalValuesProvider<QueryMethodWithTypeContext> ReportAndKeepBound(
+        IncrementalGeneratorInitializationContext context,
+        IncrementalValuesProvider<LinqMethodResult> bound,
+        string attribute)
+    {
+        context.RegisterSourceOutput(bound, (sourceCtx, result) =>
         {
             foreach (var diagnostic in result.Diagnostics)
-                ReportStandaloneDiagnostic(sourceCtx, diagnostic);
+                ReportStandaloneDiagnostic(sourceCtx, LinqDiagnostics.ForAttribute(diagnostic, attribute));
         });
 
         return bound
@@ -53,16 +82,20 @@ public sealed partial class OrmGenerator
             .Select(static (r, _) => r.Method!);
     }
 
-    private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, CancellationToken ct)
+    private static LinqMethodRead ReadLinqMethod(GeneratorAttributeSyntaxContext ctx, bool isCommand, CancellationToken ct)
     {
-        var translation = LinqQueryReader.Read(ctx, ct);
+        var translation = LinqQueryReader.Read(ctx, isCommand, ct);
         if (!translation.Succeeded) return new LinqMethodRead(translation, null);
 
         var core = TransformMethodCore(
             ctx,
-            AttributePipelineKind.LinqQuery,
+            isCommand ? AttributePipelineKind.Command : AttributePipelineKind.LinqQuery,
             sql: string.Empty,
-            new LinqOverrides(translation.Facets, translation.SourceComment));
+            new LinqOverrides(translation.Facets, translation.SourceComment)
+            {
+                NoRowsMessage = isCommand && ThrowsOnNoRows(ctx) ? NoRowsMessage(ctx) : null,
+                XidParameters = translation.XidParameters,
+            });
         if (core is not null && ReadsSeveralColumns(core.Method, translation) is { } member)
         {
             var location = ((MethodDeclarationSyntax)ctx.TargetNode).ReturnType.GetLocation();
@@ -73,8 +106,51 @@ public sealed partial class OrmGenerator
                 LinqTranslation.Failed(translation.SourceComment, new EquatableArray<DiagnosticInfo>(ImmutableArray.Create(error))),
                 null);
         }
+        if (core is not null && core.Method.TransactionParameterName is null && LocksRows(translation.Statements))
+            translation = WithLockWarning(translation, ctx);
         return new LinqMethodRead(translation, core);
     }
+
+    // Whether any statement, a tuple element's included, takes a row lock. Only a statement's own
+    // SELECT can: the reader rejects a lock anywhere else.
+    private static bool LocksRows(EquatableArray<SqlStatement> statements)
+    {
+        foreach (var statement in statements)
+        {
+            if (statement is SqlSelectStatement { Lock: not SqlRowLock.None }) return true;
+        }
+        return false;
+    }
+
+    // ZAO113: a lock lasts until its transaction ends, and without an IAsyncDbTransaction the
+    // statement runs in its own, so the lock guards nothing after it. The core model found the
+    // transaction parameter already, as it binds it for every method.
+    private static LinqTranslation WithLockWarning(LinqTranslation translation, GeneratorAttributeSyntaxContext ctx)
+    {
+        var method = (MethodDeclarationSyntax)ctx.TargetNode;
+        var warning = LinqDiagnostics.LockWithoutTransaction(method.Identifier.Text, LocationInfo.From(method.Identifier.GetLocation()));
+        return translation with
+        {
+            Diagnostics = new EquatableArray<DiagnosticInfo>(
+                (translation.Diagnostics.Values.IsDefault ? ImmutableArray<DiagnosticInfo>.Empty : translation.Diagnostics.Values).Add(warning)),
+        };
+    }
+
+    // [LinqCommand(ThrowOnNoRows = true)].
+    private static bool ThrowsOnNoRows(GeneratorAttributeSyntaxContext ctx)
+    {
+        foreach (var named in ctx.Attributes[0].NamedArguments)
+        {
+            if (string.Equals(named.Key, "ThrowOnNoRows", System.StringComparison.Ordinal) && named.Value.Value is true)
+                return true;
+        }
+        return false;
+    }
+
+    // The ZeroAllocOrmConcurrencyException message, which names the type and the method.
+    private static string NoRowsMessage(GeneratorAttributeSyntaxContext ctx)
+        => "'" + ctx.TargetSymbol.ContainingType.Name + "." + ctx.TargetSymbol.Name
+            + "' affected no rows; the row was changed or removed since it was read";
 
     // A composite or [Materialize] factory member of the row expands to several reader columns,
     // while the projection gives it one. Every element of a tuple is checked, element i against
@@ -128,7 +204,8 @@ public sealed partial class OrmGenerator
             return new LinqMethodResult(null, read.Translation.Diagnostics);
 
         var statements = read.Translation.Statements;
-        var bound = LinqQueryBinder.Bind(statements, maps, read.Translation.LiftedProjections);
+        var bound = LinqQueryBinder.Bind(
+            statements, maps, read.Translation.LiftedProjections, read.Translation.XidParameters, read.Translation.XminProjections);
         if (bound.Diagnostics.Length > 0) return new LinqMethodResult(null, bound.Diagnostics);
 
         var method = core.Method with
@@ -151,6 +228,7 @@ public sealed partial class OrmGenerator
                 LinqStatements = bound.Statements,
             };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
+        method = BindJson(method, bound.JsonParameters);
         method = UnbindUnreferenced(method, ReferencedParameters(statements));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
     }
@@ -257,6 +335,40 @@ public sealed partial class OrmGenerator
         {
             MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
             DbTypeChecks = new EquatableArray<DbTypeCheck>(checks.ToImmutable()),
+        };
+    }
+
+    // A string parameter a [LinqCommand] update sets into a jsonb column binds as jsonb, the way a
+    // [Json] parameter does, whether the map or an attribute on the entity made the column jsonb.
+    // As for a [Json] parameter it is a PostgreSQL-only usage, for ZAO084, and needs Npgsql,
+    // ZAO082, reported at the setter's value since the method's parameter carries no marker.
+    private static QueryMethodModel BindJson(QueryMethodModel method, EquatableArray<SqlParameterExpression> json)
+    {
+        if (json.Length == 0) return method;
+        var parameters = method.MethodParameters.Values.ToBuilder();
+        var usages = method.PostgresOnlyUsages.Values.IsDefault
+            ? ImmutableArray.CreateBuilder<PostgresOnlyUsage>()
+            : method.PostgresOnlyUsages.Values.ToBuilder();
+        var diagnostics = method.Diagnostics.Values.IsDefault
+            ? ImmutableArray.CreateBuilder<DiagnosticInfo>()
+            : method.Diagnostics.Values.ToBuilder();
+        foreach (var setter in json)
+        {
+            for (var i = 0; i < parameters.Count; i++)
+            {
+                var parameter = parameters[i];
+                if (parameter.IsJson || !string.Equals(parameter.Name, setter.ClrName, System.StringComparison.Ordinal)) continue;
+                parameters[i] = parameter with { IsJson = true };
+                var usage = JsonRequiresNpgsql(parameter.Name, setter.Location);
+                usages.Add(new PostgresOnlyUsage(usage.MessageArgs.Values[0], usage.MessageArgs.Values[1], usage.Location));
+                if (!method.HasNpgsql) diagnostics.Add(usage);
+            }
+        }
+        return method with
+        {
+            MethodParameters = new EquatableArray<ParameterInfo>(parameters.MoveToImmutable()),
+            PostgresOnlyUsages = new EquatableArray<PostgresOnlyUsage>(usages.ToImmutable()),
+            Diagnostics = new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()),
         };
     }
 

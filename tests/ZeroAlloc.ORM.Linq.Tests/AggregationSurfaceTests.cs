@@ -8,7 +8,7 @@ namespace ZeroAlloc.ORM.Linq.Tests;
 public sealed class AggregationSurfaceTests
 {
     private const string Guidance = "read at build time";
-    private const string Call = "Call the [LinqQuery] method";
+    private const string Call = "Call the [LinqQuery] or [LinqCommand] method";
 
     private sealed class Event
     {
@@ -32,6 +32,46 @@ public sealed class AggregationSurfaceTests
         Throws(() => group.Sum(e => e.InputTokens));
         Throws(() => group.Count());
         Throws(() => group.LongCount());
+    }
+
+    [Fact]
+    public void Execute_delete_throws()
+    {
+        IQuery<Event> table = null!;
+
+        Throws(() => table.ExecuteDelete());
+    }
+
+    // ExecuteUpdate throws the build-time guidance with either SetProperty overload in its
+    // setters lambda; it throws before the lambda is invoked.
+    [Fact]
+    public void Execute_update_throws()
+    {
+        IQuery<Event> table = null!;
+
+        Throws(() => table.ExecuteUpdate(set => set.SetProperty(e => e.InputTokens, 1)));
+        Throws(() => table.ExecuteUpdate(set => set.SetProperty(e => e.OutputTokens, e => e.OutputTokens + 1)));
+    }
+
+    // The row locks throw the build-time guidance; the ordered overloads keep the chain ordered,
+    // so ThenBy may follow them.
+    [Fact]
+    public void Lock_operators_throw()
+    {
+        IQuery<Event> table = null!;
+        IOrderedQuery<Event> ordered = null!;
+
+        Throws(() => table.ForUpdate());
+        Throws(() => table.ForUpdateSkipLocked());
+        Throws(() => table.ForUpdateNoWait());
+
+        Func<IOrderedQuery<Event>> forUpdate = () => ordered.ForUpdate();
+        Func<IOrderedQuery<Event>> skipLocked = () => ordered.ForUpdateSkipLocked();
+        Func<IOrderedQuery<Event>> noWait = () => ordered.ForUpdateNoWait();
+
+        Throws(() => forUpdate());
+        Throws(() => skipLocked());
+        Throws(() => noWait());
     }
 
     [Fact]

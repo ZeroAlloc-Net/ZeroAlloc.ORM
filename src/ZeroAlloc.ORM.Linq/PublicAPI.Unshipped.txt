@@ -1,1 +1,18 @@
 #nullable enable
+static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteDelete<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> int
+static ZeroAlloc.ORM.Linq.QueryOperators.ExecuteUpdate<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source, System.Func<ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!, ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!>! setters) -> int
+static ZeroAlloc.ORM.Linq.Sql.Xmin<T>(T row) -> uint
+ZeroAlloc.ORM.Linq.LinqCommandAttribute
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.Companion.get -> string!
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.LinqCommandAttribute(string! companion) -> void
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.get -> bool
+ZeroAlloc.ORM.Linq.LinqCommandAttribute.ThrowOnNoRows.init -> void
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>.SetProperty<TProperty>(System.Func<T, TProperty>! property, System.Func<T, TProperty>! value) -> ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!
+ZeroAlloc.ORM.Linq.SetPropertyCalls<T>.SetProperty<TProperty>(System.Func<T, TProperty>! property, TProperty value) -> ZeroAlloc.ORM.Linq.SetPropertyCalls<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdate<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdate<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateSkipLocked<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateSkipLocked<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateNoWait<T>(this ZeroAlloc.ORM.Linq.IQuery<T>! source) -> ZeroAlloc.ORM.Linq.IQuery<T>!
+static ZeroAlloc.ORM.Linq.QueryOperators.ForUpdateNoWait<T>(this ZeroAlloc.ORM.Linq.IOrderedQuery<T>! source) -> ZeroAlloc.ORM.Linq.IOrderedQuery<T>!

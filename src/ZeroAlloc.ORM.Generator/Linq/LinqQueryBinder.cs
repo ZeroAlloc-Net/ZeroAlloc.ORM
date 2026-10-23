@@ -26,11 +26,23 @@ internal static class LinqQueryBinder
         EquatableArray<SqlStatement> statements,
         EquatableArray<EntityMapModel> maps,
         EquatableArray<LinqLiftedProjection> lifted)
+        => Bind(statements, maps, lifted, default, default);
+
+    // `xidParameters` are the uint parameters the reader binds as xid, compared with xmin; a
+    // member they meet must map to xmin. `xminProjections` are the projected uint members: ZAO107
+    // for each whose column is not xmin, the one uint a row reads.
+    public static LinqBoundQuery Bind(
+        EquatableArray<SqlStatement> statements,
+        EquatableArray<EntityMapModel> maps,
+        EquatableArray<LinqLiftedProjection> lifted,
+        EquatableArray<string> xidParameters,
+        EquatableArray<LinqXminProjection> xminProjections)
     {
         var builder = ImmutableArray.CreateBuilder<(SqlStatement Statement, SqlNameScope Names)>(statements.Length);
         foreach (var statement in statements)
         {
-            var names = Scope(SelectOf(statement), maps, out var unmapped);
+            var (from, alias, joins) = SourcesOf(statement);
+            var names = Scope(from, alias, joins, maps, out var unmapped);
             if (names is null) return Failed(unmapped!);
             foreach (var subquery in SqlSubqueries.Collect(statement))
             {
@@ -44,20 +56,37 @@ internal static class LinqQueryBinder
         // parameter. A conflict is reported after the render's own diagnostics, such as ZAO105.
         var storage = EnumParameterStorage.Decide(scopes);
         var byName = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
+        var xid = xidParameters.ToImmutableHashSet(StringComparer.Ordinal);
         var sql = new string[statements.Length];
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
         for (var i = 0; i < statements.Length; i++)
         {
             var names = scopes[i].Names;
             names.NameBoundParameters = byName;
+            names.XidParameters = xid;
             if (statements[i] is SqlSelectStatement select) names.Projected(select.Projection);
             sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
             diagnostics.AddRange(names.Diagnostics);
+        }
+        foreach (var projection in xminProjections)
+        {
+            if (scopes[projection.Statement].Names.MappedColumn(projection.Member) is { } column && !SqlNameScope.IsXminColumn(column))
+            {
+                diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(
+                    "'" + projection.Member.Member + "' reads a uint, which only xmin reads as, but its column is " + column,
+                    projection.Location));
+            }
         }
         foreach (var projection in lifted)
         {
             if (scopes[projection.Statement].Names.IsOwned(projection.Owner, projection.SourceAlias))
                 diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(projection.Reason, projection.Location));
+        }
+        var jsonParameters = ImmutableArray.CreateBuilder<SqlParameterExpression>();
+        for (var i = 0; i < statements.Length; i++)
+        {
+            if (statements[i] is SqlUpdateStatement update)
+                jsonParameters.AddRange(JsonSetters.Check(update, scopes[i].Names, diagnostics));
         }
         if (diagnostics.Count > 0)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
@@ -75,32 +104,40 @@ internal static class LinqQueryBinder
             default)
         {
             Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
+            JsonParameters = new EquatableArray<SqlParameterExpression>(jsonParameters.ToImmutable()),
         };
     }
 
-    // The statement's SELECT; a terminal's is its inner one.
-    private static SqlSelectStatement SelectOf(SqlStatement statement) => statement switch
+    // The statement's sources: a SELECT's FROM, alias and joins, a terminal's those of its inner
+    // SELECT, and a DELETE's or an UPDATE's table, which has neither an alias nor a join.
+    private static (SqlTableSource From, string? Alias, EquatableArray<SqlJoin> Joins) SourcesOf(SqlStatement statement) => statement switch
     {
-        SqlSelectStatement select => select,
-        SqlAggregateStatement aggregate => aggregate.Source,
-        SqlScalarAggregateStatement scalar => scalar.Source,
+        SqlSelectStatement select => (select.From, select.Alias, select.Joins),
+        SqlAggregateStatement aggregate => (aggregate.Source.From, aggregate.Source.Alias, aggregate.Source.Joins),
+        SqlScalarAggregateStatement scalar => (scalar.Source.From, scalar.Source.Alias, scalar.Source.Joins),
+        SqlDeleteStatement delete => (delete.Table, null, default),
+        SqlUpdateStatement update => (update.Table, null, default),
         _ => throw new InvalidOperationException("No table source for " + statement.GetType().Name + "."),
     };
 
     // One name scope over every source: the FROM entity, under its alias when there is a join,
     // and each joined entity under its own. Null with ZAO104 for the first source without a map.
-    private static SqlNameScope? Scope(SqlSelectStatement select, EquatableArray<EntityMapModel> maps, out DiagnosticInfo? unmapped)
+    private static SqlNameScope? Scope(
+        SqlTableSource from,
+        string? alias,
+        EquatableArray<SqlJoin> joins,
+        EquatableArray<EntityMapModel> maps,
+        out DiagnosticInfo? unmapped)
     {
         unmapped = null;
-        var from = select.From;
         if (FindMap(maps, from.EntityTypeFullName) is not { } map)
         {
             unmapped = LinqDiagnostics.UnmappedEntity(DisplayName(from.EntityTypeFullName), from.Location);
             return null;
         }
 
-        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), select.Alias, maps);
-        foreach (var join in select.Joins)
+        var names = new SqlNameScope(map, DisplayName(from.EntityTypeFullName), alias, maps);
+        foreach (var join in joins)
         {
             var joined = join.Source.EntityTypeFullName;
             if (FindMap(maps, joined) is not { } joinedMap)

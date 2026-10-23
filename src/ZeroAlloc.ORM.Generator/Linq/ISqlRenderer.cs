@@ -35,6 +35,7 @@ internal sealed class SqlNameScope
     private readonly HashSet<DiagnosticInfo> _unmapped;
     private readonly HashSet<SqlExpression> _projected = new();
     private ImmutableHashSet<string> _nameBoundParameters = ImmutableHashSet<string>.Empty;
+    private ImmutableHashSet<string> _xidParameters = ImmutableHashSet<string>.Empty;
 
     /// <param name="map">The FROM entity's map.</param>
     /// <param name="entityDisplay">The FROM entity as messages show it.</param>
@@ -97,10 +98,96 @@ internal sealed class SqlNameScope
                 ?? member.Member;
         }
 
-        if (source.Columns.TryGetValue(member.Member, out var column)) return column.Column;
+        if (source.Columns.TryGetValue(member.Member, out var column))
+        {
+            if (IsXminColumn(column.Column) && !XminAllowed)
+            {
+                Record(LinqDiagnostics.UnsupportedAt(
+                    "'" + member.Member + "', whose column is xmin, outside a projection or an == or != test with a uint "
+                        + "parameter, since xmin is a transaction id, compared only for equality,",
+                    member.Location));
+            }
+            return column.Column;
+        }
         Unmapped(source, member.Member, member.Location, _projected.Contains(member));
         return member.Member;
     }
+
+    /// <summary>
+    /// Whether a member that maps to xmin renders without ZAO102: set by the render while it
+    /// renders a statement's projection item or an == or != test with an xid parameter, the two
+    /// places xmin is read. An IN subquery's own WHERE reads such a test too; only the column
+    /// its Select picks is never xmin, since the projection allowance is a statement's alone.
+    /// </summary>
+    public bool XminAllowed { get; set; }
+
+    /// <summary>Whether this is a statement's scope rather than an IN subquery's.</summary>
+    public bool IsStatement => _parent is null;
+
+    /// <summary>The member's mapped column, or null when the map has none; records nothing.</summary>
+    public string? MappedColumn(SqlMemberExpression member)
+        => member.WholeObject is null && SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column)
+            ? column.Column
+            : null;
+
+    /// <summary>Whether a column is PostgreSQL's xmin, which a quoted name in another case is not.</summary>
+    public static bool IsXminColumn(string column) => string.Equals(column, "xmin", StringComparison.Ordinal);
+
+    /// <summary>
+    /// C# names of the uint parameters that bind as xid, compared with xmin; decided by the reader.
+    /// </summary>
+    public ImmutableHashSet<string> XidParameters
+    {
+        get => _parent?.XidParameters ?? _xidParameters;
+        set => _xidParameters = value;
+    }
+
+    /// <summary>
+    /// The column an UPDATE's setter writes, or null after recording why it cannot. The map
+    /// decides: a mapped column, an owned member's included, is written; a whole owned object, a
+    /// composite or a system column such as xmin is ZAO102; anything else ZAO105. Each is recorded
+    /// once per member and location.
+    /// </summary>
+    public string? SetterColumn(SqlMemberExpression target)
+    {
+        var source = SourceOf(target.SourceAlias);
+        string? column;
+        if (target.WholeObject is { } whole)
+        {
+            if (IsOwned(source, target.Member))
+            {
+                Record(LinqDiagnostics.UnsupportedAt(
+                    "Setting '" + target.Member + "', a whole owned object rather than one of its columns,", target.Location));
+                return null;
+            }
+            column = ResolveObject(source, target.Member, whole.Text, whole.CompositeType, target.Location, projected: false, out _);
+        }
+        else if (source.Columns.TryGetValue(target.Member, out var mapped))
+        {
+            column = mapped.Column;
+        }
+        else
+        {
+            Unmapped(source, target.Member, target.Location, projected: false);
+            column = null;
+        }
+
+        if (column is not null && SystemColumns.Contains(column))
+        {
+            Record(LinqDiagnostics.UnsupportedAt(
+                "Setting '" + target.Member + "', whose column " + column + " is a system column PostgreSQL sets itself,",
+                target.Location));
+            return null;
+        }
+        return column;
+    }
+
+    // PostgreSQL's system columns, which an UPDATE cannot assign. A quoted name in another case,
+    // such as "Xmin", is an ordinary column.
+    private static readonly HashSet<string> SystemColumns = new(StringComparer.Ordinal)
+    {
+        "xmin", "xmax", "cmin", "cmax", "ctid", "tableoid",
+    };
 
     /// <summary>
     /// The statement's SELECT list, so a member that is not mapped there reports in a
@@ -238,6 +325,10 @@ internal sealed class SqlNameScope
 
     /// <summary>Records a diagnostic the render found, such as an enum value with no name to compare by.</summary>
     public void Report(DiagnosticInfo diagnostic) => _diagnostics.Add(diagnostic);
+
+    /// <summary>Whether the member's <c>[ColumnMap]</c> declares its column a jsonb document, <c>Json = true</c>.</summary>
+    public bool IsJson(SqlMemberExpression member)
+        => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column) && column.Json;
 
     /// <summary>Whether the member maps to a column that stores an enum as its member name.</summary>
     public bool IsEnumAsString(SqlMemberExpression member)

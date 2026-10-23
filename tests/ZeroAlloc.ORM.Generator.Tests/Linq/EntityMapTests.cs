@@ -785,6 +785,49 @@ public class EntityMapTests
         Assert.Equal(new ColumnMapModel("Platform", "Platform", false), At(map, "Platform"));
     }
 
+    // Json = true declares a string column jsonb, on a plain property and on an owned member's
+    // dotted path; a column without it is not.
+    [Fact]
+    public void Json_is_read_on_plain_and_owned_columns()
+    {
+        var plain = MapsOfSingle(Entity + """
+            [TableMap(typeof(TaskEntity), "Tasks")]
+            [ColumnMap(nameof(TaskEntity.Title), Json = true)]
+            internal static class TaskMap;
+            """);
+        Assert.Equal(new ColumnMapModel("Title", "Title", false, Json: true), Column(plain, "Title"));
+        Assert.False(Column(plain, "Kind").Json);
+
+        var source = Owned + """
+            [TableMap(typeof(Request), "Requests")]
+            [OwnedMap(nameof(Request.Repository))]
+            [ColumnMap("Repository.Url", Column = "RepositoryUrl", Json = true)]
+            internal static class RequestMap;
+            """;
+        Assert.Empty(Zao106(source));
+        var owned = MapsOfSingle(source);
+        Assert.Equal(new ColumnMapModel("Url", "RepositoryUrl", false, DateTimeColumnStorage.None, "Repository", Json: true), At(owned, "Repository.Url"));
+        Assert.False(At(owned, "Repository.Branch").Json);
+    }
+
+    // Json on a property that is not a string, or next to Ignore, is invalid.
+    [Theory]
+    [InlineData("[ColumnMap(nameof(TaskEntity.Kind), Json = true)]", "Json is set on 'Kind' of TestApp.TaskEntity, which is not a string")]
+    [InlineData("[ColumnMap(nameof(TaskEntity.Title), Ignore = true, Json = true)]", "together with Column, EnumAsString, DateTimeStorage or Json")]
+    public void Invalid_Json_reports_ZAO106(string columnMap, string expected)
+    {
+        var diagnostics = Zao106(Entity + """
+            [TableMap(typeof(TaskEntity), "Tasks")]
+
+            """ + columnMap + """
+
+            internal static class TaskMap;
+            """);
+
+        var d = Assert.Single(diagnostics);
+        Assert.Contains(expected, d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // An owned DateTime member that declares no storage takes the assembly default, as a plain
     // column does.
     [Fact]

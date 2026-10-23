@@ -11,7 +11,7 @@ using ZeroAlloc.TypeConversions;
 namespace ZeroAlloc.ORM.Generator.Linq;
 
 /// <summary>
-/// The LINQ front end. <see cref="Read"/> takes one <c>[LinqQuery]</c> method, finds and checks its
+/// The LINQ front end. <see cref="Read"/> takes one <c>[LinqQuery]</c> or <c>[LinqCommand]</c> method, finds and checks its
 /// companion, walks the companion's chain through <c>IOperation</c> and returns a symbol-free
 /// <see cref="LinqTranslation"/>. It is the single entry point later operators extend:
 /// <list type="bullet">
@@ -27,7 +27,9 @@ internal static partial class LinqQueryReader
     private const string DialectAttributeFullName = "ZeroAlloc.ORM.DialectAttribute";
     private const int PostgreSqlDialect = (int)SqlDialectModel.PostgreSql;
 
-    public static LinqTranslation Read(GeneratorAttributeSyntaxContext ctx, CancellationToken ct)
+    // `isCommand` for a [LinqCommand] method, whose chain ends in a write and which returns the
+    // rows affected or nothing.
+    public static LinqTranslation Read(GeneratorAttributeSyntaxContext ctx, bool isCommand, CancellationToken ct)
     {
         var method = (IMethodSymbol)ctx.TargetSymbol;
         var methodSyntax = (MethodDeclarationSyntax)ctx.TargetNode;
@@ -37,17 +39,30 @@ internal static partial class LinqQueryReader
         var dialectError = CheckDialect(method, methodSyntax, ctx.SemanticModel.Compilation);
         if (dialectError is not null) return Failed(comment, dialectError);
 
-        var companion = ResolveCompanion(ctx, method, companionName, ct);
+        var companion = ResolveCompanion(ctx, method, companionName, isCommand, ct);
         if (companion.Error is not null) return Failed(comment, companion.Error);
 
-        var context = new ReaderContext(ctx.SemanticModel.Compilation, companion.Syntax!, ct);
+        var context = new ReaderContext(ctx.SemanticModel.Compilation, companion.Syntax!, ct) { WriteTerminal = companion.Write };
         var parameterError = MatchParameters(method, companion.Symbol!, companion.Syntax!, context);
         if (parameterError is not null) return Failed(comment, parameterError);
         if (!CheckParameterShapes(companion.Symbol!, context)) return Failed(comment, context.Diagnostics.ToArray());
 
         // One shape per chain: the method's own, or one per element of its tuple.
         ImmutableArray<LinqResultShape> shapes;
-        if (companion.IsTuple)
+        if (isCommand)
+        {
+            if (!IsNonQuery(method.ReturnType))
+            {
+                return Failed(comment, LinqDiagnostics.ShapeMismatchAt(
+                    method.Name,
+                    "'" + method.ReturnType.ToDisplayString() + "'",
+                    "'" + companion.Symbol!.ReturnType.ToDisplayString() + "'",
+                    CommandShapes,
+                    methodSyntax.ReturnType.GetLocation()));
+            }
+            shapes = ImmutableArray.Create(LinqResultShape.NonQuery);
+        }
+        else if (companion.IsTuple)
         {
             var tupleShapes = ClassifyTupleShapes(method, methodSyntax, companion.Symbol!, companion.RowTypes, out var mismatch);
             if (tupleShapes is null) return Failed(comment, mismatch!);
@@ -90,6 +105,7 @@ internal static partial class LinqQueryReader
             }
             statements.Add(statement);
         }
+        if (!CheckXidParameters(context)) return Failed(comment, context.Diagnostics.ToArray());
 
         // What is left in the diagnostics are warnings, such as ZAO110.
         return new LinqTranslation(
@@ -100,6 +116,8 @@ internal static partial class LinqQueryReader
             new EquatableArray<DiagnosticInfo>(context.Diagnostics.ToImmutableArray()))
         {
             LiftedProjections = new EquatableArray<LinqLiftedProjection>(context.LiftedProjections.ToImmutableArray()),
+            XidParameters = new EquatableArray<string>(context.XidParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
+            XminProjections = new EquatableArray<LinqXminProjection>(context.XminProjections.ToImmutableArray()),
         };
     }
 
@@ -249,6 +267,22 @@ internal static partial class LinqQueryReader
 
         // The statement being read: 0, or the tuple element's index.
         public int StatementIndex { get; set; }
+
+        // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate; null for a query.
+        public string? WriteTerminal { get; init; }
+
+        // Value parameters, by C# name, of type uint compared with xmin: they bind as xid.
+        public HashSet<string> XidParameters { get; } = new(StringComparer.Ordinal);
+
+        // Every read of a uint parameter other than a comparison with xmin, for ZAO102 when the
+        // parameter binds as xid; see CheckXidParameters.
+        public List<SqlParameterExpression> UintParameterUses { get; } = new();
+
+        // Whether Sql.Xmin reads as a value: set while a projection's item is read.
+        public bool XminAllowed { get; set; }
+
+        // Projected uint members, which the binder checks map to xmin.
+        public List<LinqXminProjection> XminProjections { get; } = new();
 
         // The row parameters of the predicates an IN subquery is read inside, innermost last. A
         // subquery that reads one of them would be correlated, which is not translated.

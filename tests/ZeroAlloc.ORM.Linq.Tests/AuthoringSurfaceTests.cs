@@ -8,7 +8,7 @@ namespace ZeroAlloc.ORM.Linq.Tests;
 public sealed class AuthoringSurfaceTests
 {
     private const string Guidance = "read at build time";
-    private const string Call = "Call the [LinqQuery] method";
+    private const string Call = "Call the [LinqQuery] or [LinqCommand] method";
 
     [TableMap(typeof(Order), "orders", Schema = "sales")]
     [ColumnMap("Id", Column = "order_id")]
@@ -21,6 +21,15 @@ public sealed class AuthoringSurfaceTests
     public void Table_throws_with_guidance()
     {
         var act = () => Sql.Table<object>();
+
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
+    }
+
+    // Sql.Xmin names the row's xmin system column; like every marker it only runs by mistake.
+    [Fact]
+    public void Xmin_throws()
+    {
+        var act = () => Sql.Xmin(new Order());
 
         act.Should().Throw<InvalidOperationException>().WithMessage($"*{Guidance}*{Call}*");
     }

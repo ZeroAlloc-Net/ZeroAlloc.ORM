@@ -210,7 +210,10 @@ internal sealed record ParameterInfo(
     bool IsJson = false,
     // [LinqQuery] only: the rendered SQL never names the parameter, for instance when a Count
     // drops the projection that used it. The signature keeps it; no DbParameter is bound.
-    bool IsUnreferenced = false);
+    bool IsUnreferenced = false,
+    // [LinqQuery] and [LinqCommand]: a uint compared with xmin. The binding sets
+    // NpgsqlDbType.Xid after `.Value`.
+    bool IsXid = false);
 
 // v2.0, #235 — `[Param]` members that shape the DbParameter's type. Each field is
 // null unless the adopter wrote the member, so the emit sets only what was asked

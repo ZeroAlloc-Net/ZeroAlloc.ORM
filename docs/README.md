@@ -19,7 +19,7 @@ Reference the generator as a build-time analyzer so it does not flow to downstre
 
 Then add your ADO.NET provider, such as `Microsoft.Data.Sqlite`, `Npgsql` or `Microsoft.Data.SqlClient`, and wrap its connection with AdoNet.Async's `AsAsync()`.
 
-To write PostgreSQL queries as LINQ, also add `ZeroAlloc.ORM.Linq`; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md).
+To write PostgreSQL queries, updates and deletes as LINQ, also add `ZeroAlloc.ORM.Linq`; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md).
 
 ## Packages
 
@@ -27,7 +27,7 @@ To write PostgreSQL queries as LINQ, also add `ZeroAlloc.ORM.Linq`; see [linq.md
 |---------|-------------|
 | [`ZeroAlloc.ORM`](https://www.nuget.org/packages/ZeroAlloc.ORM) | Runtime: `MigrationRunner` with the SQLite, PostgreSQL and SQL Server migration dialects, and the `ZeroAllocOrm*Exception` types. Depends on `ZeroAlloc.ORM.Abstractions` and AdoNet.Async. |
 | [`ZeroAlloc.ORM.Abstractions`](https://www.nuget.org/packages/ZeroAlloc.ORM.Abstractions) | The attributes and enums you annotate with: `[Query]`, `[Command]`, `[StoredProcedure]`, `[Param]`, `[Materialize]`, `[StoreAsString]`, `[Dialect]`, `[TableMap]`, `[ColumnMap]`, `CommandKind`, `BatchMode`, `SqlDialect`. |
-| [`ZeroAlloc.ORM.Linq`](https://www.nuget.org/packages/ZeroAlloc.ORM.Linq) | The LINQ authoring surface for `[LinqQuery]`: `Sql.Table<T>()`, `Sql.ILike`, `Sql.Row`, `IQuery<T>` and its operators. The generator translates each chain to PostgreSQL at build time; none of it runs. Depends on `ZeroAlloc.ORM.Abstractions`. |
+| [`ZeroAlloc.ORM.Linq`](https://www.nuget.org/packages/ZeroAlloc.ORM.Linq) | The LINQ authoring surface for `[LinqQuery]` and `[LinqCommand]`: `Sql.Table<T>()`, `Sql.ILike`, `Sql.Row`, `Sql.Xmin`, `IQuery<T>` and its operators, the row locks `ForUpdate`, `ForUpdateSkipLocked` and `ForUpdateNoWait`, and the writes `ExecuteDelete` and `ExecuteUpdate`. The generator translates each chain to PostgreSQL at build time; none of it runs. Depends on `ZeroAlloc.ORM.Abstractions`. |
 | [`ZeroAlloc.ORM.Generator`](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | Roslyn incremental source generator and the `ZAO` diagnostics. Build-time only; bundles `ZeroAlloc.TypeConversions`. |
 | [`ZeroAlloc.TypeConversions`](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | Build-time type-conversion and convention-discovery catalog used by the generator. You do not reference it directly. |
 
@@ -172,7 +172,7 @@ Full tables, per-launch spreads and methodology: [SQLite](https://github.com/Zer
 
 ## Diagnostics
 
-The generator reports signature, binding, materialization, stored-procedure, `BulkInsert` and transaction problems at build time, from `ZAO001` to `ZAO082`, and `[LinqQuery]` translation and entity-map problems from `ZAO100` to `ZAO112`. Every code has a page under [docs/diagnostics/](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/diagnostics), and the IDE help link on each diagnostic opens it. The canonical index of every shipped code, with severity and trigger, is [docs/diagnostics/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md). `DiagnosticHelpLinkTests` fails the build if a descriptor lacks its page or its index row.
+The generator reports signature, binding, materialization, stored-procedure, `BulkInsert` and transaction problems at build time, from `ZAO001` to `ZAO082`, and `[LinqQuery]` and `[LinqCommand]` translation and entity-map problems from `ZAO100` to `ZAO113`. Every code has a page under [docs/diagnostics/](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/diagnostics), and the IDE help link on each diagnostic opens it. The canonical index of every shipped code, with severity and trigger, is [docs/diagnostics/README.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md). `DiagnosticHelpLinkTests` fails the build if a descriptor lacks its page or its index row.
 
 ## Documentation
 
@@ -189,7 +189,7 @@ These pages are the documentation. They also render at [orm.zeroalloc.net](https
 | [composites.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/composites.md) | Multi-column composites (`Money`) and `[Materialize(Factory)]` |
 | [provider-quirks.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/provider-quirks.md) | `[Dialect]` and SQLite / PostgreSQL / SQL Server / MySQL differences |
 | [migrations.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/migrations.md) | `MigrationRunner`, the three dialects, several sources in one database |
-| [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) | `[LinqQuery]`: map classes, the method and companion pattern, operators and their SQL, parents with children, children of a paged parent set, owned types, scalar aggregates, `GroupBy`, inner joins, keyset paging, diagnostics |
+| [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) | `[LinqQuery]` and `[LinqCommand]`: map classes, the method and companion pattern, operators and their SQL, parents with children, children of a paged parent set, owned types, scalar aggregates, `GroupBy`, inner joins, keyset paging, set-based writes, optimistic concurrency with `xmin`, row locks, diagnostics |
 | [observability.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/observability.md) | Composing with ZeroAlloc.Telemetry's `[Instrument]` |
 
 - [Migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md) — parameter names without the `@` prefix, `[Param(DbType)]` on inputs, and the `IMigrationDialect` change.
@@ -202,4 +202,4 @@ ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards
 
 ## Not supported yet
 
-Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. For `[LinqQuery]`, set-based writes with concurrency checks and `FOR UPDATE` come next; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#not-supported-yet). The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).
+Not supported yet, roughly in order of demand: composites of composites (ZAO052 today), SQL loaded from embedded resources (`FromResource`, ZAO020 today), a MySQL migration dialect, table-valued parameters, and provider-native bulk paths such as `SqlBulkCopy` and PostgreSQL `COPY`. For LINQ, see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#not-supported-yet). The working backlog is [docs/plans/za-orm-backlog.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/plans/za-orm-backlog.md).

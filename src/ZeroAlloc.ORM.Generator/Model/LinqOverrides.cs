@@ -12,7 +12,17 @@ namespace ZeroAlloc.ORM.Generator.Model;
 // Plain strings, ints and EquatableArray only, so the model stays cache-safe.
 internal sealed record LinqOverrides(
     EquatableArray<LinqParameterFacet> Facets,
-    string SourceComment);
+    string SourceComment)
+{
+    // [LinqCommand(ThrowOnNoRows = true)] -- the ZeroAllocOrmConcurrencyException message the
+    // non-query emit throws when the write affects no rows; becomes
+    // QueryMethodModel.LinqNoRowsMessage. Null otherwise.
+    public string? NoRowsMessage { get; init; }
+
+    // [LinqQuery] and [LinqCommand] -- the C# names of the uint value parameters compared with
+    // xmin, which bind as NpgsqlDbType.Xid. Empty otherwise.
+    public EquatableArray<string> XidParameters { get; init; }
+}
 
 // One parameter's DbType facet from the LINQ translation. Applied to the matching
 // ParameterInfo.Facets the way `[Param(DbType = ...)]` would be, so the emit sets

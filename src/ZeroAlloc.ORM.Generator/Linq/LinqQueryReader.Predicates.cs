@@ -125,6 +125,9 @@ internal static partial class LinqQueryReader
             return ReadNullTest(binary.LeftOperand, binary.RightOperand, compare == SqlBinaryOperator.NotEqual, binary, row, context);
         }
 
+        if (IsXminCall(Unwrap(binary.LeftOperand)) || IsXminCall(Unwrap(binary.RightOperand)))
+            return ReadXminComparison(binary, compare, row, context);
+
         if (binary.OperatorMethod is { } rowOperator && IsRowOperator(rowOperator))
             return ReadRowComparison(binary, compare, row, context);
 
@@ -143,6 +146,7 @@ internal static partial class LinqQueryReader
         if (left is null) return null;
         var right = ReadComparand(binary.RightOperand, row, context);
         if (right is null) return null;
+        RecordMappedXminComparison(binary, left, right, context);
         return Compare(compare, left, right, context);
     }
 

@@ -21,6 +21,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private const string CommandAttributeFullName = "ZeroAlloc.ORM.CommandAttribute";
     private const string StoredProcedureAttributeFullName = "ZeroAlloc.ORM.StoredProcedureAttribute";
     private const string LinqQueryAttributeFullName = "ZeroAlloc.ORM.Linq.LinqQueryAttribute";
+    private const string LinqCommandAttributeFullName = "ZeroAlloc.ORM.Linq.LinqCommandAttribute";
     private const string DialectAttributeFullName = "ZeroAlloc.ORM.DialectAttribute";
     private const string IAsyncDbConnectionFullName = "System.Data.Async.IAsyncDbConnection";
     private const string IAsyncDbConnectionSimpleName = "IAsyncDbConnection";
@@ -133,6 +134,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // methods that bind join the union below. See OrmGenerator.Linq.cs.
         var linqQueryMethods = LinqQueryMethods(context, entityMaps);
 
+        // [LinqCommand] -- the same for a write: the SQL comes from a chain ending in
+        // ExecuteDelete or ExecuteUpdate, and the method takes the [Command] non-query path.
+        var linqCommandMethods = LinqCommandMethods(context, entityMaps);
+
         // Group by containing-type FQN. Every QueryMethodWithTypeContext within a
         // group carries the same type-scoped fields (ConnectionAccess, partial-ness,
         // location, etc.) — we take them from g.First() instead of duplicating them
@@ -155,8 +160,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             .Combine(commandMethods.Collect())
             .Combine(storedProcedureMethods.Collect())
             .Combine(linqQueryMethods.Collect())
-            .SelectMany(static (combined, _) =>
+            .Combine(linqCommandMethods.Collect())
+            .SelectMany(static (all, _) =>
             {
+                var combined = all.Left;
                 var pair = combined.Left.Left;
                 var sprocs = combined.Left.Right;
                 var linq = combined.Right;
@@ -178,6 +185,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
                 foreach (var m in linq)
+                {
+                    if (seen.Add(m.MethodSignature)) union.Add(m);
+                }
+                foreach (var m in all.Right)
                 {
                     if (seen.Add(m.MethodSignature)) union.Add(m);
                 }
@@ -418,9 +429,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // or the SQL a [LinqQuery] chain was translated to. The core never reads it from
     // the attribute, so a [LinqQuery] companion name cannot be mistaken for SQL.
     //
-    // `linq` is non-null only for [LinqQuery]. Its facets are applied to the matching
-    // parameters, as `[Param(DbType = ...)]` would be, so ZAO015 checks them through
-    // a DbTypeCheck; its source comment becomes QueryMethodModel.LinqSourceComment.
+    // `linq` is non-null only for [LinqQuery] and [LinqCommand]. Its facets are applied to
+    // the matching parameters, as `[Param(DbType = ...)]` would be, so ZAO015 checks them
+    // through a DbTypeCheck; its source comment becomes QueryMethodModel.LinqSourceComment.
+    // A [LinqCommand] comes through with AttributePipelineKind.Command, so a check meant for
+    // [Command] alone that reads the SQL text or the attribute's arguments must also test
+    // `linq is null`: a [LinqCommand]'s text is empty here and its attribute is not [Command].
     private static QueryMethodWithTypeContext? TransformMethodCore(
         GeneratorAttributeSyntaxContext ctx,
         AttributePipelineKind pipelineKind,
@@ -553,7 +567,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // ZAO005 — multiple ORM attributes on one method.
         // v0.4 Phase D extends from the v0.4-A two-attribute check to a three-way
         // exclusivity rule: counts QueryAttribute + CommandAttribute +
-        // StoredProcedureAttribute, and since [LinqQuery] also LinqQueryAttribute.
+        // StoredProcedureAttribute, and since [LinqQuery] also LinqQueryAttribute and
+        // LinqCommandAttribute.
         // Counting every pipeline's attribute on the same method covers every pair
         // (Query+Command, Query+StoredProcedure, Command+StoredProcedure, any of
         // them with LinqQuery) and the all-of-them case via a single >1 threshold.
@@ -570,7 +585,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 return string.Equals(fqn, "ZeroAlloc.ORM.QueryAttribute", StringComparison.Ordinal)
                     || string.Equals(fqn, "ZeroAlloc.ORM.CommandAttribute", StringComparison.Ordinal)
                     || string.Equals(fqn, "ZeroAlloc.ORM.StoredProcedureAttribute", StringComparison.Ordinal)
-                    || string.Equals(fqn, LinqQueryAttributeFullName, StringComparison.Ordinal);
+                    || string.Equals(fqn, LinqQueryAttributeFullName, StringComparison.Ordinal)
+                    || string.Equals(fqn, LinqCommandAttributeFullName, StringComparison.Ordinal);
             });
         if (ormAttrCount > 1)
         {
@@ -808,7 +824,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             diagnostics,
             LocationInfo.From(methodSyntax.ReturnType.GetLocation()),
             methodSql,
-            hasNpgsql);
+            hasNpgsql,
+            readsXmin: linq is not null);
 
         // ZAO082 — a PostgreSQL array column reads only through Npgsql, like an array
         // parameter. Checked on the classified result, so every row, composite, tuple
@@ -1206,6 +1223,27 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         Facets: paramFacets,
                         IsBulkInsertCollection: true);
                 }
+                // A [LinqQuery] or [LinqCommand] uint compared with xmin binds as an xid, which only
+                // Npgsql can send. uint is no convention of its own: anywhere else it is ZAO041.
+                if (!isCt
+                    && linq is not null
+                    && p.Type.SpecialType == SpecialType.System_UInt32
+                    && linq.XidParameters.Contains(p.Name, StringComparer.Ordinal))
+                {
+                    diagnostics.Add(RequiresNpgsql(p.Name, "an xid", LocationInfo.From(p.Locations.FirstOrDefault())));
+                    return new ParameterInfo(
+                        p.Name,
+                        p.Type.ToDisplayString(parameterDisplayFormat),
+                        IsCancellationToken: false,
+                        IsTransaction: false,
+                        ParamNameOverride: paramNameOverride,
+                        IsNullable: false,
+                        Convention: null,
+                        CompositeFields: default,
+                        CompositeTypeFullName: null,
+                        Facets: paramFacets,
+                        IsXid: true);
+                }
                 if (!isCt)
                 {
                     var underlying = UnwrapNullableValueType(p.Type);
@@ -1351,7 +1389,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     paramConvention = BuildConventionInfo(underlying, resolution, underlyingReader);
                 }
 
-                // A string marked [Json] binds as jsonb, which only Npgsql can send.
+                // A string marked [Json] binds as jsonb, which only Npgsql can send. One a
+                // [LinqCommand] update sets into a jsonb column is switched when bound to the maps.
                 var isJson = !isCt && IsJsonString(p, p.Type);
                 if (isJson)
                 {
@@ -1454,7 +1493,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             ReturnValueBindings: new EquatableArray<ReturnValueBinding>(returnValueBindings.ToImmutable()),
             HasNpgsql: hasNpgsql,
             PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
-            LinqSourceComment: linq?.SourceComment);
+            LinqSourceComment: linq?.SourceComment,
+            LinqNoRowsMessage: linq?.NoRowsMessage);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1605,7 +1645,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         ImmutableArray<DiagnosticInfo>.Builder diagnostics,
         LocationInfo? returnTypeLocation,
         string sql,
-        bool hasNpgsql)
+        bool hasNpgsql,
+        bool readsXmin)
     {
         // v0.4 Phase A.2 — [Command(Kind = NonQuery)] dispatch. Accepts:
         //   * Task<int>, ValueTask<int>  — return rows-affected count.
@@ -1717,7 +1758,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             && string.Equals(named.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
         {
             var streamElement = named.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext);
+            var streamFlat = TryBuildFlatRowMaterialization(streamElement, conventionContext, readsXmin: readsXmin);
             if (streamFlat is not null)
                 return (EmitShape.Streaming, null, streamFlat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             var streamDomain = TryBuildDomainEntityMaterialization(streamElement, conventionContext);
@@ -1752,7 +1793,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             && string.Equals(listInner.ContainingNamespace?.ToDisplayString(), "System.Collections.Generic", StringComparison.Ordinal))
         {
             var listElement = listInner.TypeArguments[0].WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext);
+            var listFlat = TryBuildFlatRowMaterialization(listElement, conventionContext, readsXmin: readsXmin);
             if (listFlat is not null)
             {
                 // v1.6 — EmitListResultSet now recurses into non-nullable
@@ -1833,7 +1874,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     return (EmitShape.SprocWithOutputParams, null, null, null, HasReturnValue: true, SprocOutputParams: sprocOutputs, BulkInsertMaterialization: null);
             }
 
-            var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext);
+            var multi = TryBuildMultiResultMaterialization(tupleNamed, tupleReturnsNullable, conventionContext, readsXmin);
             if (multi is not null)
                 return (EmitShape.MultiResultSet, null, null, multi, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Tuple shape but at least one element wasn't classifiable: fall through to
@@ -1974,7 +2015,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             // Peel the nullable annotation so we look at the underlying record type.
             var elementType = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-            var flat = TryBuildFlatRowMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation);
+            var flat = TryBuildFlatRowMaterialization(elementType, conventionContext, diagnostics, method.Name, returnTypeLocation, readsXmin);
             if (flat is not null)
                 return (EmitShape.FlatRow, null, flat, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
 
@@ -2610,6 +2651,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return PrimitiveCatalog.GetScalarReaderMethod(underlying);
     }
 
+    // The reader of a [LinqQuery] row's xmin column; see TryBuildFlatRowMaterialization.
+    internal const string XminReader = "GetFieldValue<uint>";
+
     // Attempt to classify `elementType` as a positional record whose constructor params
     // resolve to known conventions. Returns null if the type isn't a record, has no
     // public ctor with parameters, or any parameter falls outside the conventions
@@ -2624,7 +2668,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         ConventionContext conventionContext,
         ImmutableArray<DiagnosticInfo>.Builder? diagnostics = null,
         string? methodName = null,
-        LocationInfo? location = null)
+        LocationInfo? location = null,
+        bool readsXmin = false)
     {
         if (elementType is not INamedTypeSymbol named || !named.IsRecord) return null;
 
@@ -2734,6 +2779,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             // SingleArgCtor / StaticFactory we read the underlying primitive then
             // pass it to the factory.
             string? reader = ResolveColumnReader(underlying, resolution);
+
+            // A [LinqQuery] row reads a uint from PostgreSQL's xmin, an xid Npgsql reads as
+            // uint; the LINQ reader and binder reject a uint parameter fed by anything else.
+            // uint stays no general-purpose primitive: Npgsql would bind one as an oid.
+            if (reader is null && readsXmin && p.Type.SpecialType == SpecialType.System_UInt32)
+                reader = XminReader;
             if (reader is null) return null;
 
             var isNullable = p.Type.NullableAnnotation == NullableAnnotation.Annotated
@@ -3529,7 +3580,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static MultiResultMaterializationModel? TryBuildMultiResultMaterialization(
         INamedTypeSymbol tupleType,
         bool returnsNullable,
-        ConventionContext conventionContext)
+        ConventionContext conventionContext,
+        bool readsXmin)
     {
         var elementsBuilder = ImmutableArray.CreateBuilder<MultiResultElement>(tupleType.TupleElements.Length);
         var typeDisplayFormat = SymbolDisplayFormat.FullyQualifiedFormat
@@ -3539,7 +3591,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         foreach (var field in tupleType.TupleElements)
         {
-            var element = TryClassifyTupleElement(field.Name, field.Type, conventionContext, typeDisplayFormat);
+            var element = TryClassifyTupleElement(field.Name, field.Type, conventionContext, typeDisplayFormat, readsXmin);
             if (element is null) return null;
             elementsBuilder.Add(element);
         }
@@ -3714,7 +3766,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 // Result position. Route through TryClassifyTupleElement so
                 // single-row / list / scalar shapes flow through unchanged.
                 var resultElement = TryClassifyTupleElement(
-                    field.Name, field.Type, conventionContext, typeDisplayFormat);
+                    field.Name, field.Type, conventionContext, typeDisplayFormat, readsXmin: false);
                 if (resultElement is null) return null;
                 resultBuilder.Add(resultElement);
                 orderBuilder.Add(new SprocTupleSlot(
@@ -3779,7 +3831,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         string tupleFieldName,
         ITypeSymbol elementType,
         ConventionContext conventionContext,
-        SymbolDisplayFormat typeDisplayFormat)
+        SymbolDisplayFormat typeDisplayFormat,
+        bool readsXmin)
     {
         // Strip the outer nullable annotation; per-element nullability flows via
         // IsNullable so the emit can wrap reads in IsDBNull guards.
@@ -3800,7 +3853,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 .WithNullableAnnotation(NullableAnnotation.NotAnnotated);
 
             // Inner element must materialize as a row — FlatRow or DomainEntity.
-            var flat = TryBuildFlatRowMaterialization(inner, conventionContext);
+            var flat = TryBuildFlatRowMaterialization(inner, conventionContext, readsXmin: readsXmin);
             if (flat is not null)
             {
                 return new MultiResultElement(
@@ -3830,7 +3883,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // (2/3) Row-kind: a single record or class instance per result set. Records take
         // the FlatRow positional path; classes with a single ctor take the DomainEntity
         // column-name path.
-        var rowFlat = TryBuildFlatRowMaterialization(unwrapped, conventionContext);
+        var rowFlat = TryBuildFlatRowMaterialization(unwrapped, conventionContext, readsXmin: readsXmin);
         if (rowFlat is not null)
         {
             return new MultiResultElement(
@@ -4941,7 +4994,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // parameter that feeds it in the constructor the row materializes through. The
     // parameter maps to the property case-insensitively, as a DomainEntity's ctor
     // parameters map to its columns, so a class's `doc` feeds `Doc`.
-    private static bool IsJsonRowProperty(INamedTypeSymbol? rowType, IPropertySymbol property)
+    internal static bool IsJsonRowProperty(INamedTypeSymbol? rowType, IPropertySymbol property)
     {
         if (property.Type.SpecialType != SpecialType.System_String) return false;
         if (HasJsonAttribute(property)) return true;
@@ -5049,6 +5102,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO110" => DiagnosticDescriptors.ZAO110_LinqPagingWithoutOrder,
         "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
+        "ZAO113" => DiagnosticDescriptors.ZAO113_LinqLockWithoutTransaction,
         _ => null,
     };
 
@@ -5611,7 +5665,16 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         EmitTransactionAssignment(sb, m, "            ");
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
-        if (m.HasReturnValue)
+        if (m.LinqNoRowsMessage is { } noRows)
+        {
+            // [LinqCommand(ThrowOnNoRows = true)]: no rows affected means the row the write
+            // guards was changed or removed since it was read.
+            sb.AppendLine($"            var __rows = await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
+            sb.Append("            if (__rows == 0) throw new global::ZeroAlloc.ORM.ZeroAllocOrmConcurrencyException(")
+                .Append(SymbolDisplay.FormatLiteral(noRows, quote: true)).AppendLine(");");
+            if (m.HasReturnValue) sb.AppendLine("            return __rows;");
+        }
+        else if (m.HasReturnValue)
         {
             sb.AppendLine($"            return await __cmd.ExecuteNonQueryAsync({ct}).ConfigureAwait(false);");
         }
@@ -5832,7 +5895,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var valueExpr = BuildBulkInsertParameterValueExpression(binding, "__row");
             sb.AppendLine($"                    var {paramLocal} = __cmd.CreateParameter();");
             sb.AppendLine($"                    {paramLocal}.ParameterName = {cache}.{BulkInsertNamesField(binding, i)}[__i];");
-            EmitValueAssignment(sb, "                    ", paramLocal, BuildBoundValue(valueExpr, isNullable: true, binding.Convention), binding.IsJson);
+            EmitValueAssignment(sb, "                    ", paramLocal, BuildBoundValue(valueExpr, isNullable: true, binding.Convention), binding.IsJson ? Jsonb : null);
             sb.AppendLine($"                    __cmd.Parameters.Add({paramLocal});");
         }
         sb.AppendLine("                }");
@@ -8164,7 +8227,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8246,7 +8309,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output: null);
             }
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
@@ -8435,7 +8498,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8731,7 +8794,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.IsJson);
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
     }
@@ -8740,17 +8803,24 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // it: the four method-parameter sites, composite members and bulk-insert rows.
     //
     // A string marked [Json] then gets NpgsqlDbType.Jsonb, so the SQL needs no `::jsonb`
-    // cast. Set whatever the value, DBNull included: Npgsql sends a typed NULL. The
-    // check names Npgsql only in the adopter's code; ZAO082 guarantees the adopter
-    // references it. The pattern local, `__np_x` for `__p_x`, is unique in its block
-    // because the parameter local is.
-    private static void EmitValueAssignment(StringBuilder sb, string indent, string local, string value, bool isJson)
+    // cast, and a [LinqQuery] or [LinqCommand] uint compared with xmin gets NpgsqlDbType.Xid,
+    // so it meets xmin as an xid rather than the oid Npgsql would infer. Set whatever the
+    // value, DBNull included: Npgsql sends a typed NULL. The check names Npgsql only in the
+    // adopter's code; ZAO082 guarantees the adopter references it. The pattern local,
+    // `__np_x` for `__p_x`, is unique in its block because the parameter local is.
+    private static void EmitValueAssignment(StringBuilder sb, string indent, string local, string value, string? npgsqlDbType)
     {
         sb.AppendLine($"{indent}{local}.Value = {value};");
-        if (!isJson) return;
+        if (npgsqlDbType is null) return;
         var npgsqlLocal = "__np" + local.Substring("__p".Length);
-        sb.AppendLine($"{indent}if ({local} is global::Npgsql.NpgsqlParameter {npgsqlLocal}) {npgsqlLocal}.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;");
+        sb.AppendLine($"{indent}if ({local} is global::Npgsql.NpgsqlParameter {npgsqlLocal}) {npgsqlLocal}.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.{npgsqlDbType};");
     }
+
+    private const string Jsonb = "Jsonb";
+
+    // The NpgsqlDbType member a method parameter binds with, or null for the provider's own
+    // inference.
+    private static string? NpgsqlDbTypeOf(ParameterInfo p) => p.IsJson ? Jsonb : p.IsXid ? "Xid" : null;
 
     // The right-hand side of `__p_x.Value = ...;` for one method parameter. The four
     // binding sites, single-command and batch, with and without indent, share it.
@@ -8926,7 +8996,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
-                EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson);
+                EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson ? Jsonb : null);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8948,7 +9018,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 // between the parameter name and the field accessor.
                 var valueExpr = HoistArrayCopySubject(
                     sb, indent + "    ", local, BuildCompositeFieldValueExpressionForNullable(p.Name, field), field.Convention);
-                EmitValueAssignment(sb, indent + "    ", local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
+                EmitValueAssignment(sb, indent + "    ", local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson ? Jsonb : null);
                 sb.AppendLine($"{indent}    {cmdLocal}.Parameters.Add({local});");
             }
             sb.AppendLine($"{indent}}}");
@@ -8965,7 +9035,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
             var valueExpr = HoistArrayCopySubject(
                 sb, indent, local, BuildCompositeFieldValueExpression(p.Name, field), field.Convention);
-            EmitValueAssignment(sb, indent, local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson);
+            EmitValueAssignment(sb, indent, local, BuildBoundValue(valueExpr, field.IsNullable, field.Convention), field.IsJson ? Jsonb : null);
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }

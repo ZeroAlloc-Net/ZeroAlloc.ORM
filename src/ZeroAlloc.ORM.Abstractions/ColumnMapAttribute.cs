@@ -23,7 +23,7 @@ public sealed class ColumnMapAttribute(string property) : Attribute
     /// Gets or sets a value indicating whether the property is left out of the map: it has no column,
     /// and a LINQ query that uses it does not compile. Set it on a property that holds a value but is
     /// not stored, such as a cached auto-property; it cannot be combined with <see cref="Column"/>,
-    /// <see cref="EnumAsString"/> or <see cref="DateTimeStorage"/>.
+    /// <see cref="EnumAsString"/>, <see cref="DateTimeStorage"/> or <see cref="Json"/>.
     /// </summary>
     public bool Ignore { get; init; }
 
@@ -34,4 +34,13 @@ public sealed class ColumnMapAttribute(string property) : Attribute
     /// that is not a <see cref="System.DateTime"/> it is invalid.
     /// </summary>
     public DateTimeStorage DateTimeStorage { get; init; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a <see cref="string"/> property is stored as a
+    /// PostgreSQL <c>jsonb</c> document. A <c>[LinqCommand]</c> update then binds the value it sets
+    /// into the column as jsonb, as <see cref="JsonAttribute"/> on a parameter does, so the domain
+    /// class needs no attribute of its own. On a property that is not a <see cref="string"/> it
+    /// is invalid.
+    /// </summary>
+    public bool Json { get; init; }
 }

@@ -583,14 +583,15 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO081"));
 
-    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array,
-    // or a string marked [Json] that binds as jsonb. The generator detects Npgsql by looking up
+    // A parameter or column uses a type only Npgsql can bind: a PostgreSQL array, a string
+    // marked [Json] that binds as jsonb, or a LINQ uint compared with xmin that binds as xid.
+    // The generator detects Npgsql by looking up
     // `Npgsql.NpgsqlParameter` in the compilation; ZeroAlloc.ORM itself never
     // references Npgsql.
     //
     // MessageArgs:
     //   {0} = the parameter or column name
-    //   {1} = what needs Npgsql: "a PostgreSQL array" or "[Json]"
+    //   {1} = what needs Npgsql: "a PostgreSQL array", "[Json]" or "an xid"
     public static readonly DiagnosticDescriptor ZAO082_ProviderTypeRequiresNpgsql = new(
         id: "ZAO082",
         title: "Provider-specific type requires Npgsql",
@@ -636,8 +637,8 @@ internal static class DiagnosticDescriptors
 
     // ZAO106 — an entity map the LINQ translator cannot rely on: a second [TableMap] for an entity,
     // a [ColumnMap] for a property the entity lacks, a property mapped twice, EnumAsString on a
-    // property that is not an enum, or DateTimeStorage on one that is not a DateTime. Reported at
-    // the offending attribute.
+    // property that is not an enum, DateTimeStorage on one that is not a DateTime, or xmin as the
+    // column of a property that is not a uint. Reported at the offending attribute.
     //
     // MessageArgs:
     //   {0} = what is wrong with the map
@@ -656,12 +657,13 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method name
+    //   {1} = the [LinqQuery] or [LinqCommand] method name
     //   {2} = what is wrong
+    //   {3} = the method's attribute, [LinqQuery] or [LinqCommand]; see LinqDiagnostics.ForAttribute
     public static readonly DiagnosticDescriptor ZAO100_InvalidLinqCompanion = new(
         id: "ZAO100",
         title: "Invalid LINQ companion",
-        messageFormat: "Companion '{0}' of [LinqQuery] method '{1}' is invalid: {2}",
+        messageFormat: "Companion '{0}' of {3} method '{1}' is invalid: {2}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -673,7 +675,7 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method name
+    //   {1} = the [LinqQuery] or [LinqCommand] method name
     //   {2} = the expected parameter list
     public static readonly DiagnosticDescriptor ZAO101_LinqCompanionParameterMismatch = new(
         id: "ZAO101",
@@ -688,10 +690,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the construct, quoted
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO102_UnsupportedLinqConstruct = new(
         id: "ZAO102",
         title: "Unsupported LINQ construct",
-        messageFormat: "{0} is not supported in a [LinqQuery] chain",
+        messageFormat: "{0} is not supported in a {1} chain",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -702,10 +705,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the captured expression
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO103_LinqCapture = new(
         id: "ZAO103",
         title: "LINQ query captures a value",
-        messageFormat: "The [LinqQuery] chain reads '{0}'; pass it as a companion parameter instead",
+        messageFormat: "The {1} chain reads '{0}'; pass it as a companion parameter instead",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -746,10 +750,11 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = what is wrong
+    //   {1} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO107_UnsupportedLinqProjection = new(
         id: "ZAO107",
         title: "Unsupported LINQ projection",
-        messageFormat: "Unsupported [LinqQuery] projection: {0}",
+        messageFormat: "Unsupported {1} projection: {0}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -759,12 +764,13 @@ internal static class DiagnosticDescriptors
     // [Dialect], else the assembly's, is another dialect or missing. Reported at the method.
     //
     // MessageArgs:
-    //   {0} = the [LinqQuery] method name
+    //   {0} = the [LinqQuery] or [LinqCommand] method name
     //   {1} = what the repository declares
+    //   {2} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO108_LinqRequiresPostgreSql = new(
         id: "ZAO108",
         title: "LINQ query requires the PostgreSQL dialect",
-        messageFormat: "[LinqQuery] method '{0}' needs [Dialect(SqlDialect.PostgreSql)] on its type or assembly, but {1}",
+        messageFormat: "{2} method '{0}' needs [Dialect(SqlDialect.PostgreSql)] on its type or assembly, but {1}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -777,11 +783,12 @@ internal static class DiagnosticDescriptors
     //
     // MessageArgs:
     //   {0} = the companion name
-    //   {1} = the [LinqQuery] method that names it
+    //   {1} = the [LinqQuery] or [LinqCommand] method that names it
+    //   {2} = that method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO109_LinqCompanionCalled = new(
         id: "ZAO109",
         title: "LINQ companion is called",
-        messageFormat: "'{0}' is a [LinqQuery] companion and is never run; call '{1}' instead",
+        messageFormat: "'{0}' is a {2} companion and is never run; call '{1}' instead",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -801,16 +808,17 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO110"));
 
-    // ZAO111 — an enum parameter without [StoreAsString] is compared with a column that stores
-    // the enum by name (EnumAsString) and with one that stores its integer, so no single binding
-    // fits both. Reported at the parameter reference in the comparison that disagrees.
+    // ZAO111 — an enum parameter without [StoreAsString] is compared with or set into a column
+    // that stores the enum by name (EnumAsString) and one that stores its integer, so no single
+    // binding fits both. Reported at the parameter reference in the comparison or setter that
+    // disagrees.
     //
     // MessageArgs:
     //   {0} = the parameter's SQL name
     public static readonly DiagnosticDescriptor ZAO111_LinqEnumParameterStorageConflict = new(
         id: "ZAO111",
-        title: "LINQ enum parameter compared with differently stored columns",
-        messageFormat: "Parameter '{0}' is compared with columns that store its enum differently",
+        title: "LINQ enum parameter compared with or set into differently stored columns",
+        messageFormat: "Parameter '{0}' is compared with or set into columns that store its enum differently",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
@@ -821,16 +829,33 @@ internal static class DiagnosticDescriptors
     // that does not fit.
     //
     // MessageArgs:
-    //   {0} = the [LinqQuery] method name
+    //   {0} = the [LinqQuery] or [LinqCommand] method name
     //   {1} = the method's return type, quoted, or the tuple element that does not fit
     //   {2} = the companion's return type, or its tuple element, quoted
     //   {3} = the return types that fit
+    //   {4} = the method's attribute, [LinqQuery] or [LinqCommand]
     public static readonly DiagnosticDescriptor ZAO112_LinqResultShapeMismatch = new(
         id: "ZAO112",
         title: "LINQ method return type does not fit the query",
-        messageFormat: "[LinqQuery] method '{0}' returns {1}, which does not fit {2}; {3}",
+        messageFormat: "{4} method '{0}' returns {1}, which does not fit {2}; {3}",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO112"));
+
+    // ZAO113 — a [LinqQuery] locks rows with ForUpdate, ForUpdateSkipLocked or ForUpdateNoWait,
+    // in its one statement or any tuple element's, but the method takes no IAsyncDbTransaction.
+    // A warning: the query runs as written, but outside a transaction its lock is released as
+    // soon as its own statement ends, so it guards nothing that follows. Reported at the method.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    public static readonly DiagnosticDescriptor ZAO113_LinqLockWithoutTransaction = new(
+        id: "ZAO113",
+        title: "LINQ row lock without a transaction",
+        messageFormat: "'{0}' locks rows but takes no IAsyncDbTransaction; the lock is released when its statement ends",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO113"));
 }

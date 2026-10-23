@@ -40,6 +40,8 @@ public class SqlAstExhaustivenessTests
         Walk(select);
         Walk(new SqlAggregateStatement(SqlAggregate.Count, select));
         Walk(new SqlScalarAggregateStatement(Call(expression), select));
+        Walk(new SqlDeleteStatement(From, new EquatableArray<SqlExpression>(ImmutableArray.Create(Unaliased(expression)))));
+        Walk(Update(Unaliased(expression)));
         _ = LinqQueryReader.MayBeNull(expression, new HashSet<SqlExpression>());
     }
 
@@ -61,8 +63,13 @@ public class SqlAstExhaustivenessTests
         Assert.Contains(typeof(SqlDateTruncExpression), expressions);
         Assert.Contains(typeof(SqlObjectIsNullExpression), expressions);
         Assert.Contains(typeof(SqlInSubqueryExpression), expressions);
+        Assert.Contains(typeof(SqlArithmeticExpression), expressions);
+        Assert.Contains(typeof(SqlSystemColumnExpression), expressions);
         Assert.Equal(
-            [typeof(SqlAggregateStatement), typeof(SqlScalarAggregateStatement), typeof(SqlSelectStatement)],
+            [
+                typeof(SqlAggregateStatement), typeof(SqlDeleteStatement), typeof(SqlScalarAggregateStatement),
+                typeof(SqlSelectStatement), typeof(SqlUpdateStatement),
+            ],
             Concrete(typeof(SqlStatement)).OrderBy(t => t.Name, StringComparer.Ordinal));
     }
 
@@ -72,11 +79,12 @@ public class SqlAstExhaustivenessTests
         {
             SqlAggregateStatement aggregate => aggregate.Source,
             SqlScalarAggregateStatement scalar => scalar.Source,
+            SqlDeleteStatement or SqlUpdateStatement => null,
             _ => (SqlSelectStatement)statement,
         };
         var maps = new EquatableArray<EntityMapModel>(ImmutableArray.Create(Map));
-        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select.Alias, maps);
-        foreach (var join in select.Joins)
+        var names = new SqlNameScope(Map, "TestApp.TaskEntity", select?.Alias, maps);
+        foreach (var join in select?.Joins ?? default)
             names.AddSource(join.Alias, Map, "TestApp.TaskEntity");
         _ = EnumParameterStorage.Decide(statement, names);
         _ = PostgresSqlRenderer.Instance.Render(statement, names);
@@ -105,6 +113,22 @@ public class SqlAstExhaustivenessTests
             "t1",
             expression,
             new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)))));
+
+    // The expression as an UPDATE's setter value and its WHERE, the positions an UPDATE adds.
+    private static SqlUpdateStatement Update(SqlExpression expression)
+        => new(
+            From,
+            new EquatableArray<SqlSetter>(ImmutableArray.Create(new SqlSetter(Column, expression))),
+            new EquatableArray<SqlExpression>(ImmutableArray.Create(expression)));
+
+    // A DELETE's or an UPDATE's table takes no alias, so its members name none: the placeholder "x" goes.
+    private static SqlExpression Unaliased(SqlExpression expression) => expression switch
+    {
+        SqlMemberExpression member => member with { SourceAlias = null },
+        SqlObjectIsNullExpression test => test with { SourceAlias = null },
+        SqlSystemColumnExpression system => system with { Alias = null },
+        _ => expression,
+    };
 
     // The expression as an aggregate's argument, the position a scalar aggregate adds.
     private static SqlAggregateCallExpression Call(SqlExpression argument)
@@ -153,6 +177,8 @@ public class SqlAstExhaustivenessTests
         if (type == typeof(SqlPaging)) return SqlPaging.None;
         if (type == typeof(SqlSelectStatement)) return Select(Column);
         if (type == typeof(SqlAggregateCallExpression)) return Call(Column);
+        if (type == typeof(SqlMemberExpression)) return Column;
+        if (type == typeof(EquatableArray<SqlSetter>)) return new EquatableArray<SqlSetter>(ImmutableArray.Create(new SqlSetter(Column, Column)));
         throw new InvalidOperationException(
             "No placeholder for " + type.Name + " in " + parameter.Member.DeclaringType?.Name + "; add one here.");
     }

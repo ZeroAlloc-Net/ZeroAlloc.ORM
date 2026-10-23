@@ -315,7 +315,11 @@ internal sealed record QueryMethodModel(
     // The batch emit uses them as the commands' CommandText instead of splitting Sql again,
     // so the batch never depends on SqlStatementSplitter reading the rendered SQL back.
     // Default off the LINQ multi-result path, which goes on splitting Sql.
-    EquatableArray<string> LinqStatements = default);
+    EquatableArray<string> LinqStatements = default,
+    // [LinqCommand(ThrowOnNoRows = true)] -- the message of the ZeroAllocOrmConcurrencyException
+    // the non-query emit throws when ExecuteNonQueryAsync reports no rows affected, naming the
+    // type and the method. Null for every other method, whose emit is unchanged.
+    string? LinqNoRowsMessage = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

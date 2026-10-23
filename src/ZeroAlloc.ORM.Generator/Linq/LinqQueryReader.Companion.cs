@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
@@ -11,25 +13,31 @@ internal static partial class LinqQueryReader
 {
     // The companion, its declaration, the chains its body is, and the T of each chain's IQuery<T>;
     // or the ZAO100 that rejects it. A companion returning IQuery<T> has one chain; one returning
-    // a tuple of IQuery<T> has one per element, read from its tuple literal, and IsTuple set.
+    // a tuple of IQuery<T> has one per element, read from its tuple literal, and IsTuple set. A
+    // [LinqCommand] companion returns the int of its one chain's write, which Write names, and has
+    // no RowTypes.
     private readonly record struct Companion(
         IMethodSymbol? Symbol,
         MethodDeclarationSyntax? Syntax,
         ImmutableArray<ExpressionSyntax> Bodies,
         ImmutableArray<ITypeSymbol> RowTypes,
         bool IsTuple,
-        DiagnosticInfo? Error);
+        DiagnosticInfo? Error,
+        string? Write = null);
 
     // A tuple companion has 2 to 7 elements: one ValueTuple, without a nested TRest.
     private const int MaxTupleElements = 7;
 
     // ZAO100 — the companion is a static method of the same type, declared with a body that is
     // one expression or one return statement, returning IQuery<T>; or returning a tuple of 2 to 7
-    // IQuery<T> with a tuple literal of one chain per element as that expression.
+    // IQuery<T> with a tuple literal of one chain per element as that expression. A [LinqCommand]
+    // companion's one chain ends in ExecuteDelete or ExecuteUpdate and it returns their int; a
+    // [LinqQuery] companion's chain must not end in either.
     private static Companion ResolveCompanion(
         GeneratorAttributeSyntaxContext ctx,
         IMethodSymbol method,
         string name,
+        bool isCommand,
         CancellationToken ct)
     {
         var candidates = method.ContainingType.GetMembers(name)
@@ -54,6 +62,11 @@ internal static partial class LinqQueryReader
             return Invalid(name, method, "it must be static", identifier);
         if (syntax is null)
             return Invalid(name, method, "it has no body to read", identifier);
+        var write = WriteOf(SingleExpression(syntax), ctx.SemanticModel, ct);
+        if (isCommand)
+            return ResolveCommandCompanion(name, method, symbol, syntax, write, identifier);
+        if (write is { } written)
+            return Invalid(name, method, "its chain is a write; use [LinqCommand]", written.Location);
         if (symbol.ReturnType is INamedTypeSymbol { IsTupleType: true } tuple)
             return ResolveTupleCompanion(name, method, symbol, syntax, tuple, identifier);
         if (!IsGeneric(symbol.ReturnType, LinqNamespace, "IQuery`1", out var rowType))
@@ -69,6 +82,49 @@ internal static partial class LinqQueryReader
                 identifier);
         }
         return new Companion(symbol, syntax, ImmutableArray.Create(body), ImmutableArray.Create(rowType), false, null);
+    }
+
+    // A [LinqCommand] companion: one chain, ending in the write, returning the int the write gives.
+    private static Companion ResolveCommandCompanion(
+        string name,
+        IMethodSymbol method,
+        IMethodSymbol symbol,
+        MethodDeclarationSyntax syntax,
+        (string Operator, Location Location)? write,
+        Location? identifier)
+    {
+        if (symbol.ReturnType is INamedTypeSymbol { IsTupleType: true })
+            return Invalid(name, method, "it must be one chain ending in ExecuteDelete or ExecuteUpdate, not a tuple", syntax.ReturnType.GetLocation());
+        if (SingleExpression(syntax) is not { } body)
+        {
+            return Invalid(
+                name,
+                method,
+                "its body must be one expression or one return statement, from Sql.Table<T>() to ExecuteDelete or ExecuteUpdate",
+                identifier);
+        }
+        if (write is not { } written)
+            return Invalid(name, method, "its chain must end in ExecuteDelete or ExecuteUpdate", identifier);
+        if (symbol.ReturnType.SpecialType != SpecialType.System_Int32)
+            return Invalid(name, method, "it must return int, the number of rows its write affects", syntax.ReturnType.GetLocation());
+        // No row types: a write's chain reads no rows, and its shape is the non-query one.
+        return new Companion(symbol, syntax, ImmutableArray.Create(body), ImmutableArray<ITypeSymbol>.Empty, false, null, written.Operator);
+    }
+
+    // The write a chain ends in, ExecuteDelete or ExecuteUpdate, and where its name is; null for
+    // any other body. The attribute's model reads the companion when both are in one file, as
+    // they are in one partial declaration; a companion in another file gets that file's model.
+    private static (string Operator, Location Location)? WriteOf(ExpressionSyntax? body, SemanticModel model, CancellationToken ct)
+    {
+        if (body is null) return null;
+        var bodyModel = body.SyntaxTree == model.SyntaxTree ? model : model.Compilation.GetSemanticModel(body.SyntaxTree);
+        var operation = bodyModel.GetOperation(body, ct);
+        return operation is not null
+            && Unwrap(operation) is IInvocationOperation invocation
+            && IsQueryOperator(invocation.TargetMethod)
+            && invocation.TargetMethod.Name is "ExecuteDelete" or "ExecuteUpdate"
+                ? (invocation.TargetMethod.Name, OperatorLocation(invocation))
+                : null;
     }
 
     // A tuple of IQuery<T>, whose body is a tuple literal with one complete chain per element.

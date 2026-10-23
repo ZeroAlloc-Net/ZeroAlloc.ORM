@@ -625,7 +625,7 @@ public class LinqWhereTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         Assert.Same(tree, diagnostic.Location.SourceTree);
         Assert.Equal(
-            "Parameter 'kind' is compared with columns that store its enum differently",
+            "Parameter 'kind' is compared with or set into columns that store its enum differently",
             diagnostic.GetMessage(CultureInfo.InvariantCulture));
         var span = diagnostic.Location.SourceSpan;
         Assert.Equal("kind", tree.ToString().Substring(span.Start, span.Length));
@@ -892,7 +892,7 @@ public class LinqWhereTests
         var diagnostic = Assert.Single(result.Results[0].Diagnostics);
         Assert.Equal("ZAO111", diagnostic.Id);
         Assert.Equal(
-            "Parameter 'other' is compared with columns that store its enum differently",
+            "Parameter 'other' is compared with or set into columns that store its enum differently",
             diagnostic.GetMessage(CultureInfo.InvariantCulture));
         var span = diagnostic.Location.SourceSpan;
         Assert.Equal("other", tree.ToString().Substring(span.Start, span.Length));

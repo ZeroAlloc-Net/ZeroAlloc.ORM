@@ -61,13 +61,44 @@ internal static partial class LinqQueryReader
 
         // The GroupBy key; the operators after it read groups.
         public GroupKey? Group { get; set; }
+
+        // The write a [LinqCommand] chain ends in, ExecuteDelete or ExecuteUpdate. Only Where and
+        // WhereIf may come before it; null for a query's chain and for a subquery's.
+        public string? Write { get; init; }
+
+        // An ExecuteUpdate's SetProperty calls, in written order.
+        public ImmutableArray<SqlSetter>.Builder Setters { get; } = ImmutableArray.CreateBuilder<SqlSetter>();
+
+        // The row lock; None without one.
+        public SqlRowLock Lock { get; set; }
+
+        // The operator that took it, ForUpdate, ForUpdateSkipLocked or ForUpdateNoWait, for the
+        // message when another operator meets it; null without one.
+        public string? LockOperator { get; set; }
     }
 
     private static SqlStatement? ReadStatement(ExpressionSyntax body, LinqResultShape shape, ReaderContext context)
     {
         var operation = context.Model.GetOperation(body, context.CancellationToken);
-        var chain = new ChainBuilder { Alias = operation is not null && HasJoin(operation) ? "t0" : null };
+        var chain = new ChainBuilder
+        {
+            Alias = operation is not null && HasJoin(operation) ? "t0" : null,
+            Write = context.WriteTerminal,
+        };
         if (operation is null || !ReadChain(operation, chain, context)) return null;
+
+        // A write deletes or updates the rows its conditions select; without any, every row, as
+        // EF's does. Each write names its statement here, so a new one cannot fall through.
+        if (chain.Write is { } write)
+        {
+            var predicates = new EquatableArray<SqlExpression>(chain.Predicates.ToImmutable());
+            return write switch
+            {
+                "ExecuteDelete" => new SqlDeleteStatement(chain.From!, predicates),
+                "ExecuteUpdate" => new SqlUpdateStatement(chain.From!, new EquatableArray<SqlSetter>(chain.Setters.ToImmutable()), predicates),
+                _ => throw new InvalidOperationException("No statement for write " + write),
+            };
+        }
 
         // ZAO110: a page of rows in no defined order. The single-row shape warns only for a
         // Skip, since "the row after N others" depends on the order while its implicit LIMIT 1,
@@ -121,7 +152,8 @@ internal static partial class LinqQueryReader
             new SqlPaging(limit, chain.Offset),
             chain.Group is { } group ? new EquatableArray<SqlExpression>(group.Keys) : default,
             JoinsOf(chain),
-            chain.Alias);
+            chain.Alias,
+            chain.Lock);
     }
 
     private static EquatableArray<SqlJoin> JoinsOf(ChainBuilder chain)
@@ -187,6 +219,18 @@ internal static partial class LinqQueryReader
     private static bool ReadOperator(IInvocationOperation invocation, ChainBuilder chain, ReaderContext context)
     {
         var name = invocation.TargetMethod.Name;
+        // A write reads its rows from the table and its conditions alone.
+        if (chain.Write is { } write)
+        {
+            if (string.Equals(name, write, StringComparison.Ordinal))
+                return !string.Equals(write, "ExecuteUpdate", StringComparison.Ordinal) || ReadSetters(invocation, chain, context);
+            if (name is not ("Where" or "WhereIf"))
+                return Unsupported(invocation, "'" + name + "' before '" + write + "'", context);
+        }
+        if (LockOf(name) is { } rowLock) return ReadLock(invocation, rowLock, chain, context);
+        // PostgreSQL rejects FOR UPDATE with GROUP BY and with an aggregate.
+        if (chain.LockOperator is { } locked && (name is "GroupBy" || TerminalOf(name) is not null || IsValueAggregate(name)))
+            return Unsupported(invocation, "'" + name + "' after '" + locked + "'", context);
         if (chain.Group is not null && UnsupportedAfterGroupBy(name) is { } afterGroup)
             return Unsupported(invocation, afterGroup, context);
         if (TerminalOf(name) is { } terminal)
@@ -215,6 +259,31 @@ internal static partial class LinqQueryReader
             _ => Unsupported(invocation, "'" + name + "'", context),
         };
     }
+
+    // ForUpdate, ForUpdateSkipLocked or ForUpdateNoWait: one lock, on a statement's own rows. It
+    // may stand anywhere before Select, since a lock applies to the whole SELECT, and on a joined
+    // chain it locks the rows of every joined table, as PostgreSQL's FOR UPDATE does.
+    private static bool ReadLock(IInvocationOperation invocation, SqlRowLock rowLock, ChainBuilder chain, ReaderContext context)
+    {
+        var name = invocation.TargetMethod.Name;
+        if (chain.IsSubquery)
+            return Unsupported(invocation, "'" + name + "' in the source of an IQuery Contains", context);
+        if (chain.LockOperator is { } first)
+            return Unsupported(invocation, "'" + name + "' after '" + first + "', a second lock,", context);
+        if (chain.Group is not null)
+            return Unsupported(invocation, "'" + name + "' after 'GroupBy'", context);
+        chain.Lock = rowLock;
+        chain.LockOperator = name;
+        return true;
+    }
+
+    private static SqlRowLock? LockOf(string operatorName) => operatorName switch
+    {
+        "ForUpdate" => SqlRowLock.Update,
+        "ForUpdateSkipLocked" => SqlRowLock.UpdateSkipLocked,
+        "ForUpdateNoWait" => SqlRowLock.UpdateNoWait,
+        _ => null,
+    };
 
     // The single-row shape reads the first row, so it never needs more than LIMIT 1: a Take
     // literal becomes min(n, 1) and a Take parameter is capped at 1 as well as clamped at 0.

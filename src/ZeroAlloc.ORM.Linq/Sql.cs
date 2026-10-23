@@ -16,6 +16,18 @@ public static class Sql
     /// <exception cref="InvalidOperationException">Always.</exception>
     public static bool ILike(string? value, string? pattern) => throw Guidance.Exception();
 
+    /// <summary>
+    /// The row's <c>xmin</c>, the id of the transaction that wrote this version of it. Read it with
+    /// the row, then guard a write with <c>Sql.Xmin(r) == expected</c>: once another writer changed
+    /// the row, the write affects no rows. Compared by <c>==</c> or <c>!=</c> only, with a
+    /// <c>uint</c> parameter, which binds as <c>xid</c>.
+    /// </summary>
+    /// <typeparam name="T">The mapped entity type.</typeparam>
+    /// <param name="row">The row, the lambda's parameter or a joined source.</param>
+    /// <returns>Never returns; the generator reads the call at build time.</returns>
+    /// <exception cref="InvalidOperationException">Always.</exception>
+    public static uint Xmin<T>(T row) => throw Guidance.Exception();
+
     /// <summary>Builds a two-column row value for keyset comparison.</summary>
     /// <typeparam name="T1">The first column type.</typeparam>
     /// <typeparam name="T2">The second column type.</typeparam>

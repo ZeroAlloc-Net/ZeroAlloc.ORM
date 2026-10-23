@@ -1,4 +1,4 @@
-# LINQ queries with `[LinqQuery]`
+# LINQ queries and writes with `[LinqQuery]` and `[LinqCommand]`
 
 `ZeroAlloc.ORM.Linq` lets you write a query method's SQL as a LINQ chain instead of a SQL string.
 The generator reads the chain at build time, translates it to parameterised PostgreSQL and implements
@@ -8,7 +8,10 @@ generator cannot translate is a build error, never a silent fallback to running 
 
 It is a second way to write the SQL, not an entity-graph ORM: there are no navigations, change
 tracking or entity writes. In place of EF Core's `Include`, one method loads a parent and its
-children as a tuple in one round trip, see [Parents with children](#parents-with-children).
+children as a tuple in one round trip, see [Parents with children](#parents-with-children). In place
+of `SaveChanges`, `[LinqCommand]` updates and deletes rows in one statement, optionally guarded by the
+row's version, see [Set-based writes](#set-based-writes) and
+[Optimistic concurrency](#optimistic-concurrency). [Row locks](#row-locks) covers `FOR UPDATE`.
 
 ## Install
 
@@ -69,7 +72,7 @@ internal static class TaskMap;
   `{ get => field ?? ""; private set; }`: it is hand-written too, so it needs a `[ColumnMap]`.
 - A `[ColumnMap(nameof(E.P))]` always makes `P` a column, so it brings in a property the rules above
   leave out. `[ColumnMap(nameof(E.P), Ignore = true)]` always leaves `P` out. `Ignore` cannot be
-  combined with `Column`, `EnumAsString` or `DateTimeStorage`. Either way a wrong guess fails the
+  combined with `Column`, `EnumAsString`, `DateTimeStorage` or `Json`. Either way a wrong guess fails the
   build with ZAO105, and one attribute fixes it:
 
   ```csharp
@@ -99,6 +102,12 @@ internal static class TaskMap;
   [ColumnMap(nameof(Execution.LocalDay), DateTimeStorage = DateTimeStorage.Timestamp)]
   internal static class ExecutionMap;
   ```
+- A `string` property stored as a `jsonb` document is declared with
+  `[ColumnMap(nameof(E.P), Json = true)]`, so the domain class needs no attribute. A `[LinqCommand]`
+  update then binds the value it sets into the column as `jsonb`, see
+  [Set-based writes](#set-based-writes). `[Json]` on the property, or on the record constructor
+  parameter that feeds it, says the same. A jsonb column reads as a string either way. `Json` on a
+  property that is not a `string` reports ZAO106.
 
 ### Owned types
 
@@ -107,7 +116,7 @@ owner's table. `[OwnedMap(nameof(E.P))]` declares one, and each public readable 
 of the owned type that holds a value becomes a column, by the same rules as the entity's own
 properties. The column name is EF Core's default, `{Owner}_{Property}`, such as `Location_StartLine`.
 A `[ColumnMap]` with a dotted path, `Owner.Property`, overrides it and sets `EnumAsString`,
-`DateTimeStorage` or `Ignore` for the member as for any column:
+`DateTimeStorage`, `Json` or `Ignore` for the member as for any column:
 
 ```csharp
 public sealed class CodeAnalysisRequest
@@ -412,7 +421,8 @@ Each of Daedalus' seven `Include` queries maps to one tuple companion:
 
 The paged sites order by a column that need not be unique, so add `ThenBy(x => x.Id)` to both the
 page and its subquery. EF Core fills the navigation collections; here the caller groups the child
-rows by their parent id.
+rows by their parent id. For Daedalus' bulk writes, guarded saves and `FOR UPDATE` reads, see
+[Replacing EF Core's writes and locks](#replacing-ef-cores-writes-and-locks).
 
 ## Projection
 
@@ -431,7 +441,8 @@ they read the joined sources, see [Joins](#joins).
 ## Operators and their SQL
 
 The chain filters, orders, pages, then projects, in that order:
-`Where`/`WhereIf` and the orderings, then `Skip`, then `Take`, then `Select`, then a terminal.
+`Where`/`WhereIf` and the orderings, then `Skip`, then `Take`, then `Select`, then a terminal. A row
+lock may come anywhere before `Select`.
 
 | Operator | SQL |
 |---|---|
@@ -446,6 +457,8 @@ The chain filters, orders, pages, then projects, in that order:
 | `Sum`, `Min`, `Max`, `Average` | see [Scalar aggregates](#scalar-aggregates) |
 | `GroupBy(t => key)` | see [GroupBy](#groupby) |
 | `Join(Sql.Table<U>(), outer, inner, result)` | see [Joins](#joins) |
+| `ForUpdate()`, `ForUpdateSkipLocked()`, `ForUpdateNoWait()` | `FOR UPDATE`, with `SKIP LOCKED` or `NOWAIT`, last; see [Row locks](#row-locks) |
+| `ExecuteDelete()`, `ExecuteUpdate(set => ...)` | `DELETE`, `UPDATE`, in a `[LinqCommand]`; see [Set-based writes](#set-based-writes) |
 
 The order is checked, and each break of it reports [ZAO102](../diagnostics/ZAO102.md):
 
@@ -509,6 +522,9 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 - A `float` constant is written `0.1::real`, so it compares with a `real` column at the column's
   precision; a bare `0.1` would compare as double precision and miss the stored value.
 - Arithmetic, other methods, and `<`/`>` on an enum stored by name report ZAO102.
+- `==` on a `byte[]` column compares the bytes, not the array references; see
+  [Optimistic concurrency](#optimistic-concurrency). `Sql.Xmin(t) == expected` compares PostgreSQL's
+  `xmin`, the same section.
 
 #### Nulls compare as in C#
 
@@ -746,32 +762,397 @@ parameter or a non-null constant, in either order. An item whose type can be nul
 a row, because a NULL makes the whole comparison NULL; nor can an enum stored by name, because it would
 compare by name.
 
+## Set-based writes
+
+`[LinqCommand]` writes rows without loading them. Its companion's chain ends in `ExecuteDelete()` or
+`ExecuteUpdate(...)` and translates to one `DELETE` or `UPDATE` statement. The method then runs as a
+`[Command]` does. It replaces EF Core's `ExecuteDeleteAsync` and `ExecuteUpdateAsync`.
+
+```csharp
+public enum AgentSessionState { Idle, Running, Failed }
+
+public sealed class AgentSessionEntity
+{
+    public Guid Id { get; private set; }
+    public AgentSessionState State { get; private set; }
+    public DateTimeOffset LastActivityAt { get; private set; }
+    public DateTimeOffset? EndedAt { get; private set; }
+    public int TurnCount { get; private set; }
+    public long TotalInputTokens { get; private set; }
+}
+
+[TableMap(typeof(AgentSessionEntity), "AgentSessions")]
+[ColumnMap(nameof(AgentSessionEntity.State), EnumAsString = true)]
+internal static class AgentSessionMap;
+
+[Dialect(SqlDialect.PostgreSql)]
+public sealed partial class SessionStore(IAsyncDbConnection connection)
+{
+    [LinqCommand(nameof(FailRunningQuery))]
+    public partial Task<int> FailRunning(DateTimeOffset now, CancellationToken ct);
+
+    [LinqCommand(nameof(RecordTurnQuery))]
+    public partial Task RecordTurn(Guid id, int inputTokens, CancellationToken ct);
+
+    [LinqCommand(nameof(DeleteFailedQuery))]
+    public partial ValueTask<int> DeleteFailed(IAsyncDbTransaction tx, CancellationToken ct);
+
+    private static int FailRunningQuery(DateTimeOffset now) =>
+        Sql.Table<AgentSessionEntity>()
+            .Where(s => s.State == AgentSessionState.Running)
+            .ExecuteUpdate(set => set
+                .SetProperty(s => s.State, AgentSessionState.Failed)
+                .SetProperty(s => s.LastActivityAt, now)
+                .SetProperty(s => s.EndedAt, now));
+
+    private static int RecordTurnQuery(Guid id, int inputTokens) =>
+        Sql.Table<AgentSessionEntity>()
+            .Where(s => s.Id == id)
+            .ExecuteUpdate(set => set
+                .SetProperty(s => s.TurnCount, s => s.TurnCount + 1)
+                .SetProperty(s => s.TotalInputTokens, s => s.TotalInputTokens + inputTokens));
+
+    private static int DeleteFailedQuery() =>
+        Sql.Table<AgentSessionEntity>().Where(s => s.State == AgentSessionState.Failed).ExecuteDelete();
+}
+```
+
+```sql
+UPDATE "AgentSessions" SET "State" = 'Failed', "LastActivityAt" = @now, "EndedAt" = @now WHERE "State" = 'Running'
+UPDATE "AgentSessions" SET "TurnCount" = ("TurnCount" + 1), "TotalInputTokens" = ("TotalInputTokens" + @inputTokens) WHERE "Id" = @id
+DELETE FROM "AgentSessions" WHERE "State" = 'Failed'
+```
+
+The rules:
+
+- The companion returns `int`. Its chain is `Sql.Table<T>()`, any `Where` and `WhereIf` calls, then the
+  write. Anything else before the write, such as `Join`, `OrderBy`, `Take`, `Select` or a row lock,
+  reports [ZAO102](../diagnostics/ZAO102.md). A chain that does not end in a write, or a tuple
+  companion, reports [ZAO100](../diagnostics/ZAO100.md), and so does a write under `[LinqQuery]`.
+- The method returns `Task<int>` or `ValueTask<int>`, the rows affected, or `Task` or `ValueTask`.
+  Anything else reports [ZAO112](../diagnostics/ZAO112.md).
+- Predicates are the same as in a query: `= ANY` over an array parameter, `IN` subqueries, optional
+  filters and the null rules all apply.
+- A write without `Where` updates or deletes every row, as EF Core's does. The generator adds no guard.
+- An `IAsyncDbTransaction` parameter joins the caller's transaction, as for `[Command]`.
+
+`SetProperty(target, value)` sets one column. `SetProperty(target, s => ...)` computes the value from
+the row:
+
+- The target is a mapped column, or one member of an owned object, such as `r => r.Repository.Url` or
+  `r => r.Outcome!.PullRequestUrl`. A whole owned object, a column set twice, or `xmin` reports ZAO102.
+- The value is a companion parameter, a constant, `null`, a column of the row, or `+`, `-` and `*` over
+  those. Arithmetic takes `int`, `long`, `decimal`, `double` and `float` operands. Anything else,
+  such as `/`, a method call or a cast, reports ZAO102.
+- The value has the column's own type. A conversion, such as `(int?)null` or an `int?` or `long`
+  parameter into an `int` column, reports ZAO102 at the target, so a cast cannot put a NULL into a
+  non-nullable column.
+- An enum value binds as in a comparison: by name into a column stored by name. One enum parameter set
+  into a column stored by name and compared with one stored as an integer reports
+  [ZAO111](../diagnostics/ZAO111.md). An enum column set from another column that stores the enum the
+  other way reports ZAO102.
+- A jsonb column is one the map declares with `[ColumnMap(nameof(E.P), Json = true)]`, or whose
+  property, or record constructor parameter, carries `[Json]`; a domain class needs no attribute. It
+  takes a parameter, which binds as `jsonb` without a marker of its own, a constant, `null` or another
+  jsonb column. Another column reports ZAO102. That parameter may not appear in a condition or in a
+  setter of another column as well, which reports ZAO102: it would bind as `jsonb` there too.
+- A `DateTime` parameter binds by its `DateTimeKind`, as in `[Command]`. The map's `DateTimeStorage`
+  does not decide it yet; see [#403](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/403).
+
+Every computed value reads the row as it was before the statement, as in SQL and in EF Core. Here
+`TotalInputTokens` adds the old `TurnCount`, not the one `+ 1` just set:
+
+```csharp
+private static int AdvanceQuery(Guid id) =>
+    Sql.Table<AgentSessionEntity>()
+        .Where(s => s.Id == id)
+        .ExecuteUpdate(set => set
+            .SetProperty(s => s.TurnCount, s => s.TurnCount + 1)
+            .SetProperty(s => s.TotalInputTokens, s => s.TotalInputTokens + s.TurnCount));
+```
+
+Arithmetic overflows as in PostgreSQL, not as in C#. This is a known difference. At `int.MaxValue`,
+`TurnCount + 1` raises PostgreSQL's error 22003, "integer out of range", and the statement changes
+nothing. Unchecked C# would wrap to `int.MinValue`. EF Core's `ExecuteUpdate` raises the same error,
+since it runs the same SQL. Give a counter that can grow that far a `long` property and a `bigint`
+column.
+
+## Optimistic concurrency
+
+`ThrowOnNoRows = true` on `[LinqCommand]` turns zero rows affected into a
+`ZeroAllocOrmConcurrencyException`. Its message names the method: "'SessionStore.RecordTurn' affected
+no rows; the row was changed or removed since it was read". It works with every return type and inside
+a caller's transaction.
+
+With a version in the `Where`, that is EF Core's concurrency token. A write applies only to the row as
+it was read, and throws when another writer changed it in between. The version can be one of three
+things.
+
+**PostgreSQL's `xmin`.** Every row has a system column `xmin`: the id of the transaction that last
+wrote it. EF Core's Npgsql provider uses it as a shadow concurrency token. `Sql.Xmin(row)` reads it as a
+`uint`, in a projection, and compares it with a `uint` parameter:
+
+```csharp
+public sealed record SessionVersion(Guid Id, int TurnCount, uint Version);
+
+[LinqQuery(nameof(SessionVersionQuery))]
+public partial Task<SessionVersion?> GetSession(Guid id, CancellationToken ct);
+
+[LinqCommand(nameof(GuardedTurnQuery), ThrowOnNoRows = true)]
+public partial Task RecordTurn(Guid id, uint expected, CancellationToken ct);
+
+private static IQuery<SessionVersion> SessionVersionQuery(Guid id) =>
+    Sql.Table<AgentSessionEntity>()
+        .Where(s => s.Id == id)
+        .Select(s => new SessionVersion(s.Id, s.TurnCount, Sql.Xmin(s)));
+
+private static int GuardedTurnQuery(Guid id, uint expected) =>
+    Sql.Table<AgentSessionEntity>()
+        .Where(s => s.Id == id && Sql.Xmin(s) == expected)
+        .ExecuteUpdate(set => set.SetProperty(s => s.TurnCount, s => s.TurnCount + 1));
+```
+
+```sql
+SELECT "Id", "TurnCount", "xmin" FROM "AgentSessions" WHERE "Id" = @id LIMIT 1
+UPDATE "AgentSessions" SET "TurnCount" = ("TurnCount" + 1) WHERE "Id" = @id AND "xmin" = @expected
+```
+
+```csharp
+var read = await store.GetSession(id, ct);
+// ... decide what to write ...
+await store.RecordTurn(id, read!.Version, ct);   // throws if another writer changed the row since
+```
+
+**A `uint` property mapped to `xmin`.** When the entity carries the version, as Daedalus' `Task` does,
+map it: `[ColumnMap(nameof(TaskEntity.RowVersion), Column = "xmin")]`. It then reads and compares as
+`Sql.Xmin` does: `Where(t => t.Id == id && t.RowVersion == rowVersion)`. A property mapped to `xmin`
+must be a `uint`, or the map reports [ZAO106](../diagnostics/ZAO106.md).
+
+The rules for `xmin`, by either form:
+
+- It is a transaction id, so it is compared for equality only: `==` or `!=` with a `uint` companion
+  parameter. The parameter binds as `xid`, so the SQL needs no cast. `!=` renders `<>`, which the
+  integration tests run on PostgreSQL 18.
+- It reads in a projection, also in a tuple element or through a join, into a `uint`.
+- Anything else reports ZAO102: an ordering, `<` or `>`, arithmetic, a comparison with a constant or a
+  column, or `xmin` as a setter's target or value. A `uint` parameter compared with `xmin` may not be
+  used anywhere else in the chain. `uint` is supported for `xmin` only: a `uint` parameter compared
+  with a `uint` column not mapped to `xmin` reports ZAO102, and one compared with a column of another
+  type, such as an `int`, is the core's [ZAO041](../diagnostics/ZAO041.md), a parameter type it
+  cannot bind.
+- PostgreSQL sets `xmin` on every write, so there is nothing to set. A failed guarded write leaves it
+  as it was.
+
+**A `byte[]` row version the application writes.** `==` on a `byte[]` column compares the bytes in SQL,
+with `bytea =`, as EF Core does. C# would compare the array references, so this is a known difference.
+The same update writes the next version:
+
+```csharp
+[LinqCommand(nameof(SaveDocumentQuery), ThrowOnNoRows = true)]
+public partial Task SaveDocument(Guid id, byte[] expected, byte[] next, string body, CancellationToken ct);
+
+private static int SaveDocumentQuery(Guid id, byte[] expected, byte[] next, string body) =>
+    Sql.Table<VersionedDocumentEntity>()
+        .Where(d => d.Id == id && d.Version == expected)
+        .ExecuteUpdate(set => set.SetProperty(d => d.Body, body).SetProperty(d => d.Version, next));
+```
+
+**A compare-and-swap without a version.** A state change can guard on the state itself. Return the rows
+affected: 0 means another writer moved the session first.
+
+```csharp
+[LinqCommand(nameof(TransitionQuery))]
+public partial Task<int> Transition(Guid id, AgentSessionState from, AgentSessionState to, CancellationToken ct);
+
+private static int TransitionQuery(Guid id, AgentSessionState from, AgentSessionState to) =>
+    Sql.Table<AgentSessionEntity>()
+        .Where(s => s.Id == id && s.State == from)
+        .ExecuteUpdate(set => set.SetProperty(s => s.State, to));
+```
+
+### Concurrent writers under READ COMMITTED
+
+READ COMMITTED is PostgreSQL's default isolation level. An `UPDATE` or `DELETE` finds its rows in the
+snapshot its statement started with. When another transaction has changed a found row and not yet
+committed, the statement waits for it. If that transaction rolls back, the statement goes on with the
+row it found. If it commits, PostgreSQL checks the `WHERE` again against the newly committed version of
+the row, and updates that version only if it still matches.
+
+So a guarded write is safe without a lock:
+
+- Two transitions from the same state: the second waits, checks `"State" = @from` against the committed
+  row, no longer matches, and affects 0 rows.
+- An `xmin` guard: the committed row has a new `xmin`, so the stale write affects 0 rows and
+  `ThrowOnNoRows` throws.
+- A computed setter such as `TurnCount + 1` applies to the committed row, so concurrent increments lose
+  nothing.
+
+Only the target row is checked again. A subquery in the `WHERE`, such as an `IN` over another table,
+keeps the statement's snapshot. Under REPEATABLE READ or SERIALIZABLE the waiting statement is not
+checked again: it fails with a serialization error, SQLSTATE 40001, and the caller retries the
+transaction.
+
+## Row locks
+
+A lock operator makes a `[LinqQuery]` lock the rows it reads, until its transaction ends. It replaces
+a raw `FOR UPDATE` that EF Core needs `FromSql` for.
+
+| Operator | SQL | When another transaction holds the row |
+|---|---|---|
+| `ForUpdate()` | `FOR UPDATE` | waits until it commits or rolls back |
+| `ForUpdateSkipLocked()` | `FOR UPDATE SKIP LOCKED` | leaves the row out |
+| `ForUpdateNoWait()` | `FOR UPDATE NOWAIT` | fails at once with SQLSTATE 55P03, `lock_not_available` |
+
+```csharp
+[LinqQuery(nameof(LockByIdQuery))]
+public partial Task<TaskSummary?> Lock(Guid id, IAsyncDbTransaction tx, CancellationToken ct);
+
+[LinqQuery(nameof(ClaimQuery))]
+public partial Task<List<TaskSummary>> Claim(WorkStatus status, int count, IAsyncDbTransaction tx, CancellationToken ct);
+
+private static IQuery<TaskSummary> LockByIdQuery(Guid id) =>
+    Sql.Table<TaskEntity>().Where(t => t.Id == id).ForUpdate().Select(t => new TaskSummary(t.Id, t.Title));
+
+// The first `count` tasks of a status that no other transaction holds.
+private static IQuery<TaskSummary> ClaimQuery(WorkStatus status, int count) =>
+    Sql.Table<TaskEntity>()
+        .Where(t => t.Status == status)
+        .OrderBy(t => t.Order)
+        .Take(count)
+        .ForUpdateSkipLocked()
+        .Select(t => new TaskSummary(t.Id, t.Title));
+```
+
+```sql
+SELECT "Id", "Title" FROM "app"."Tasks" WHERE "Id" = @id LIMIT 1 FOR UPDATE
+SELECT "Id", "Title" FROM "app"."Tasks" WHERE "Status" = @status ORDER BY "Order" LIMIT GREATEST(@count, 0) FOR UPDATE SKIP LOCKED
+```
+
+```csharp
+var tx = await connection.BeginTransactionAsync(ct);
+await using (tx)
+{
+    var claimed = await store.Claim(WorkStatus.Open, 10, tx, ct);
+    // ... work on the claimed rows; another worker's Claim skips them ...
+    await tx.CommitAsync(ct);
+}
+```
+
+The rules:
+
+- A lock comes once, anywhere before `Select` or the terminal. It renders last, after `LIMIT` and
+  `OFFSET`, so `Take(count)` locks at most `count` rows. On a chain with a `Join` it locks the rows of
+  every joined table.
+- Each of these reports ZAO102: a lock together with `GroupBy`, `Count()`, `LongCount()`, `Any()`,
+  `Sum`, `Min`, `Max` or `Average`, which PostgreSQL rejects; a lock in the source of a query
+  `Contains`; a second lock; a lock after `Select`; and a lock in a `[LinqCommand]`.
+- A method that locks takes an `IAsyncDbTransaction` parameter. Without one its statement runs in a
+  transaction of its own, unless the connection already has one open, and the lock ends with the
+  statement. That warns with [ZAO113](../diagnostics/ZAO113.md). The query is still generated.
+
+## Replacing EF Core's writes and locks
+
+Each of Daedalus' bulk writes, guarded saves and `FOR UPDATE` reads maps to one method:
+
+| Site | EF Core form | Replacement |
+|---|---|---|
+| `Sessions/AgentSessionCrashRecovery.cs:32` | `Where(State == Running).ExecuteUpdate(State, LastActivityAt)` | `[LinqCommand]` with value setters, see `FailRunning` in [Set-based writes](#set-based-writes) |
+| `Channels/PostgresConversationMap.cs:105` | `Where(...).ExecuteDelete()` | `[LinqCommand]` with `ExecuteDelete`, see `DeleteFailed` in [Set-based writes](#set-based-writes) |
+| `Skills/PostgresSkillStore.cs:214` | `Where(IsActive && !names.Contains(Id)).ExecuteUpdate(...)` | `[LinqCommand]` with an array-parameter predicate, below |
+| `Memory/PostgresMemoryStore.cs:133` | `ExecuteDelete()` | `[LinqCommand]` with `ExecuteDelete`, below |
+| `Memory/PostgresMemoryStore.cs:182` | `SetProperty(m => m.RecallCount, m => m.RecallCount + 1)` | `[LinqCommand]` with a computed setter, below |
+| `Charters/PostgresRoleCharterStore.cs:107` | `Where(IsActive && !roles.Contains(Role)).ExecuteUpdate(...)` | `[LinqCommand]` with an array-parameter predicate, below |
+| `Sessions/PostgresAgentSessionStore.cs:179` | counters `+ usage.InputTokens` | `[LinqCommand]` with computed setters, see `RecordTurn` in [Set-based writes](#set-based-writes) |
+| `Sessions/PostgresAgentSessionStore.cs:226` | compare-and-swap `Where(Id && State == from)` | `[LinqCommand]` returning the rows affected, see `Transition` in [Optimistic concurrency](#optimistic-concurrency) |
+| `Sessions/PostgresAgentSessionStore.cs:119` | `FromSql("SELECT * … FOR UPDATE")` | `[LinqQuery]` with `ForUpdate()` and a transaction, see `Lock` in [Row locks](#row-locks) |
+| `Workflow/WorkflowOutboxDispatchService.cs:134` | `FOR UPDATE SKIP LOCKED` claim | `[LinqQuery]` with `ForUpdateSkipLocked()`, see `Claim` in [Row locks](#row-locks) |
+| `Scheduling/ScheduledRunStore.cs:131`, `ScheduledRunExecutionStore.cs:316,409` | `SaveChanges` guarded by shadow `xmin` | `[LinqCommand(ThrowOnNoRows = true)]` with `Sql.Xmin(r) == expected`, below |
+
+The sites without an example above:
+
+```csharp
+// PostgresSkillStore: skills no longer on disk are deactivated, in the caller's transaction.
+[LinqCommand(nameof(DeactivateMissingQuery))]
+public partial Task DeactivateMissing(string[] names, DateTimeOffset now, IAsyncDbTransaction tx, CancellationToken ct);
+
+private static int DeactivateMissingQuery(string[] names, DateTimeOffset now) =>
+    Sql.Table<SkillEntity>()
+        .Where(s => s.IsActive && !names.Contains(s.Id))
+        .ExecuteUpdate(set => set.SetProperty(s => s.IsActive, false).SetProperty(s => s.UpdatedAt, now));
+
+// PostgresRoleCharterStore: the same shape, by role.
+[LinqCommand(nameof(DeactivateOtherRolesQuery))]
+public partial Task<int> DeactivateOtherRoles(string[] roles, CancellationToken ct);
+
+private static int DeactivateOtherRolesQuery(string[] roles) =>
+    Sql.Table<RoleCharterEntity>()
+        .Where(c => c.IsActive && !roles.Contains(c.Role))
+        .ExecuteUpdate(set => set.SetProperty(c => c.IsActive, false));
+
+// PostgresMemoryStore: one memory deleted, then a recall counted without reading the row.
+[LinqCommand(nameof(DeleteMemoryQuery))]
+public partial Task<int> DeleteMemory(Guid id, CancellationToken ct);
+
+[LinqCommand(nameof(RecordRecallQuery))]
+public partial Task RecordRecall(Guid id, DateTimeOffset now, CancellationToken ct);
+
+private static int DeleteMemoryQuery(Guid id) =>
+    Sql.Table<MemoryEntity>().Where(m => m.Id == id).ExecuteDelete();
+
+private static int RecordRecallQuery(Guid id, DateTimeOffset now) =>
+    Sql.Table<MemoryEntity>()
+        .Where(m => m.Id == id)
+        .ExecuteUpdate(set => set
+            .SetProperty(m => m.RecallCount, m => m.RecallCount + 1)
+            .SetProperty(m => m.LastRecalledAt, now));
+
+// ScheduledRunStore: SaveChanges becomes an update of the changed columns, guarded by the xmin the
+// run was read with. A stale xmin throws ZeroAllocOrmConcurrencyException, as EF Core's
+// DbUpdateConcurrencyException did.
+[LinqCommand(nameof(CompleteRunQuery), ThrowOnNoRows = true)]
+public partial Task CompleteRun(Guid id, uint expected, ScheduledRunStatus status, DateTimeOffset now, CancellationToken ct);
+
+private static int CompleteRunQuery(Guid id, uint expected, ScheduledRunStatus status, DateTimeOffset now) =>
+    Sql.Table<ScheduledRunEntity>()
+        .Where(r => r.Id == id && Sql.Xmin(r) == expected)
+        .ExecuteUpdate(set => set.SetProperty(r => r.Status, status).SetProperty(r => r.CompletedAt, now));
+```
+
+EF Core's `SaveChanges` writes every changed property of a tracked entity. Here the method names the
+columns it writes, so each guarded save becomes its own `[LinqCommand]`, and the version is read with
+the row, in a projection, before it.
+
 ## Diagnostics
 
 | Code | Severity | Reports |
 |---|---|---|
-| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>` or a tuple literal of them. |
+| [ZAO100](../diagnostics/ZAO100.md) | Error | The companion is missing, overloaded, not static, not one expression, or does not return `IQuery<T>` or a tuple literal of them; a `[LinqCommand]` chain that does not end in a write, or a write under `[LinqQuery]`. |
 | [ZAO101](../diagnostics/ZAO101.md) | Error | The companion's parameters are not the method's value parameters, by name, type and order. |
-| [ZAO102](../diagnostics/ZAO102.md) | Error | An operator, predicate, key, count or chain order the translator does not support. |
+| [ZAO102](../diagnostics/ZAO102.md) | Error | An operator, predicate, key, count, setter, `xmin` use, row lock or chain order the translator does not support. |
 | [ZAO103](../diagnostics/ZAO103.md) | Error | The chain reads a field, local or other value that is not a companion parameter or constant. |
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
-| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, or an owned property whose type has no properties to map. |
+| [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, `Json` on a non-`string`, or an owned property whose type has no properties to map. |
 | [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |
 | [ZAO110](../diagnostics/ZAO110.md) | Warning | `Skip` or `Take` without an ordering returns rows in no defined order. |
-| [ZAO111](../diagnostics/ZAO111.md) | Error | An enum parameter is compared with columns that store the enum differently. |
-| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type, or one of its tuple elements, does not fit the companion's `IQuery<T>`. |
+| [ZAO111](../diagnostics/ZAO111.md) | Error | An enum parameter is compared with, or set into, columns that store the enum differently. |
+| [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type, or one of its tuple elements, does not fit the companion's `IQuery<T>`, or a `[LinqCommand]`'s `int`. |
+| [ZAO113](../diagnostics/ZAO113.md) | Warning | A row lock in a method without an `IAsyncDbTransaction` parameter, so the lock ends with its statement. |
 
 ## Not supported yet
 
-The next planned work, in this order. Until then, write such a query as a raw `[Query]` or `[Command]`:
+Write any of these as a raw `[Query]` or `[Command]`:
 
-- Set-based `ExecuteUpdate` and `ExecuteDelete`, optimistic concurrency checks, and `FOR UPDATE`.
-
-Also not supported today:
-
+- Inserts: use `[Command]` or `BulkInsert`. A `[LinqCommand]` updates or deletes.
+- A write with `Join`, `OrderBy`, `Take` or a lock before it, such as `UPDATE ... FROM` (ZAO102), and
+  `RETURNING`: a `[LinqCommand]` returns the rows affected only.
+- In a setter value, `/`, `%`, casts and method calls (ZAO102).
+- Other lock strengths and targets: `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and `FOR UPDATE OF`.
+- Comparing a `[Json]` column with a string parameter in a condition. It builds today, but fails at
+  run time with "operator does not exist: jsonb = text";
+  see [#402](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/402).
 - `HAVING`: `Where` after `GroupBy` reports ZAO102. Filter the rows before grouping.
 - Counting groups, such as `GroupBy(...).Count()` (ZAO102), and `GroupBy` without a final `Select`
   (ZAO107).

@@ -20,9 +20,10 @@ with no runtime reflection and NativeAOT-ready.
   ones that share the build with other source generators, where EF Core's precompiled queries collide.
 - **Compile-time diagnostics instead of runtime surprises.** A non-partial method, a tuple that does not
   match the SQL's statement count or a parameter with no binding is a build error, `ZAO001` to `ZAO082`,
-  and a LINQ chain that cannot be translated is one too, `ZAO100` to `ZAO112`.
+  and a LINQ chain that cannot be translated is one too, `ZAO100` to `ZAO113`.
 - **LINQ as a compile-time SQL source.** With `ZeroAlloc.ORM.Linq`, a query's SQL can be written as a
-  LINQ chain that the generator translates to PostgreSQL at build time; the chain never runs.
+  LINQ chain that the generator translates to PostgreSQL at build time; the chain never runs. The same
+  goes for set-based updates and deletes, with optional concurrency guards, and for row locks.
 
 ## Install
 
@@ -68,7 +69,7 @@ The generator fills in each `partial` method with typed parameter binding and ro
 against [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async)'s `IAsyncDbConnection`. There
 is no runtime LINQ provider, no expression compilation and no runtime reflection.
 
-## LINQ queries
+## LINQ queries and writes
 
 On PostgreSQL, `ZeroAlloc.ORM.Linq` lets you write the SQL as LINQ instead. Each query is a `partial`
 method plus a companion that holds the chain. The generator reads the companion at build time and emits
@@ -108,7 +109,9 @@ public sealed partial class TaskStore(IAsyncDbConnection connection)
 `TaskEntity` is any class with the mapped properties, such as a Domain entity; columns default to the
 property names, as in EF Core. Filters, ordering, `Skip`/`Take`, `Sql.Row` keyset paging, `Count`,
 `LongCount`, `Any`, `Sum`, `Min`, `Max`, `Average`, `GroupBy` with aggregates and `.Date`, and inner
-`Join` translate today. See the
+`Join` translate today. `[LinqCommand]` writes rows in one statement with `ExecuteUpdate` and
+`ExecuteDelete`, `ThrowOnNoRows` with `Sql.Xmin` guards a write against a concurrent change, and
+`ForUpdate`, `ForUpdateSkipLocked` and `ForUpdateNoWait` lock the rows a query reads. See the
 [LINQ recipe](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) for every
 operator, result shape and diagnostic.
 

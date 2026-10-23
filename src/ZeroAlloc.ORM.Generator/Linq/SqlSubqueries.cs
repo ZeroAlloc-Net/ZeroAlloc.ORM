@@ -25,6 +25,17 @@ internal static class SqlSubqueries
                 Add(scalar.Call, subqueries);
                 AddSelect(scalar.Source, subqueries);
                 break;
+            case SqlDeleteStatement delete:
+                foreach (var predicate in delete.Predicates) Add(predicate, subqueries);
+                break;
+            case SqlUpdateStatement update:
+                foreach (var setter in update.Setters)
+                {
+                    Add(setter.Column, subqueries);
+                    Add(setter.Value, subqueries);
+                }
+                foreach (var predicate in update.Predicates) Add(predicate, subqueries);
+                break;
             default:
                 throw new InvalidOperationException("No subquery walk for " + statement.GetType().Name + ".");
         }
@@ -57,7 +68,7 @@ internal static class SqlSubqueries
                 AddSelect(subquery.Subquery, subqueries);
                 break;
             case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
-                or SqlObjectIsNullExpression:
+                or SqlObjectIsNullExpression or SqlSystemColumnExpression:
                 break;
             case SqlBinaryExpression binary:
                 Add(binary.Left, subqueries);
@@ -90,6 +101,10 @@ internal static class SqlSubqueries
             case SqlAnyExpression any:
                 Add(any.Operand, subqueries);
                 Add(any.Array, subqueries);
+                break;
+            case SqlArithmeticExpression arithmetic:
+                Add(arithmetic.Left, subqueries);
+                Add(arithmetic.Right, subqueries);
                 break;
             case SqlConditionalExpression conditional:
                 Add(conditional.Condition, subqueries);

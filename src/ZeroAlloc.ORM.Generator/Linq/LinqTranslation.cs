@@ -26,10 +26,16 @@ internal enum LinqResultShape
     /// a list, a single row or a scalar.
     /// </summary>
     MultiResult,
+
+    /// <summary>
+    /// <c>Task</c> or <c>ValueTask</c>, or <c>Task&lt;int&gt;</c> or <c>ValueTask&lt;int&gt;</c> for the
+    /// rows affected: a <c>[LinqCommand]</c> write, run through the <c>[Command]</c> non-query path.
+    /// </summary>
+    NonQuery,
 }
 
 /// <summary>
-/// What <see cref="LinqQueryReader.Read"/> makes of one <c>[LinqQuery]</c> method: the statements,
+/// What <see cref="LinqQueryReader.Read"/> makes of one <c>[LinqQuery]</c> or <c>[LinqCommand]</c> method: the statements,
 /// the result shape, the parameter facets and the source comment, or the diagnostics that stop
 /// the translation. Symbol-free, so the per-method read caches.
 /// </summary>
@@ -58,7 +64,29 @@ internal sealed record LinqTranslation(
     /// parameters that cannot take a null; the binder reports ZAO107 for those the map owns.
     /// </summary>
     public EquatableArray<LinqLiftedProjection> LiftedProjections { get; init; }
+
+    /// <summary>
+    /// The C# names of the <c>uint</c> value parameters compared with xmin, through
+    /// <c>Sql.Xmin</c> or a <c>uint</c> property the binder checks maps to xmin, sorted by
+    /// name: they bind as <c>xid</c>.
+    /// </summary>
+    public EquatableArray<string> XidParameters { get; init; }
+
+    /// <summary>
+    /// Projected <c>uint</c> members, read as xmin: the binder reports ZAO107 for each whose
+    /// column is not xmin.
+    /// </summary>
+    public EquatableArray<LinqXminProjection> XminProjections { get; init; }
 }
+
+/// <summary>
+/// A projected <c>uint</c> member, such as <c>t.RowVersion</c>, which the row reads with
+/// <c>GetFieldValue&lt;uint&gt;</c>: only xmin reads as one, so its map must map it to xmin.
+/// </summary>
+/// <param name="Statement">The statement the projection belongs to.</param>
+/// <param name="Member">The projected member.</param>
+/// <param name="Location">The projected value.</param>
+internal sealed record LinqXminProjection(int Statement, SqlMemberExpression Member, LocationInfo? Location);
 
 /// <summary>
 /// A projected member of an optional object, such as <c>r.Outcome!.HasFailedValidation</c>, whose
@@ -102,6 +130,12 @@ internal sealed record LinqBoundQuery(
 {
     /// <summary>Each statement's rendered SQL, in order; <see cref="Sql"/> is these joined.</summary>
     public EquatableArray<string> Statements { get; init; }
+
+    /// <summary>
+    /// The parameters an UPDATE sets into a jsonb column, by map or by <c>[Json]</c>, each at its
+    /// first such setter: they bind as jsonb, as a <c>[Json]</c> parameter does.
+    /// </summary>
+    public EquatableArray<SqlParameterExpression> JsonParameters { get; init; }
 }
 
 /// <summary>

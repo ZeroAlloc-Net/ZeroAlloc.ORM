@@ -24,9 +24,28 @@ internal static class SqlParameterReferences
                 Add(scalar.Call, names);
                 AddSelect(scalar.Source, names);
                 break;
+            case SqlDeleteStatement delete:
+                foreach (var predicate in delete.Predicates) Add(predicate, names);
+                break;
+            case SqlUpdateStatement update:
+                foreach (var setter in update.Setters)
+                {
+                    Add(setter.Column, names);
+                    Add(setter.Value, names);
+                }
+                foreach (var predicate in update.Predicates) Add(predicate, names);
+                break;
             default:
                 throw new InvalidOperationException("No parameter walk for " + statement.GetType().Name + ".");
         }
+        return names;
+    }
+
+    /// <summary>The SQL names of the parameters the expressions render.</summary>
+    public static HashSet<string> Collect(IEnumerable<SqlExpression> expressions)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var expression in expressions) Add(expression, names);
         return names;
     }
 
@@ -53,7 +72,8 @@ internal static class SqlParameterReferences
             case SqlParameterExpression parameter:
                 names.Add(parameter.Name);
                 break;
-            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression or SqlObjectIsNullExpression:
+            case SqlMemberExpression or SqlLiteralExpression or SqlEnumLiteralExpression or SqlObjectIsNullExpression
+                or SqlSystemColumnExpression:
                 break;
             case SqlBinaryExpression binary:
                 Add(binary.Left, names);
@@ -86,6 +106,10 @@ internal static class SqlParameterReferences
             case SqlAnyExpression any:
                 Add(any.Operand, names);
                 Add(any.Array, names);
+                break;
+            case SqlArithmeticExpression arithmetic:
+                Add(arithmetic.Left, names);
+                Add(arithmetic.Right, names);
                 break;
             case SqlConditionalExpression conditional:
                 Add(conditional.Condition, names);

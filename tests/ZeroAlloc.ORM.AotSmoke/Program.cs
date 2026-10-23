@@ -11,6 +11,7 @@ using Npgsql;
 using System.Data.Async;
 using System.Data.Async.Adapters;
 using System.Globalization;
+using ZeroAlloc.ORM;
 using ZeroAlloc.ORM.AotSmoke;
 
 var raw = new SqliteConnection("Data Source=:memory:");
@@ -198,6 +199,8 @@ static async Task RunPostgresAsync()
                 await RunJsonAsync(connection).ConfigureAwait(false);
 
                 await RunLinqAsync(connection).ConfigureAwait(false);
+
+                await RunLinqWritesAsync(connection, dataSource).ConfigureAwait(false);
             }
         }
     }
@@ -333,4 +336,67 @@ static async Task RunLinqIncludeAsync(IAsyncDbConnection connection, Guid build,
         throw new InvalidOperationException($"Unexpected last page: {last.Count}, {lastRuns.Count}.");
 
     Console.WriteLine("Postgres LINQ include smoke passed.");
+}
+
+// [LinqCommand] and a row lock over the linq_items rows RunLinqAsync left: alpha (rank 5), beta (3)
+// and delta (1) are active, gamma (9) is archived. An update guarded by xmin goes through with the
+// version it read and throws once that version is stale; two transactions claiming one row each
+// with SKIP LOCKED get different rows; a delete removes the archived row.
+static async Task RunLinqWritesAsync(IAsyncDbConnection connection, NpgsqlDataSource dataSource)
+{
+    var repo = new LinqWriteRepo(connection);
+    var alpha = new Guid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    var beta = new Guid("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+
+    var read = await repo.GetVersionAsync(alpha, CancellationToken.None).ConfigureAwait(false)
+        ?? throw new InvalidOperationException("The row to promote is missing.");
+    await repo.PromoteAsync(alpha, read.Version, CancellationToken.None).ConfigureAwait(false);
+    var promoted = await repo.GetVersionAsync(alpha, CancellationToken.None).ConfigureAwait(false);
+    if (promoted is null || promoted.Rank != 6 || promoted.Version == read.Version)
+        throw new InvalidOperationException($"Unexpected promoted row: rank {promoted?.Rank}.");
+
+    var stale = false;
+    try
+    {
+        await repo.PromoteAsync(alpha, read.Version, CancellationToken.None).ConfigureAwait(false);
+    }
+    catch (ZeroAllocOrmConcurrencyException)
+    {
+        stale = true;
+    }
+    var after = await repo.GetVersionAsync(alpha, CancellationToken.None).ConfigureAwait(false);
+    if (!stale || after is null || after.Rank != 6 || after.Version != promoted.Version)
+        throw new InvalidOperationException($"A stale xmin did not throw, or it wrote: rank {after?.Rank}.");
+
+    var otherPg = dataSource.CreateConnection();
+    await using (otherPg.ConfigureAwait(false))
+    {
+        await otherPg.OpenAsync().ConfigureAwait(false);
+        IAsyncDbConnection otherConnection = otherPg.AsAsync();
+        await using (otherConnection.ConfigureAwait(false))
+        {
+            var tx = await connection.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
+            await using (tx.ConfigureAwait(false))
+            {
+                var otherTx = await otherConnection.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
+                await using (otherTx.ConfigureAwait(false))
+                {
+                    var first = await repo.ClaimAsync(Status.Active, 1, tx, CancellationToken.None).ConfigureAwait(false);
+                    var second = await new LinqWriteRepo(otherConnection)
+                        .ClaimAsync(Status.Active, 1, otherTx, CancellationToken.None).ConfigureAwait(false);
+                    if (first.Count != 1 || first[0].Rank != 1 || second.Count != 1 || second[0].Id != beta)
+                        throw new InvalidOperationException($"Unexpected SKIP LOCKED claims: {first.Count}, {second.Count}.");
+                    await otherTx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+    }
+
+    var deleted = await repo.DeleteByStatusAsync(Status.Archived, CancellationToken.None).ConfigureAwait(false);
+    var left = await new LinqRepo(connection).CountActiveAsync(0, CancellationToken.None).ConfigureAwait(false);
+    if (deleted != 1 || left != 3)
+        throw new InvalidOperationException($"Unexpected LINQ delete: {deleted} deleted, {left} left.");
+
+    Console.WriteLine("Postgres LINQ write smoke passed.");
 }

@@ -30,6 +30,12 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlScalarAggregateStatement scalar:
                 RenderScalarAggregate(sb, scalar, names);
                 break;
+            case SqlDeleteStatement delete:
+                RenderDelete(sb, delete, names);
+                break;
+            case SqlUpdateStatement update:
+                RenderUpdate(sb, update, names);
+                break;
             default:
                 throw new InvalidOperationException("No PostgreSQL rendering for " + statement.GetType().Name + ".");
         }
@@ -39,7 +45,14 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     private static void RenderSelect(StringBuilder sb, SqlSelectStatement select, SqlNameScope names)
     {
         sb.Append("SELECT ");
-        AppendList(sb, select.Projection, names);
+        // A statement's projected member may be xmin, read as a uint; the reader checked its type.
+        for (var i = 0; i < select.Projection.Length; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            names.XminAllowed = names.IsStatement && select.Projection[i] is SqlMemberExpression;
+            RenderExpression(sb, select.Projection[i], names);
+            names.XminAllowed = false;
+        }
         RenderFromWhere(sb, select, names);
         if (select.GroupBy.Length > 0)
         {
@@ -48,6 +61,21 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         }
         RenderOrdering(sb, select, names);
         RenderPaging(sb, select.Paging, names);
+        RenderLock(sb, select.Lock);
+    }
+
+    // The lock clause comes last, after LIMIT and OFFSET. Each lock names its clause here, so a
+    // new one cannot fall through.
+    private static void RenderLock(StringBuilder sb, SqlRowLock rowLock)
+    {
+        sb.Append(rowLock switch
+        {
+            SqlRowLock.None => string.Empty,
+            SqlRowLock.Update => " FOR UPDATE",
+            SqlRowLock.UpdateSkipLocked => " FOR UPDATE SKIP LOCKED",
+            SqlRowLock.UpdateNoWait => " FOR UPDATE NOWAIT",
+            _ => throw new InvalidOperationException("No PostgreSQL rendering for row lock " + rowLock + "."),
+        });
     }
 
     // count(*) reads the whole WHERE result, and a LIMIT next to it would limit the one row
@@ -78,6 +106,42 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
         RenderFromWhere(sb, source, names);
         RenderPaging(sb, source.Paging, names);
         sb.Append(") AS q");
+    }
+
+    // `DELETE FROM "schema"."table" [WHERE a AND b]`. The table takes no alias; see SqlDeleteStatement.
+    private static void RenderDelete(StringBuilder sb, SqlDeleteStatement delete, SqlNameScope names)
+    {
+        sb.Append("DELETE FROM ");
+        AppendTable(sb, names.Table, names.Schema, alias: null);
+        RenderWhere(sb, delete.Predicates, names);
+    }
+
+    // `UPDATE "schema"."table" SET "A" = @a, "B" = ("B" + @n) [WHERE a AND b]`, in setter order.
+    // The table takes no alias, nor does a SET target, which PostgreSQL rejects qualified. An
+    // enum constant takes its target column's storage, as it does in a comparison. A column
+    // set twice is reported at its second setter: PostgreSQL rejects it, and it is a mistake.
+    private static void RenderUpdate(StringBuilder sb, SqlUpdateStatement update, SqlNameScope names)
+    {
+        sb.Append("UPDATE ");
+        AppendTable(sb, names.Table, names.Schema, alias: null);
+        sb.Append(" SET ");
+        var set = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < update.Setters.Length; i++)
+        {
+            var setter = update.Setters[i];
+            if (i > 0) sb.Append(", ");
+            var column = names.SetterColumn(setter.Column);
+            if (column is not null && !set.Add(column))
+            {
+                names.Report(LinqDiagnostics.UnsupportedAt(
+                    "Setting '" + setter.Column.Member + "', whose column " + column + " an earlier SetProperty sets already,",
+                    setter.Column.Location));
+            }
+            AppendIdentifier(sb, column ?? setter.Column.Member);
+            sb.Append(" = ");
+            RenderComparand(sb, setter.Value, setter.Column, names);
+        }
+        RenderWhere(sb, update.Predicates, names);
     }
 
     // As a paged count, a paged aggregate reads a paged subquery. The subquery selects the
@@ -176,14 +240,18 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             }
         }
 
-        if (select.Predicates.Length > 0)
+        RenderWhere(sb, select.Predicates, names);
+    }
+
+    // ` WHERE a AND b`; nothing for no predicates.
+    private static void RenderWhere(StringBuilder sb, Model.EquatableArray<SqlExpression> predicates, SqlNameScope names)
+    {
+        if (predicates.Length == 0) return;
+        sb.Append(" WHERE ");
+        for (var i = 0; i < predicates.Length; i++)
         {
-            sb.Append(" WHERE ");
-            for (var i = 0; i < select.Predicates.Length; i++)
-            {
-                if (i > 0) sb.Append(" AND ");
-                RenderExpression(sb, select.Predicates[i], names);
-            }
+            if (i > 0) sb.Append(" AND ");
+            RenderExpression(sb, predicates[i], names);
         }
     }
 
@@ -275,6 +343,9 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlParameterExpression parameter:
                 sb.Append('@').Append(parameter.Name);
                 break;
+            case SqlSystemColumnExpression system:
+                AppendQualified(sb, system.Alias, system.Name, names);
+                break;
             case SqlLiteralExpression literal:
                 AppendLiteral(sb, literal);
                 break;
@@ -355,6 +426,18 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                 else
                     sb.Append(')');
                 break;
+            case SqlArithmeticExpression arithmetic:
+                sb.Append('(');
+                RenderExpression(sb, arithmetic.Left, names);
+                sb.Append(arithmetic.Operator switch
+                {
+                    SqlArithmeticOperator.Add => " + ",
+                    SqlArithmeticOperator.Subtract => " - ",
+                    _ => " * ",
+                });
+                RenderExpression(sb, arithmetic.Right, names);
+                sb.Append(')');
+                break;
             case SqlConditionalExpression conditional:
                 // IS NOT TRUE, not NOT: a condition that is NULL, as `p > 0` is for a null p,
                 // is false in C# and skips the filter, where NOT (NULL) would drop every row.
@@ -422,10 +505,31 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             ReportOrderedNameColumn(binary.Right, names);
         }
 
+        // An xid parameter meets xmin: Sql.Xmin, or a member its map maps to xmin, which only an
+        // == or != test reads. Any other column would meet the xid as the wrong type.
+        var xid = XidParameter(binary.Left, names) ?? XidParameter(binary.Right, names);
+        if (xid is not null)
+        {
+            var other = ReferenceEquals(xid, binary.Left) ? binary.Right : binary.Left;
+            if (other is SqlMemberExpression member && names.MappedColumn(member) is { } column && !SqlNameScope.IsXminColumn(column))
+            {
+                names.Report(LinqDiagnostics.UnsupportedAt(
+                    "'" + xid.ClrName + "' is a uint parameter; uint binds only as xmin's transaction id, and '"
+                        + member.Member + "' is not xmin, so comparing them",
+                    member.Location));
+            }
+            names.XminAllowed = binary.Operator is SqlBinaryOperator.Equal or SqlBinaryOperator.NotEqual;
+        }
+
         RenderComparand(sb, binary.Left, binary.Right, names);
         sb.Append(ComparisonText(binary.Operator));
         RenderComparand(sb, binary.Right, binary.Left, names);
+        names.XminAllowed = false;
     }
+
+    // The side when it is a parameter that binds as xid; null for anything else.
+    private static SqlParameterExpression? XidParameter(SqlExpression side, SqlNameScope names)
+        => side is SqlParameterExpression parameter && names.XidParameters.Contains(parameter.ClrName) ? parameter : null;
 
     private static string ComparisonText(SqlBinaryOperator comparison) => comparison switch
     {
