@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.0...v2.10.1) (2026-10-29)
+
+
+### Tests
+
+* assert the empty-source run directly instead of through a snapshot ([#419](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/419)) ([ba3d6b8](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/ba3d6b83ea5a93d4e3d6e042a25f26b004aaa9f7))
+
 ## [2.10.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.9.0...v2.10.0) (2026-10-23)
 
 
