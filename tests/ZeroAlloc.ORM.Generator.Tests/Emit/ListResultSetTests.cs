@@ -185,7 +185,7 @@ public class ListResultSetTests
         // v1.6 — nullable composites in list rows are NOT yet supported.
         // The HasNullableCompositeColumn classifier guard still routes them
         // to ZAO022. #400 — ZAO022 is an Error, so the repository is not
-        // emitted at all; the snapshot pins that no stub file is left either.
+        // emitted at all; the run must leave no stub file either.
         var source = """
             using System.Collections.Generic;
             using System.Data.Async;
@@ -213,6 +213,6 @@ public class ListResultSetTests
                 + "non-nullable, or read one row at a time as Task<TestApp.OrderRow?>",
             diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture),
             System.StringComparison.Ordinal);
-        GeneratorSnapshot.Verify(result);
+        Assert.Empty(result.GeneratedTrees);
     }
 }
