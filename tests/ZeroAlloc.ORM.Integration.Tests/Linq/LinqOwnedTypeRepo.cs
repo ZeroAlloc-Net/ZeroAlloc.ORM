@@ -75,6 +75,17 @@ internal sealed partial class LinqOwnedTypeRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(WithOutcomeQuery))]
     public partial Task<List<OutcomeFlag>> WithOutcomeAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(ByValidationResultQuery))]
+    public partial Task<List<OutcomeFlag>> ByValidationResultAsync(string doc, CancellationToken ct);
+
+    // The map declares ValidationResult jsonb, so the string parameter binds as jsonb: jsonb equals
+    // jsonb. Left as text, PostgreSQL rejects `jsonb = text`, 42883.
+    private static IQuery<OutcomeFlag> ByValidationResultQuery(string doc) =>
+        Sql.Table<AnalysisRequestEntity>()
+            .Where(r => string.Equals(r.Outcome!.ValidationResult, doc, StringComparison.Ordinal))
+            .OrderBy(r => r.Title)
+            .Select(r => new OutcomeFlag(r.Title, r.Outcome!.HasFailedValidation));
+
     // HasFailedValidation reads NULL without an outcome, and C#'s `!` of it keeps the row.
     private static IQuery<OutcomeFlag> NotFailedQuery() =>
         Sql.Table<AnalysisRequestEntity>()

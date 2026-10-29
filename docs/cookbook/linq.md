@@ -856,6 +856,11 @@ the row:
   takes a parameter, which binds as `jsonb` without a marker of its own, a constant, `null` or another
   jsonb column. Another column reports ZAO102. That parameter may not appear in a condition or in a
   setter of another column as well, which reports ZAO102: it would bind as `jsonb` there too.
+- A `string` parameter compared with a jsonb column in a condition, `Where`, `ExecuteUpdate` or
+  `ExecuteDelete`, binds as `jsonb`, as a `[Json]` parameter of a `[Query]` does. The comparison is
+  jsonb equality: it compares the documents, so whitespace and key order do not matter. A parameter
+  that also meets a text column, or sits in another form such as `LIKE`, reports ZAO102, since it
+  cannot bind both ways.
 - A `DateTime` parameter binds by its `DateTimeKind`, as in `[Command]`. The map's `DateTimeStorage`
   does not decide it yet; see [#403](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/403).
 
@@ -1150,9 +1155,6 @@ Write any of these as a raw `[Query]` or `[Command]`:
   `RETURNING`: a `[LinqCommand]` returns the rows affected only.
 - In a setter value, `/`, `%`, casts and method calls (ZAO102).
 - Other lock strengths and targets: `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` and `FOR UPDATE OF`.
-- Comparing a `[Json]` column with a string parameter in a condition. It builds today, but fails at
-  run time with "operator does not exist: jsonb = text";
-  see [#402](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/402).
 - `HAVING`: `Where` after `GroupBy` reports ZAO102. Filter the rows before grouping.
 - Counting groups, such as `GroupBy(...).Count()` (ZAO102), and `GroupBy` without a final `Select`
   (ZAO107).

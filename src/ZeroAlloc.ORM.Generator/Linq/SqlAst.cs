@@ -186,6 +186,11 @@ internal abstract record SqlExpression;
 /// join; it renders as <c>t1."Col"</c> and resolves through that source's map. Null without a
 /// join, which renders the bare column as in 2.5.0.
 /// </param>
+/// <param name="Json">
+/// Set on a member read in a condition whose string property is marked <c>[Json]</c>, on itself or
+/// on the record constructor parameter that feeds it. A column the map declares <c>Json = true</c>
+/// is not flagged here; the name scope knows it.
+/// </param>
 /// <param name="WholeObject">
 /// Set on a projected member whose type is an object: the map decides when the query is bound
 /// whether it is a plain column, an owned object, ZAO107, or a composite, ZAO102. Null for any
@@ -196,7 +201,8 @@ internal sealed record SqlMemberExpression(
     LocationInfo? Location,
     bool ColumnPicksEnumStorage,
     string? SourceAlias = null,
-    SqlWholeObject? WholeObject = null) : SqlExpression;
+    SqlWholeObject? WholeObject = null,
+    bool Json = false) : SqlExpression;
 
 /// <summary>
 /// A PostgreSQL system column of a row, named by a marker rather than by the map: <c>Sql.Xmin(r)</c>

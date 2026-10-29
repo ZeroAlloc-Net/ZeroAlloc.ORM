@@ -48,8 +48,8 @@ internal static class JsonSetters
         // Conservative on purpose: a condition that compares the parameter with another jsonb
         // column, `t.Snapshot == doc`, would bind as jsonb consistently and work, yet is rejected
         // too. Telling it apart means knowing every column each use meets, nested subqueries and
-        // WhereIf included, which a jsonb document compared for equality does not justify; the
-        // predicate side is tracked as #402.
+        // WhereIf included, which a jsonb document compared for equality does not justify. A
+        // parameter that only meets jsonb columns in conditions is bound by JsonComparisons.
         var elsewhere = SqlParameterReferences.Collect(update.Predicates);
         for (var i = 0; i < json.Length; i++)
         {

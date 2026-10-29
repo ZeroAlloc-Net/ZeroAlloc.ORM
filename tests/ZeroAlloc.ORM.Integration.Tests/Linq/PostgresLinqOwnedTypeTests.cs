@@ -102,6 +102,24 @@ public sealed class PostgresLinqOwnedTypeTests
             .Should().Equal(Delta);
     }
 
+    // A string parameter compared with the jsonb ValidationResult binds as jsonb, issue 402. It
+    // compares the documents, not their text: whitespace and key order do not matter.
+    [Fact]
+    public async Task Json_column_compared_with_a_string_parameter_compares_documents()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqOwnedTypeRepo(fx.Connection);
+        await InsertAsync(repo, Alpha, hasFailedValidation: true).ConfigureAwait(false);
+        await InsertAsync(repo, Delta, hasFailedValidation: false).ConfigureAwait(false);
+
+        (await repo.ByValidationResultAsync("""{"ok":false}""", CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(new OutcomeFlag("alpha", true));
+        (await repo.ByValidationResultAsync("""{ "ok" : true }""", CancellationToken.None).ConfigureAwait(false))
+            .Should().Equal(new OutcomeFlag("delta", false));
+        (await repo.ByValidationResultAsync("""{"ok":null}""", CancellationToken.None).ConfigureAwait(false))
+            .Should().BeEmpty();
+    }
+
     // A member of the optional Outcome is lifted to a nullable value: its negation keeps a
     // request without an outcome, and a bool? reads its NULL. The whole Outcome is null when
     // every one of its columns is.
