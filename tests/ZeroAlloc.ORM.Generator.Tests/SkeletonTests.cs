@@ -1,7 +1,5 @@
-using System.Threading.Tasks;
+using AwesomeAssertions;
 using Xunit;
-
-using ZeroAlloc.TestHelpers;
 
 namespace ZeroAlloc.ORM.Generator.Tests;
 
@@ -12,6 +10,7 @@ public class SkeletonTests
     {
         var source = "namespace Empty {}";
         var result = GeneratorHarness.RunGenerator(source);
-        GeneratorSnapshot.Verify(result);
+        result.GeneratedTrees.Should().BeEmpty();
+        result.Diagnostics.Should().BeEmpty();
     }
 }
