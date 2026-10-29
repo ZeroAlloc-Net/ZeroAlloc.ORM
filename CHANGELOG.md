@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.1...v2.10.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* assert empty generator runs directly so the release publishes ([#422](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/422)) ([9bc16b8](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/9bc16b8d855fd8c44d2d950bd657b5a5b9aaa81e))
+
 ## [2.10.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.0...v2.10.1) (2026-10-29)
 
 
