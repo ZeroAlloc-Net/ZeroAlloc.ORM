@@ -493,12 +493,12 @@ public class LinqUpdateTests
         "Sql.Table<AgentSessionEntity>().Where(s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc).SetProperty(s => s.Note, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().ExecuteUpdate(set => set.SetProperty(s => s.Payload, s => s.Note))",
         "ZAO102",
@@ -508,17 +508,12 @@ public class LinqUpdateTests
         "Sql.Table<AgentSessionEntity>().Where(s => Sql.Table<SkillEntity>().Where(k => k.Id == doc).Select(k => k.Id).Contains(s.Note!)).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<AgentSessionEntity>().WhereIf(doc != null, s => s.Note == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
-    [InlineData(
-        "Sql.Table<AgentSessionEntity>().Where(s => s.Snapshot == doc).ExecuteUpdate(set => set.SetProperty(s => s.Payload, doc))",
-        "ZAO102",
-        "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Payload', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<NoteEntity>().ExecuteUpdate(set => set.SetProperty(n => n.Body, n => n.Title))",
         "ZAO102",
@@ -528,12 +523,12 @@ public class LinqUpdateTests
         "Sql.Table<NoteEntity>().Where(n => n.Title == doc).ExecuteUpdate(set => set.SetProperty(n => n.Body, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Body', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<NoteEntity>().ExecuteUpdate(set => set.SetProperty(n => n.Body, doc).SetProperty(n => n.Title, doc))",
         "ZAO102",
         "doc",
-        "Parameter 'doc', which binds as jsonb for the jsonb 'Body', used in a condition or another setter as well, is not supported in a [LinqCommand] chain")]
+        "Parameter 'doc', which binds as jsonb for a jsonb column, used against something other than a jsonb column as well, is not supported in a [LinqCommand] chain")]
     [InlineData(
         "Sql.Table<DocEntity>().ExecuteUpdate(set => set.SetProperty(d => d.Body, d => d.Summary))",
         "ZAO102",

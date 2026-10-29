@@ -187,7 +187,7 @@ internal static partial class LinqQueryReader
         SqlExpression expression;
         if (TryReadRowMember(op, row, context, out var name, out type, out var alias))
         {
-            expression = Member(name, op, type, alias);
+            expression = Member(name, op, type, alias) with { Json = IsJsonMember(op) };
             if (IsLiftedOwnedMember(op, type)) context.LiftedValues.Add(expression);
         }
         else if (op is IParameterReferenceOperation p && context.SqlNames.TryGetValue(p.Parameter, out var sqlName))
