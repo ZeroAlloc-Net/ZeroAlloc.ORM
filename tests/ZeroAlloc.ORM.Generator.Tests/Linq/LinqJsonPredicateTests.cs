@@ -150,6 +150,41 @@ public class LinqJsonPredicateTests
             JsonbBinding);
     }
 
+    // One parameter set into a jsonb column and compared with another binds as jsonb for both.
+    [Fact]
+    public void Update_parameter_set_into_and_compared_with_json_columns_binds_jsonb()
+    {
+        VerifyCompiled("""
+            [LinqCommand(nameof(CopyQuery))]
+            public partial Task<int> Copy(string doc, CancellationToken ct);
+
+            private static int CopyQuery(string doc) =>
+                Sql.Table<NoteEntity>().Where(n => n.Extra == doc).ExecuteUpdate(set => set.SetProperty(n => n.Body, doc));
+            }
+            """,
+            "UPDATE \"Notes\" SET \"Body\" = @doc WHERE \"Extra\" = @doc",
+            JsonbBinding);
+    }
+
+    // Set into a jsonb column but compared with a text one, it cannot bind both ways.
+    [Fact]
+    public void Update_parameter_set_into_json_and_compared_with_text_reports_ZAO102()
+    {
+        var (result, _) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + """
+            [LinqCommand(nameof(CopyQuery))]
+            public partial Task<int> Copy(string doc, CancellationToken ct);
+
+            private static int CopyQuery(string doc) =>
+                Sql.Table<NoteEntity>().Where(n => n.Title == doc).ExecuteUpdate(set => set.SetProperty(n => n.Body, doc));
+            }
+            """, NpgsqlStub.Source);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        Assert.Contains("doc", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Assert.Empty(result.GeneratedTrees);
+    }
+
     [Fact]
     public void Delete_condition_on_a_json_column_binds_jsonb()
     {

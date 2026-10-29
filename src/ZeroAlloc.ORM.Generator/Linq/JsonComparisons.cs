@@ -13,8 +13,9 @@ namespace ZeroAlloc.ORM.Generator.Linq;
 /// </summary>
 /// <remarks>
 /// jsonb equality compares the documents, not their text: <c>{"a":1}</c> equals <c>{ "a": 1 }</c>.
-/// A parameter binds one way for the whole method, so one that also meets a text column, sits in
-/// another form such as LIKE, or is set into a text column is ZAO102. Checked when the statement is
+/// A parameter set into a jsonb column counts as a jsonb use too. It binds one way for the whole
+/// method, so one that also meets a text column, sits in another form such as LIKE, or is set into
+/// a text column is ZAO102. Checked when the statement is
 /// bound, since only then is the map known.
 /// </remarks>
 internal static class JsonComparisons
@@ -43,11 +44,14 @@ internal static class JsonComparisons
                     foreach (var predicate in delete.Predicates) Visit(predicate);
                     break;
                 case SqlUpdateStatement update:
-                    // A setter into a jsonb column is JsonSetters' to check; one into any other
-                    // column makes its parameter a text one.
+                    // A parameter set into a jsonb column binds as jsonb, as one compared with it does;
+                    // set into any other column, it is a text one.
                     foreach (var setter in update.Setters)
                     {
-                        if (!setter.ColumnJson && !names.IsJson(setter.Column)) Other(setter.Value);
+                        if ((setter.ColumnJson || names.IsJson(setter.Column)) && setter.Value is SqlParameterExpression value)
+                            json.Add(value);
+                        else
+                            Other(setter.Value);
                     }
                     foreach (var predicate in update.Predicates) Visit(predicate);
                     break;
@@ -138,8 +142,8 @@ internal static class JsonComparisons
             if (other.Contains(parameter.Name))
             {
                 diagnostics.Add(LinqDiagnostics.UnsupportedAt(
-                    "Parameter '" + parameter.ClrName + "', which binds as jsonb for its comparison with a jsonb column,"
-                        + " used elsewhere against something other than a jsonb column as well,",
+                    "Parameter '" + parameter.ClrName + "', which binds as jsonb for a jsonb column,"
+                        + " used against something other than a jsonb column as well,",
                     parameter.Location));
             }
             bound.Add(parameter);

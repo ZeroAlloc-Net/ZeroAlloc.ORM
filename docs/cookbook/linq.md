@@ -854,8 +854,9 @@ the row:
 - A jsonb column is one the map declares with `[ColumnMap(nameof(E.P), Json = true)]`, or whose
   property, or record constructor parameter, carries `[Json]`; a domain class needs no attribute. It
   takes a parameter, which binds as `jsonb` without a marker of its own, a constant, `null` or another
-  jsonb column. Another column reports ZAO102. That parameter may not appear in a condition or in a
-  setter of another column as well, which reports ZAO102: it would bind as `jsonb` there too.
+  jsonb column. Another column reports ZAO102. That parameter may meet other jsonb columns, in a
+  setter or in a comparison. Used against a column that is not jsonb as well, it reports ZAO102: it
+  cannot bind both ways.
 - A `string` parameter compared with a jsonb column in a condition, `Where`, `ExecuteUpdate` or
   `ExecuteDelete`, binds as `jsonb`, as a `[Json]` parameter of a `[Query]` does. The comparison is
   jsonb equality: it compares the documents, so whitespace and key order do not matter. A parameter

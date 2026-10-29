@@ -86,7 +86,7 @@ internal static class LinqQueryBinder
         for (var i = 0; i < statements.Length; i++)
         {
             if (statements[i] is SqlUpdateStatement update)
-                jsonParameters.AddRange(JsonSetters.Check(update, scopes[i].Names, diagnostics));
+                JsonSetters.Check(update, scopes[i].Names, diagnostics);
         }
         jsonParameters.AddRange(JsonComparisons.Check(scopes, diagnostics));
         if (diagnostics.Count > 0)
