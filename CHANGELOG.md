@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.0...v2.11.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* require AdoNet.Async 1.5.5 so generated code disposes provider readers ([#432](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/432)) ([205f41b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/205f41beb29b3d34314c9c6004a145f92fe97234))
+
 ## [2.11.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.2...v2.11.0) (2026-10-30)
 
 
