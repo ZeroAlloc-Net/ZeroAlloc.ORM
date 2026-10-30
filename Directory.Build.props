@@ -78,11 +78,12 @@
       how 1.6.5 shipped declaring 1.3.3 and left every consumer with such a
       column unable to compile.
 
-      1.5.3 is the floor because generated code disposes readers through
+      1.5.4 is the floor because generated code disposes readers through
       IAsyncDataReader, and before 1.5.3 that only closed the provider reader:
-      the adapters hid DisposeAsync instead of overriding it.
+      the adapters hid DisposeAsync instead of overriding it. 1.5.3's fix boxed
+      a state machine per dispose, which 1.5.4 removes.
     -->
-    <AdoNetAsyncVersion>1.5.3</AdoNetAsyncVersion>
+    <AdoNetAsyncVersion>1.5.4</AdoNetAsyncVersion>
     <ZeroAllocValueObjectsVersion>1.*</ZeroAllocValueObjectsVersion>
 
     <!-- NuGet package metadata (applied to every packable csproj). -->
