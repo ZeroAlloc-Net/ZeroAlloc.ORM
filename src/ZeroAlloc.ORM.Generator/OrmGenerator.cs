@@ -1825,7 +1825,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             }
             // #400 — a list of a primitive scalar, one column per row. After the row
             // models, so a row type keeps winning.
-            if (TryBuildScalarColumnMaterialization(listInner.TypeArguments[0]) is { } scalarList)
+            if (TryBuildScalarColumnMaterialization(listInner.TypeArguments[0], conventionContext) is { } scalarList)
                 return (EmitShape.ScalarList, null, scalarList, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
             // Element type not classifiable — fall through to Unknown so the
             // existing ZAO022 / ZAO040 path surfaces the gap.
@@ -1926,6 +1926,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
             if (readerMethod is not null)
                 return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+            // #410 — a nullable enum, Task<Status?>. It carries the one-column model,
+            // so EmitNullableScalar reads it through the enum convention.
+            if (underlying.TypeKind == TypeKind.Enum
+                && TryBuildScalarColumnMaterialization(inner, conventionContext) is { } nullableEnum)
+            {
+                return (EmitShape.NullableScalar, null, nullableEnum, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+            }
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
@@ -1962,8 +1969,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // DateTimeOffset, TimeSpan, DateOnly, TimeOnly, short, float, byte, byte[] and a
         // non-nullable or oblivious string. The nullable forms returned NullableScalar
         // above. Same ordering rule as bool / long, so [Materialize(Factory)] keeps winning.
+        // #410 — a non-nullable enum takes this shape too, read through its convention.
         if (inner.NullableAnnotation != NullableAnnotation.Annotated
-            && TryBuildScalarColumnMaterialization(inner) is { } requiredScalar)
+            && TryBuildScalarColumnMaterialization(inner, conventionContext) is { } requiredScalar)
         {
             return (EmitShape.RequiredScalar, null, requiredScalar, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
@@ -2246,7 +2254,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     return "a PostgreSQL array cannot bind as a stored procedure output parameter; return it as a result column instead";
                 }
             }
-            return "a tuple of result sets takes one element per result set, each a scalar, a row or a list of rows";
+            return "a tuple of result sets takes one element per result set, each a scalar, a row, or a list of rows or scalars";
         }
 
         var bare = inner.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
@@ -2281,7 +2289,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     }
 
     private const string UnsupportedQueryShapeFallback =
-        "supported shapes are a scalar such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
+        "supported shapes are a scalar or enum such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
         + "a list of rows or scalars as List<T>, IReadOnlyList<T> or IList<T>, a tuple of result sets, "
         + "a PostgreSQL array T[], or IAsyncEnumerable<TRow>";
 
@@ -3991,6 +3999,24 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     IsNullable: false,
                     Columns: domain.Columns);
             }
+            // #410 — a list of a scalar, one column per row: List<int>, List<string?>,
+            // List<Status>. After the row models, so a row type keeps winning, as in
+            // the top-level list branch. The element keeps its own nullability, which
+            // `inner` above drops for a reference type: ElementTypeName and the column
+            // hold the bare type, Nullable<T> peeled too, and IsNullable says whether
+            // the list holds `T?`.
+            if (TryBuildScalarColumnMaterialization(listLike.TypeArguments[0], conventionContext) is { } scalarList)
+            {
+                var column = scalarList.Columns[0];
+                return new MultiResultElement(
+                    Kind: MultiResultElementKind.ScalarList,
+                    TupleFieldName: tupleFieldName,
+                    ElementTypeName: column.TypeName,
+                    GetterMethod: column.GetterMethod,
+                    Convention: column.Convention,
+                    IsNullable: column.IsNullable,
+                    Columns: scalarList.Columns);
+            }
             return null;
         }
 
@@ -4814,16 +4840,37 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return type;
     }
 
-    // #400 — the one-column model of a primitive scalar read from column 0: the
-    // RequiredScalar return and each ScalarList element. Null when the type has no
-    // reader in PrimitiveCatalog. IsNullable is set for `T?` and Nullable<T>; an
-    // oblivious reference type reads as non-nullable. TargetTypeFullName is the type
-    // as declared, `?` included, which ScalarList names its List<T> with.
-    private static MaterializationModel? TryBuildScalarColumnMaterialization(ITypeSymbol type)
+    // #400 — the one-column model of a scalar read from column 0: the RequiredScalar
+    // return, each ScalarList element, a nullable enum return and each element of a
+    // tuple scalar list. Null when the type has no single-column reader. A primitive
+    // reads through PrimitiveCatalog. #410 — an enum reads through ConventionDiscovery
+    // as a tuple scalar element does: its underlying integral reader and a cast, or
+    // GetString and Enum.Parse for [StoreAsString]. Value objects and typed ids stay
+    // out: a record or class one already reads through the row shapes. IsNullable is
+    // set for `T?` and Nullable<T>; an oblivious reference type reads as non-nullable.
+    // TargetTypeFullName is the type as declared, `?` included, which ScalarList names
+    // its List<T> with.
+    private static MaterializationModel? TryBuildScalarColumnMaterialization(
+        ITypeSymbol type,
+        ConventionContext conventionContext)
     {
         var unwrapped = UnwrapNullableValueType(type).WithNullableAnnotation(NullableAnnotation.NotAnnotated);
-        var reader = GetScalarPrimitiveReaderInfo(unwrapped);
-        if (reader is null) return null;
+        ConventionInfo? convention = null;
+        string? reader;
+        if (unwrapped.TypeKind == TypeKind.Enum)
+        {
+            var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
+            if (resolution.Kind is not (ConventionKind.Enum or ConventionKind.EnumAsString))
+                return null;
+            reader = ResolveColumnReader(unwrapped, resolution);
+            if (reader is null) return null;
+            convention = BuildConventionInfo(unwrapped, resolution, reader);
+        }
+        else
+        {
+            reader = GetScalarPrimitiveReaderInfo(unwrapped);
+            if (reader is null) return null;
+        }
         var isNullable = !ReferenceEquals(UnwrapNullableValueType(type), type)
             || (type.IsReferenceType && type.NullableAnnotation == NullableAnnotation.Annotated);
         var typeName = unwrapped.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -4831,7 +4878,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             Kind: MaterializationKind.ScalarPrimitive,
             TargetTypeFullName: isNullable ? typeName + "?" : typeName,
             Columns: new EquatableArray<ColumnBinding>(ImmutableArray.Create(
-                new ColumnBinding(GetterMethod: reader, IsNullable: isNullable, TypeName: typeName))));
+                new ColumnBinding(GetterMethod: reader, IsNullable: isNullable, TypeName: typeName, Convention: convention))));
     }
 
     // Map a supported primitive scalar type to the IDataReader.GetXxx method that
@@ -6476,6 +6523,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     //   * Row    — `el.ElementTypeName` (reference type).
     //   * List   — `global::System.Collections.Generic.List<el.ElementTypeName>`
     //              (reference type).
+    //   * ScalarList — the same, with `?` on the element when IsNullable.
     //   * Scalar — `el.ElementTypeName` plus `?` when IsNullable.
     //
     // All locals are initialized with `default!`. The bang suppresses the
@@ -6501,6 +6549,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     break;
                 case MultiResultElementKind.List:
                     typeDisplay = $"global::System.Collections.Generic.List<{el.ElementTypeName}>";
+                    break;
+                case MultiResultElementKind.ScalarList:
+                    typeDisplay = $"global::System.Collections.Generic.List<{ScalarListElementType(el)}>";
                     break;
                 case MultiResultElementKind.Scalar:
                     typeDisplay = el.IsNullable ? el.ElementTypeName + "?" : el.ElementTypeName;
@@ -6935,7 +6986,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("                return null;");
-        sb.AppendLine($"            return __reader.IsDBNull(0) ? null : __reader.{readerMethod}(0);");
+        // #410 — a nullable enum carries its one-column model and reads through it;
+        // a primitive keeps the bare reader call.
+        var readExpr = m.Materialization is { Columns.Length: 1 } mat
+            ? ApplyReadConvention(mat.Columns[0].Convention, $"__reader.{mat.Columns[0].GetterMethod}(0)")
+            : $"__reader.{readerMethod}(0)";
+        sb.AppendLine($"            return __reader.IsDBNull(0) ? null : {readExpr};");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -6995,6 +7051,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // ExecuteReaderAsync, which tells no row from NULL, and throws
     // ZeroAllocOrmMaterializationException for each instead of returning null. The
     // messages match the Scalar command's and point at the nullable return type.
+    // #410 — the read goes through the column's convention, so an enum is cast or
+    // parsed; a primitive has none and reads as the bare GetXxx call.
     private static void EmitRequiredScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
@@ -7027,7 +7085,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
         sb.AppendLine("            if (__reader.IsDBNull(0))");
         sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
-        sb.AppendLine($"            return __reader.{col.GetterMethod}(0);");
+        sb.AppendLine($"            return {BuildPositionalReadExpression(col, 0)};");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");
     }
@@ -8897,6 +8955,26 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     sb.AppendLine($"{indent}}}");
                     break;
                 }
+            case MultiResultElementKind.ScalarList:
+                {
+                    // #410 — column 0 of every row, read through the scalar's
+                    // convention. No `new T(...)`: the read is the element. A nullable
+                    // element maps NULL to null; a non-nullable one is read directly and
+                    // the #249 finder names the tuple element when column 0 is NULL.
+                    var column = el.Columns[0];
+                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{ScalarListElementType(el)}>();");
+                    sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+                    sb.AppendLine($"{indent}{{");
+                    var checks = column.IsNullable
+                        ? new List<NullCheck>()
+                        : new List<NullCheck>
+                        {
+                            new(ColumnName: null, Ordinal: 0, Member: $"an element of tuple element '{el.TupleFieldName}'", TypeName: column.TypeName),
+                        };
+                    EmitNullGuarded(sb, indent + "    ", checks, finderName, $"{indent}    {localName}.Add({BuildPositionalReadExpression(column, 0)});\n");
+                    sb.AppendLine($"{indent}}}");
+                    break;
+                }
             case MultiResultElementKind.Scalar:
                 {
                     sb.AppendLine($"{indent}if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
@@ -8932,6 +9010,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 }
         }
     }
+
+    // The element type of a ScalarList tuple element's List<T>: the bare type plus `?`
+    // when the element is nullable, so a `List<int?>` or `List<string?>` element gets
+    // a list it converts to without a cast or a nullable warning.
+    private static string ScalarListElementType(MultiResultElement el)
+        => el.IsNullable ? el.ElementTypeName + "?" : el.ElementTypeName;
 
     // [LinqQuery] — a Row element read as a single-row LINQ method reads it: the first row, or
     // null for an empty result set. MultiResultElement.NullWhenNoRow selects it.

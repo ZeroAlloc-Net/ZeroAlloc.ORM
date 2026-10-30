@@ -45,7 +45,19 @@ Tuple element shapes recognised by the generator:
   set is materialised; subsequent rows are ignored.
 - **List** — `List<T>`, `IReadOnlyList<T>`, `IList<T>`, `IEnumerable<T>`,
   `ICollection<T>`, `IReadOnlyCollection<T>` — every row of the result set is
-  materialised into the accumulator.
+  materialised into the accumulator. `T` is a row, or a primitive or enum
+  scalar such as `string`, `int?` or `Status`, read from the first column of
+  every row. A NULL in a non-nullable scalar element throws
+  `ZeroAllocOrmMaterializationException` naming the tuple element; a nullable
+  element, `List<string?>`, reads null.
+
+```csharp
+[Query("""
+    SELECT COUNT(*) FROM Orders WHERE CustomerId = @customerId;
+    SELECT Sku FROM OrderLines WHERE CustomerId = @customerId ORDER BY Sku;
+    """)]
+public partial Task<(long Count, List<string> Skus)> GetSkusAsync(int customerId, CancellationToken ct);
+```
 
 A 3-element tuple combining all three kinds:
 

@@ -2,7 +2,8 @@ using Xunit;
 
 namespace ZeroAlloc.ORM.Integration.Tests.Postgres;
 
-// #400 — non-nullable scalars and lists of a scalar from [Query], on PostgreSQL.
+// #400 — non-nullable scalars and lists of a scalar from [Query], and #410 enums and
+// tuple scalar lists, on PostgreSQL.
 [Trait("Provider", "Postgres")]
 public sealed class PostgresQueryScalarShapeTests
 {
@@ -60,5 +61,45 @@ public sealed class PostgresQueryScalarShapeTests
         await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
         await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
         await QueryScalarShapeAssertions.NullableElementsKeepNullsAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Enum_scalars_read_the_first_column()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
+        await QueryScalarShapeAssertions.EnumScalarsReadTheFirstColumnAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Non_nullable_enum_throws_on_no_row_and_NULL()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
+        await QueryScalarShapeAssertions.NonNullableEnumThrowsOnNoRowAndNullAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Enum_lists_read_every_row()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
+        await QueryScalarShapeAssertions.EnumListsReadEveryRowAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Tuple_scalar_lists_read_every_row()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
+        await QueryScalarShapeAssertions.TupleScalarListsReadEveryRowAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task Null_into_a_non_nullable_tuple_list_element_throws()
+    {
+        await using var fx = await PostgresFixture.CreateAndInitializeAsync().ConfigureAwait(false);
+        await fx.ExecuteDdlAsync(QueryScalarShapeAssertions.PostgresSchema).ConfigureAwait(false);
+        await QueryScalarShapeAssertions.NullIntoANonNullableTupleListElementThrowsAsync(new QueryScalarShapeRepo(fx.Connection)).ConfigureAwait(false);
     }
 }
