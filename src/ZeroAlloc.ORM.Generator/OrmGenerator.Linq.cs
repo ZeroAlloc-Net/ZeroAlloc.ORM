@@ -228,7 +228,7 @@ public sealed partial class OrmGenerator
                 LinqStatements = bound.Statements,
             };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
-        method = BindJson(method, bound.JsonParameters);
+        method = BindStoreTypes(method, bound.TypedParameters);
         method = UnbindUnreferenced(method, ReferencedParameters(statements));
         return new LinqMethodResult(core with { Method = method }, read.Translation.Diagnostics);
     }
@@ -338,13 +338,16 @@ public sealed partial class OrmGenerator
         };
     }
 
-    // A string parameter a [LinqCommand] update sets into a jsonb column binds as jsonb, the way a
-    // [Json] parameter does, whether the map or an attribute on the entity made the column jsonb.
-    // As for a [Json] parameter it is a PostgreSQL-only usage, for ZAO084, and needs Npgsql,
-    // ZAO082, reported at the setter's value since the method's parameter carries no marker.
-    private static QueryMethodModel BindJson(QueryMethodModel method, EquatableArray<SqlParameterExpression> json)
+    // A parameter compared with or set into a column whose store type the map knows binds with
+    // that type explicitly: a string meeting a jsonb column as jsonb, the way a [Json] parameter
+    // does, whether the map or an attribute on the entity made the column jsonb; a DateTime
+    // meeting a column its map declares a timestamp or a timestamptz as that type. Each is a
+    // PostgreSQL-only usage, for ZAO084, and needs Npgsql, ZAO082, reported at the parameter's
+    // first such use since the method's parameter carries no marker. A DateTime parameter whose
+    // [Param] writes a DbType keeps it: the written one wins.
+    private static QueryMethodModel BindStoreTypes(QueryMethodModel method, EquatableArray<SqlTypedParameter> typed)
     {
-        if (json.Length == 0) return method;
+        if (typed.Length == 0) return method;
         var parameters = method.MethodParameters.Values.ToBuilder();
         var usages = method.PostgresOnlyUsages.Values.IsDefault
             ? ImmutableArray.CreateBuilder<PostgresOnlyUsage>()
@@ -352,14 +355,21 @@ public sealed partial class OrmGenerator
         var diagnostics = method.Diagnostics.Values.IsDefault
             ? ImmutableArray.CreateBuilder<DiagnosticInfo>()
             : method.Diagnostics.Values.ToBuilder();
-        foreach (var setter in json)
+        foreach (var use in typed)
         {
             for (var i = 0; i < parameters.Count; i++)
             {
                 var parameter = parameters[i];
-                if (parameter.IsJson || !string.Equals(parameter.Name, setter.ClrName, System.StringComparison.Ordinal)) continue;
-                parameters[i] = parameter with { IsJson = true };
-                var usage = JsonRequiresNpgsql(parameter.Name, setter.Location);
+                if (parameter.NpgsqlDbType is not null
+                    || !string.Equals(parameter.Name, use.Parameter.ClrName, System.StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (use.StoreType != SqlStoreType.Jsonb && parameter.Facets?.DbTypeExpression is not null) continue;
+                parameters[i] = parameter with { NpgsqlDbType = use.NpgsqlDbType };
+                var usage = use.StoreType == SqlStoreType.Jsonb
+                    ? JsonRequiresNpgsql(parameter.Name, use.Parameter.Location)
+                    : RequiresNpgsql(parameter.Name, "a " + use.PostgresType + " column's type", use.Parameter.Location);
                 usages.Add(new PostgresOnlyUsage(usage.MessageArgs.Values[0], usage.MessageArgs.Values[1], usage.Location));
                 if (!method.HasNpgsql) diagnostics.Add(usage);
             }

@@ -886,6 +886,7 @@ public class LinqOwnedTypeTests
     }
 
     // Each of `expected` is SQL the generated files must contain, checked before the snapshot.
+    // Npgsql is referenced, as a DateTime compared with a declared timestamptz column binds as one.
     private static void VerifyCompiled(
         string source,
         string expected1,
@@ -895,7 +896,7 @@ public class LinqOwnedTypeTests
         [CallerFilePath] string testFilePath = "",
         [CallerMemberName] string testMethod = "")
     {
-        var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(source);
+        var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(source, NpgsqlStub.Source);
 
         Assert.Empty(result.Results[0].Diagnostics);
         var generatedPaths = result.GeneratedTrees.Select(t => t.FilePath).ToHashSet(StringComparer.Ordinal);

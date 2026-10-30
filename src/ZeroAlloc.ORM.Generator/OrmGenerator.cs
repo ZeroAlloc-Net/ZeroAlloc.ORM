@@ -1249,7 +1249,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         CompositeFields: default,
                         CompositeTypeFullName: null,
                         Facets: paramFacets,
-                        IsXid: true);
+                        NpgsqlDbType: "Xid");
                 }
                 if (!isCt)
                 {
@@ -1415,7 +1415,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     compositeFields,
                     compositeTypeFullName,
                     paramFacets,
-                    IsJson: isJson);
+                    NpgsqlDbType: isJson ? Jsonb : null);
             })
             .ToImmutableArray();
         if (linq is not null)
@@ -8539,7 +8539,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.NpgsqlDbType);
             sb.AppendLine($"{indent}{cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -8621,7 +8621,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 EmitParameterFacets(sb, indent, local, p.Facets, output: null);
             }
 
-            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
+            EmitValueAssignment(sb, indent, local, BuildParameterValue(p), p.NpgsqlDbType);
             sb.AppendLine($"{indent}__cmd.Parameters.Add({local});");
         }
     }
@@ -8810,7 +8810,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.NpgsqlDbType);
             sb.AppendLine($"            {cmdLocal}.Parameters.Add({local});");
         }
     }
@@ -9132,7 +9132,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
 
-            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), NpgsqlDbTypeOf(p));
+            EmitValueAssignment(sb, "            ", local, BuildParameterValue(p), p.NpgsqlDbType);
             sb.AppendLine($"            __cmd.Parameters.Add({local});");
         }
     }
@@ -9142,7 +9142,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     //
     // A string marked [Json] then gets NpgsqlDbType.Jsonb, so the SQL needs no `::jsonb`
     // cast, and a [LinqQuery] or [LinqCommand] uint compared with xmin gets NpgsqlDbType.Xid,
-    // so it meets xmin as an xid rather than the oid Npgsql would infer. Set whatever the
+    // so it meets xmin as an xid rather than the oid Npgsql would infer. A [LinqQuery] or
+    // [LinqCommand] DateTime that meets a column its map declares a timestamp or a timestamptz
+    // gets that type, rather than the one Npgsql infers from its Kind. Set whatever the
     // value, DBNull included: Npgsql sends a typed NULL. The check names Npgsql only in the
     // adopter's code; ZAO082 guarantees the adopter references it. The pattern local,
     // `__np_x` for `__p_x`, is unique in its block because the parameter local is.
@@ -9155,10 +9157,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     }
 
     private const string Jsonb = "Jsonb";
-
-    // The NpgsqlDbType member a method parameter binds with, or null for the provider's own
-    // inference.
-    private static string? NpgsqlDbTypeOf(ParameterInfo p) => p.IsJson ? Jsonb : p.IsXid ? "Xid" : null;
 
     // The right-hand side of `__p_x.Value = ...;` for one method parameter. The four
     // binding sites, single-command and batch, with and without indent, share it.

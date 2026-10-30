@@ -14,7 +14,7 @@ internal static class JsonSetters
     /// <summary>
     /// Adds to <paramref name="diagnostics"/> any setter of <paramref name="update"/> PostgreSQL would
     /// reject. The parameters set into jsonb columns bind as jsonb, and a parameter that also meets
-    /// a non-jsonb use is reported, in <see cref="JsonComparisons"/>.
+    /// a non-jsonb use is reported, in <see cref="ParameterStoreTypes"/>.
     /// </summary>
     public static void Check(
         SqlUpdateStatement update,

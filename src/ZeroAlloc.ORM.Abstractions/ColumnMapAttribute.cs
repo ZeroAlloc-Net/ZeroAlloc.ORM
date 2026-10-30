@@ -28,7 +28,9 @@ public sealed class ColumnMapAttribute(string property) : Attribute
     public bool Ignore { get; init; }
 
     /// <summary>
-    /// Gets or sets how a <see cref="System.DateTime"/> property is stored. A value other than
+    /// Gets or sets how a <see cref="System.DateTime"/> property is stored, which decides what
+    /// <c>.Date</c> renders and how a parameter compared with or set into the column binds; see
+    /// <see cref="ORM.DateTimeStorage"/>. A value other than
     /// <see cref="ORM.DateTimeStorage.Default"/> wins over
     /// <see cref="EntityMapDefaultsAttribute.DateTimeStorage"/> for this column; on a property
     /// that is not a <see cref="System.DateTime"/> it is invalid.
@@ -37,10 +39,10 @@ public sealed class ColumnMapAttribute(string property) : Attribute
 
     /// <summary>
     /// Gets or sets a value indicating whether a <see cref="string"/> property is stored as a
-    /// PostgreSQL <c>jsonb</c> document. A <c>[LinqCommand]</c> update then binds the value it sets
-    /// into the column as jsonb, as <see cref="JsonAttribute"/> on a parameter does, so the domain
-    /// class needs no attribute of its own. On a property that is not a <see cref="string"/> it
-    /// is invalid.
+    /// PostgreSQL <c>jsonb</c> document. A <c>[LinqQuery]</c> or <c>[LinqCommand]</c> then binds a
+    /// parameter compared with the column, or set into it, as jsonb, as <see cref="JsonAttribute"/>
+    /// on a parameter does, so the domain class needs no attribute of its own. On a property that
+    /// is not a <see cref="string"/> it is invalid.
     /// </summary>
     public bool Json { get; init; }
 }

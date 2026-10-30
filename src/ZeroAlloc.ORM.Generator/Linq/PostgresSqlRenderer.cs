@@ -477,14 +477,19 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
     }
 
     // `::type` after a parameter without a DbType facet. A name-bound enum gets the String facet
-    // when bound, so it needs no cast.
+    // when bound, so it needs no cast. A parameter that binds with a column's store type is cast
+    // to that type, so a DateTime compared with a timestamp column is `@p::timestamp`, which
+    // neither shifts it nor types it apart from its other uses.
     private static void AppendCast(StringBuilder sb, SqlExpression operand, string? cast, SqlNameScope names)
     {
-        if (cast is not null
-            && !(operand is SqlParameterExpression bound && names.NameBoundParameters.Contains(bound.Name)))
+        if (cast is null) return;
+        if (operand is SqlParameterExpression parameter)
         {
-            sb.Append("::").Append(cast);
+            if (names.NameBoundParameters.Contains(parameter.Name)) return;
+            if (names.StoreTypes.TryGetValue(parameter.Name, out var storeType))
+                cast = ParameterStoreTypes.PostgresName(storeType);
         }
+        sb.Append("::").Append(cast);
     }
 
     private static void RenderBinary(StringBuilder sb, SqlBinaryExpression binary, SqlNameScope names)

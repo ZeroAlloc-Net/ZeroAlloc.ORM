@@ -27,6 +27,7 @@ partial class JobStore
             var __p_before = __cmd.CreateParameter();
             __p_before.ParameterName = "before";
             __p_before.Value = @before;
+            if (__p_before is global::Npgsql.NpgsqlParameter __np_before) __np_before.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.TimestampTz;
             __cmd.Parameters.Add(__p_before);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.JobLine>();
@@ -76,6 +77,7 @@ partial class JobStore
             var __p_before = __cmd.CreateParameter();
             __p_before.ParameterName = "before";
             __p_before.Value = @before;
+            if (__p_before is global::Npgsql.NpgsqlParameter __np_before) __np_before.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.TimestampTz;
             __cmd.Parameters.Add(__p_before);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
             var __list = new global::System.Collections.Generic.List<global::TestApp.DayCount>();

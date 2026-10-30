@@ -57,6 +57,12 @@ internal static class LinqQueryBinder
         var storage = EnumParameterStorage.Decide(scopes);
         var byName = storage.ByName.ToImmutableHashSet(StringComparer.Ordinal);
         var xid = xidParameters.ToImmutableHashSet(StringComparer.Ordinal);
+
+        // Store types next: a null test casts a parameter to the type it binds with. A conflict
+        // is reported after the render's own diagnostics.
+        var storeTypeConflicts = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+        var typedParameters = ParameterStoreTypes.Decide(scopes, storeTypeConflicts);
+        var storeTypes = typedParameters.ToImmutableDictionary(p => p.Parameter.Name, p => p.StoreType, StringComparer.Ordinal);
         var sql = new string[statements.Length];
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
         for (var i = 0; i < statements.Length; i++)
@@ -64,6 +70,7 @@ internal static class LinqQueryBinder
             var names = scopes[i].Names;
             names.NameBoundParameters = byName;
             names.XidParameters = xid;
+            names.StoreTypes = storeTypes;
             if (statements[i] is SqlSelectStatement select) names.Projected(select.Projection);
             sql[i] = PostgresSqlRenderer.Instance.Render(statements[i], names);
             diagnostics.AddRange(names.Diagnostics);
@@ -82,13 +89,12 @@ internal static class LinqQueryBinder
             if (scopes[projection.Statement].Names.IsOwned(projection.Owner, projection.SourceAlias))
                 diagnostics.Add(LinqDiagnostics.UnsupportedProjectionAt(projection.Reason, projection.Location));
         }
-        var jsonParameters = ImmutableArray.CreateBuilder<SqlParameterExpression>();
         for (var i = 0; i < statements.Length; i++)
         {
             if (statements[i] is SqlUpdateStatement update)
                 JsonSetters.Check(update, scopes[i].Names, diagnostics);
         }
-        jsonParameters.AddRange(JsonComparisons.Check(scopes, diagnostics));
+        diagnostics.AddRange(storeTypeConflicts);
         if (diagnostics.Count > 0)
             return new LinqBoundQuery(string.Empty, default, default, new EquatableArray<DiagnosticInfo>(diagnostics.ToImmutable()));
 
@@ -105,7 +111,7 @@ internal static class LinqQueryBinder
             default)
         {
             Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
-            JsonParameters = new EquatableArray<SqlParameterExpression>(jsonParameters.ToImmutable()),
+            TypedParameters = new EquatableArray<SqlTypedParameter>(typedParameters),
         };
     }
 
