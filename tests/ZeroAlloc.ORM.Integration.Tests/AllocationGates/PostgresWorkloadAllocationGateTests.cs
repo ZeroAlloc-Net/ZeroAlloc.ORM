@@ -24,11 +24,12 @@ public class PostgresWorkloadAllocationGateTests
 
     // Unlike on Sqlite, the generator gap is not zero here: these calls complete
     // asynchronously, so each async method's state machine is boxed, and the generated
-    // method's is larger than the hand-written one's. The state-machine boxes and the
-    // connection-open `finally` are #427. Since AdoNet.Async 1.5.6 the adapter's reader
-    // wrapper pools its state machine, so a read's total gap is 128 B below 1.5.5's. Since #427
-    // the multi-result read runs one joined command instead of a batch, against joined
-    // baselines: its gaps fell from 48 B and 208 B.
+    // method's is larger than the hand-written one's. #427 measured the connection-open
+    // `finally` at 41 B a call and kept it: removing it costs 120 B on a closed connection.
+    // Since AdoNet.Async 1.5.6 the adapter's reader wrapper pools its state machine, so a
+    // read's total gap is 128 B below 1.5.5's. Since #427 the multi-result read runs one
+    // joined command instead of a batch, against joined baselines: its gaps fell from 48 B
+    // and 208 B.
     private const long SingleRowReadGeneratorGap = 24;
     private const long SingleRowReadTotalGap = 104;
     private const long InsertGeneratorGap = 32;
