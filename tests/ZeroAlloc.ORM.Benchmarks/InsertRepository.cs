@@ -4,6 +4,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks;
 
 // ZA.ORM repository for InsertBench. One public type per file (MA0048).
+[Dialect(SqlDialect.Sqlite)]
 public sealed partial class InsertRepository(IAsyncDbConnection connection)
 {
     [Command("INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)")]

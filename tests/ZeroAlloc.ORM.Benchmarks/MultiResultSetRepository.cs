@@ -4,6 +4,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks;
 
 // ZA.ORM repository for MultiResultSetBench. One public type per file (MA0048).
+[Dialect(SqlDialect.Sqlite)]
 public sealed partial class MultiResultSetRepository(IAsyncDbConnection connection)
 {
     [Query(

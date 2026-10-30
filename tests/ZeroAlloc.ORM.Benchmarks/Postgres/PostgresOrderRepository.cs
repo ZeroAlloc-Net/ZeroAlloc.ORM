@@ -4,6 +4,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 
 // ZA.ORM repository for PostgresSingleRowReadBench. One public type per file (MA0048).
+[Dialect(SqlDialect.PostgreSql)]
 public sealed partial class PostgresOrderRepository(IAsyncDbConnection connection)
 {
     [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]

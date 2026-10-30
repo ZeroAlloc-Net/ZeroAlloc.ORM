@@ -60,6 +60,9 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
         await _fx.DisposeAsync().ConfigureAwait(false);
     }
 
+    // #351 — bare names: Npgsql strips a leading `@` with a Substring, so a bare name is its
+    // cheapest spelling, the one ZA.ORM binds on [Dialect(SqlDialect.PostgreSql)]. This row
+    // runs one `;`-joined command; HandWrittenNpgsqlBatch runs the batch ZA.ORM uses.
     [Benchmark(Baseline = true)]
     public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenAdoNet()
     {
@@ -70,7 +73,7 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
                 SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
                 SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
                 """;
-            var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
+            var p = cmd.CreateParameter(); p.ParameterName = "id"; p.Value = 1; cmd.Parameters.Add(p);
             var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
             {
@@ -80,7 +83,81 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
                 }
                 var head = new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
                 await reader.NextResultAsync().ConfigureAwait(false);
-                var lines = new List<OrderLineRow>(capacity: LineCount);
+                // #351 — unsized, as ZA.ORM's list is: neither knows the line count in advance.
+                var lines = new List<OrderLineRow>();
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    lines.Add(new OrderLineRow(
+                        reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt32(3)));
+                }
+                return (head, lines);
+            }
+        }
+    }
+
+    // #351 — the two statements as an NpgsqlBatch, the path ZA.ORM's BatchMode.Auto takes on
+    // Npgsql, whose connection reports CanCreateBatch.
+    [Benchmark]
+    public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenNpgsqlBatch()
+    {
+        var batch = _raw.CreateBatch();
+        await using (batch.ConfigureAwait(false))
+        {
+            var headCmd = batch.CreateBatchCommand();
+            headCmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p0 = headCmd.CreateParameter(); p0.ParameterName = "id"; p0.Value = 1; headCmd.Parameters.Add(p0);
+            batch.BatchCommands.Add(headCmd);
+            var linesCmd = batch.CreateBatchCommand();
+            linesCmd.CommandText = "SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id";
+            var p1 = linesCmd.CreateParameter(); p1.ParameterName = "id"; p1.Value = 1; linesCmd.Parameters.Add(p1);
+            batch.BatchCommands.Add(linesCmd);
+            var reader = await batch.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                var head = new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+                await reader.NextResultAsync().ConfigureAwait(false);
+                var lines = new List<OrderLineRow>();
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    lines.Add(new OrderLineRow(
+                        reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt32(3)));
+                }
+                return (head, lines);
+            }
+        }
+    }
+
+    // #351 — the batch over IAsyncDbConnection, the substrate ZA.ORM's generated method runs
+    // on. Its gap to HandWrittenNpgsqlBatch is AdoNet.Async's cost; ZA.ORM's gap to it is the
+    // generator's.
+    [Benchmark]
+    public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenAsyncDb()
+    {
+        var batch = _fx.Connection.CreateBatch();
+        await using (batch.ConfigureAwait(false))
+        {
+            var headCmd = batch.CreateBatchCommand();
+            headCmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p0 = headCmd.CreateParameter(); p0.ParameterName = "id"; p0.Value = 1; headCmd.Parameters.Add(p0);
+            batch.BatchCommands.Add(headCmd);
+            var linesCmd = batch.CreateBatchCommand();
+            linesCmd.CommandText = "SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id";
+            var p1 = linesCmd.CreateParameter(); p1.ParameterName = "id"; p1.Value = 1; linesCmd.Parameters.Add(p1);
+            batch.BatchCommands.Add(linesCmd);
+            var reader = await batch.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (((IAsyncDisposable)reader).ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                var head = new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+                await reader.NextResultAsync().ConfigureAwait(false);
+                var lines = new List<OrderLineRow>();
                 while (await reader.ReadAsync().ConfigureAwait(false))
                 {
                     lines.Add(new OrderLineRow(
@@ -110,7 +187,7 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
                 SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id;
                 SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;
                 """;
-            var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
+            var p = cmd.CreateParameter(); p.ParameterName = "id"; p.Value = 1; cmd.Parameters.Add(p);
             var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
             {
@@ -121,7 +198,8 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
                 var head = reader.GetRowParser<OrderRow>()(reader);
                 await reader.NextResultAsync().ConfigureAwait(false);
                 var parseLine = reader.GetRowParser<OrderLineRow>();
-                var lines = new List<OrderLineRow>(capacity: LineCount);
+                // #351 — unsized, as ZA.ORM's list is: neither knows the line count in advance.
+                var lines = new List<OrderLineRow>();
                 while (await reader.ReadAsync().ConfigureAwait(false))
                 {
                     lines.Add(parseLine(reader));

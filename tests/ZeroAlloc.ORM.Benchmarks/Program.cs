@@ -1,4 +1,7 @@
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
+using Perfolizer.Metrology;
 using Dapper;
 
 // Dapper.AOT relies on this module-level attribute to intercept Dapper call-sites
@@ -13,7 +16,10 @@ using Dapper;
 // from the command line. Postgres workloads are tagged
 // `[BenchmarkCategory("Postgres")]`; opt in with `--anyCategories Postgres`
 // (see docs/benchmarks/README.md).
-BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+// Allocations in exact bytes, as docs/benchmarks reports them, rather than rounded kilobytes.
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(
+    args,
+    DefaultConfig.Instance.WithSummaryStyle(SummaryStyle.Default.WithSizeUnit(SizeUnit.B)));
 
 namespace ZeroAlloc.ORM.Benchmarks
 {

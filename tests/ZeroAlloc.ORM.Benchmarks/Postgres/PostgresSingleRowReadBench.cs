@@ -41,6 +41,8 @@ public class PostgresSingleRowReadBench : IAsyncDisposable
         await _fx.DisposeAsync().ConfigureAwait(false);
     }
 
+    // #351 — bare names: Npgsql strips a leading `@` with a Substring, so a bare name is its
+    // cheapest spelling, the one ZA.ORM binds on [Dialect(SqlDialect.PostgreSql)].
     [Benchmark(Baseline = true)]
     public async Task<OrderRow?> HandWrittenAdoNet()
     {
@@ -48,9 +50,32 @@ public class PostgresSingleRowReadBench : IAsyncDisposable
         await using (cmd.ConfigureAwait(false))
         {
             cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
-            var p = cmd.CreateParameter(); p.ParameterName = "@id"; p.Value = 1; cmd.Parameters.Add(p);
+            var p = cmd.CreateParameter(); p.ParameterName = "id"; p.Value = 1; cmd.Parameters.Add(p);
             var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
             await using (reader.ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+            }
+        }
+    }
+
+    // #351 — the same code over IAsyncDbConnection, the substrate ZA.ORM's generated method
+    // runs on. Its gap to HandWrittenAdoNet is AdoNet.Async's cost; ZA.ORM's gap to it is the
+    // generator's.
+    [Benchmark]
+    public async Task<OrderRow?> HandWrittenAsyncDb()
+    {
+        var cmd = _fx.Connection.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p = cmd.CreateParameter(); p.ParameterName = "id"; p.Value = 1; cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (((IAsyncDisposable)reader).ConfigureAwait(false))
             {
                 if (!await reader.ReadAsync().ConfigureAwait(false))
                 {
