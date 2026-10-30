@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.13.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.12.0...v2.13.0) (2026-10-30)
+
+
+### Features
+
+* class value objects without a row shape read as one-column scalars ([#442](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/442)) ([792fe69](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/792fe6915b0cfbe2945eedb0bec620f009100939))
+* value-type ids and value objects read as one-column scalars ([#441](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/441)) ([274cd32](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/274cd326219240d861367db51439f032eda8ca06)), closes [#429](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/429)
+
+
+### Performance Improvements
+
+* run BatchMode.Auto as one joined command on PostgreSQL ([f024317](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f0243171eacb885f749d98ae0243a413e67f7ee8))
+* size a LINQ list by its literal Take ([f024317](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/f0243171eacb885f749d98ae0243a413e67f7ee8))
+
 ## [2.12.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.2...v2.12.0) (2026-10-30)
 
 
