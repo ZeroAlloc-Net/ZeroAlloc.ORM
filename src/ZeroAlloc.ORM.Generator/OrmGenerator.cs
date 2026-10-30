@@ -1926,13 +1926,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var readerMethod = GetScalarPrimitiveReaderInfo(underlying);
             if (readerMethod is not null)
                 return (EmitShape.NullableScalar, readerMethod, null, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
-            // #410 — a nullable enum, Task<Status?>. It carries the one-column model,
-            // so EmitNullableScalar reads it through the enum convention.
-            if (underlying.TypeKind == TypeKind.Enum
-                && TryBuildScalarColumnMaterialization(inner, conventionContext) is { } nullableEnum)
-            {
-                return (EmitShape.NullableScalar, null, nullableEnum, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
-            }
         }
 
         // Non-nullable int (Task 4.1) — kept as a separate shape so the existing
@@ -1969,11 +1962,15 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // DateTimeOffset, TimeSpan, DateOnly, TimeOnly, short, float, byte, byte[] and a
         // non-nullable or oblivious string. The nullable forms returned NullableScalar
         // above. Same ordering rule as bool / long, so [Materialize(Factory)] keeps winning.
-        // #410 — a non-nullable enum takes this shape too, read through its convention.
-        if (inner.NullableAnnotation != NullableAnnotation.Annotated
-            && TryBuildScalarColumnMaterialization(inner, conventionContext) is { } requiredScalar)
+        // #410 — an enum takes these shapes too, read through its convention, and #429 a
+        // value-type id or value object: RequiredScalar when non-nullable, NullableScalar
+        // with the one-column model for Task<Status?> or Task<OrderId?>. After factory
+        // resolution, so [Materialize(Factory)] keeps winning here as well.
+        if (TryBuildScalarColumnMaterialization(inner, conventionContext) is { } scalarColumn)
         {
-            return (EmitShape.RequiredScalar, null, requiredScalar, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
+            return scalarColumn.Columns[0].IsNullable
+                ? (EmitShape.NullableScalar, null, scalarColumn, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null)
+                : (EmitShape.RequiredScalar, null, scalarColumn, null, HasReturnValue: true, SprocOutputParams: null, BulkInsertMaterialization: null);
         }
 
         // v0.5 Phase A — composite at scalar position. `Task<Money>` where
@@ -2289,7 +2286,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     }
 
     private const string UnsupportedQueryShapeFallback =
-        "supported shapes are a scalar or enum such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
+        "supported shapes are a scalar, enum or value-type id such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
         + "a list of rows or scalars as List<T>, IReadOnlyList<T> or IList<T>, a tuple of result sets, "
         + "a PostgreSQL array T[], or IAsyncEnumerable<TRow>";
 
@@ -4844,8 +4841,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // tuple scalar list. Null when the type has no single-column reader. A primitive
     // reads through PrimitiveCatalog. #410 — an enum reads through ConventionDiscovery
     // as a tuple scalar element does: its underlying integral reader and a cast, or
-    // GetString and Enum.Parse for [StoreAsString]. Value objects and typed ids stay
-    // out: a record or class one already reads through the row shapes. IsNullable is
+    // GetString and Enum.Parse for [StoreAsString]. #429 — a value-type id or value
+    // object, such as `readonly record struct OrderId(int Value)`, reads through its
+    // convention too; a class one, record or not, stays out and reads through the
+    // row shapes, which return null for no row. IsNullable is
     // set for `T?` and Nullable<T>; an oblivious reference type reads as non-nullable.
     // TargetTypeFullName is the type as declared, `?` included, which ScalarList names
     // its List<T> with.
@@ -4870,10 +4869,21 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (reader is null) return null;
             convention = BuildConventionInfo(unwrapped, resolution, reader);
         }
+        else if (GetScalarPrimitiveReaderInfo(unwrapped) is { } primitiveReader)
+        {
+            reader = primitiveReader;
+        }
         else
         {
-            reader = GetScalarPrimitiveReaderInfo(unwrapped);
+            // #429 — a value-type id or value object reads through its convention, as a
+            // tuple scalar element does. A class one keeps the row path.
+            if (!unwrapped.IsValueType) return null;
+            var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
+            if (resolution.Kind is not (ConventionKind.ValueObject or ConventionKind.StaticFactory or ConventionKind.SingleArgCtor))
+                return null;
+            reader = ResolveColumnReader(unwrapped, resolution);
             if (reader is null) return null;
+            convention = BuildConventionInfo(unwrapped, resolution, reader);
         }
         var isNullable = !ReferenceEquals(UnwrapNullableValueType(type), type)
             || (type.IsReferenceType && type.NullableAnnotation == NullableAnnotation.Annotated);
