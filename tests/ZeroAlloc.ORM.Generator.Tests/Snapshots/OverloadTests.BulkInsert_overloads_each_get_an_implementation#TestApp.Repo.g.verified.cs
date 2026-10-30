@@ -56,7 +56,7 @@ partial class Repo
     {
         private const int ChunkSize = 900;
         private const string Head = "INSERT INTO T (a) VALUES ";
-        internal static readonly string[] Names_A_0 = BuildNames("A_");
+        internal static readonly string[] Names_A_0 = BuildNames("@A_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -78,7 +78,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_A_0[i]).Append(')');
+                sb.Append('(').Append(Names_A_0[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();
@@ -135,7 +135,7 @@ partial class Repo
     {
         private const int ChunkSize = 900;
         private const string Head = "INSERT INTO U (Id) VALUES ";
-        internal static readonly string[] Names_Id_0 = BuildNames("Id_");
+        internal static readonly string[] Names_Id_0 = BuildNames("@Id_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -157,7 +157,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_Id_0[i]).Append(')');
+                sb.Append('(').Append(Names_Id_0[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();

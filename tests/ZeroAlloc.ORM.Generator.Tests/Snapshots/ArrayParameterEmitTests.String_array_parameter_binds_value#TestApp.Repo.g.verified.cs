@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT COUNT(*) FROM posts WHERE tags && @tags";
             var __p_tags = __cmd.CreateParameter();
-            __p_tags.ParameterName = "tags";
+            __p_tags.ParameterName = "@tags";
             __p_tags.Value = (object?)@tags ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_tags);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

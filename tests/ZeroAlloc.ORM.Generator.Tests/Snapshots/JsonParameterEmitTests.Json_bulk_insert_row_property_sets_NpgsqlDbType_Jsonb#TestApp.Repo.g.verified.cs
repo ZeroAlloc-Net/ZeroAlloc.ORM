@@ -66,9 +66,9 @@ partial class Repo
     {
         private const int ChunkSize = 300;
         private const string Head = "INSERT INTO docs (id, doc, meta) VALUES ";
-        internal static readonly string[] Names_Id_0 = BuildNames("Id_");
-        internal static readonly string[] Names_Doc_1 = BuildNames("Doc_");
-        internal static readonly string[] Names_Meta_2 = BuildNames("Meta_");
+        internal static readonly string[] Names_Id_0 = BuildNames("@Id_");
+        internal static readonly string[] Names_Doc_1 = BuildNames("@Doc_");
+        internal static readonly string[] Names_Meta_2 = BuildNames("@Meta_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -90,7 +90,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_Id_0[i]).Append(", ").Append('@').Append(Names_Doc_1[i]).Append(", ").Append('@').Append(Names_Meta_2[i]).Append(')');
+                sb.Append('(').Append(Names_Id_0[i]).Append(", ").Append(Names_Doc_1[i]).Append(", ").Append(Names_Meta_2[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();

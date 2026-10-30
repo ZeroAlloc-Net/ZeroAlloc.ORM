@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT COUNT(*) FROM posts WHERE id = ANY(@ids)";
             var __p_ids = __cmd.CreateParameter();
-            __p_ids.ParameterName = "ids";
+            __p_ids.ParameterName = "@ids";
             __p_ids.Value = @ids is null ? global::System.DBNull.Value : (object?)(@ids as global::System.Guid[]) ?? (object?)(@ids as global::System.Collections.Generic.List<global::System.Guid>) ?? (global::System.Guid[])[.. @ids];
             __cmd.Parameters.Add(__p_ids);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

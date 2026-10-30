@@ -92,16 +92,16 @@ partial class Repo
     {
         private const int ChunkSize = 90;
         private const string Head = "INSERT INTO Wide (C1, C2, C3, C4, C5, C6, C7, C8, C9, C10) VALUES ";
-        internal static readonly string[] Names_C1_0 = BuildNames("C1_");
-        internal static readonly string[] Names_C2_1 = BuildNames("C2_");
-        internal static readonly string[] Names_C3_2 = BuildNames("C3_");
-        internal static readonly string[] Names_C4_3 = BuildNames("C4_");
-        internal static readonly string[] Names_C5_4 = BuildNames("C5_");
-        internal static readonly string[] Names_C6_5 = BuildNames("C6_");
-        internal static readonly string[] Names_C7_6 = BuildNames("C7_");
-        internal static readonly string[] Names_C8_7 = BuildNames("C8_");
-        internal static readonly string[] Names_C9_8 = BuildNames("C9_");
-        internal static readonly string[] Names_C10_9 = BuildNames("C10_");
+        internal static readonly string[] Names_C1_0 = BuildNames("@C1_");
+        internal static readonly string[] Names_C2_1 = BuildNames("@C2_");
+        internal static readonly string[] Names_C3_2 = BuildNames("@C3_");
+        internal static readonly string[] Names_C4_3 = BuildNames("@C4_");
+        internal static readonly string[] Names_C5_4 = BuildNames("@C5_");
+        internal static readonly string[] Names_C6_5 = BuildNames("@C6_");
+        internal static readonly string[] Names_C7_6 = BuildNames("@C7_");
+        internal static readonly string[] Names_C8_7 = BuildNames("@C8_");
+        internal static readonly string[] Names_C9_8 = BuildNames("@C9_");
+        internal static readonly string[] Names_C10_9 = BuildNames("@C10_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -123,7 +123,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_C1_0[i]).Append(", ").Append('@').Append(Names_C2_1[i]).Append(", ").Append('@').Append(Names_C3_2[i]).Append(", ").Append('@').Append(Names_C4_3[i]).Append(", ").Append('@').Append(Names_C5_4[i]).Append(", ").Append('@').Append(Names_C6_5[i]).Append(", ").Append('@').Append(Names_C7_6[i]).Append(", ").Append('@').Append(Names_C8_7[i]).Append(", ").Append('@').Append(Names_C9_8[i]).Append(", ").Append('@').Append(Names_C10_9[i]).Append(')');
+                sb.Append('(').Append(Names_C1_0[i]).Append(", ").Append(Names_C2_1[i]).Append(", ").Append(Names_C3_2[i]).Append(", ").Append(Names_C4_3[i]).Append(", ").Append(Names_C5_4[i]).Append(", ").Append(Names_C6_5[i]).Append(", ").Append(Names_C7_6[i]).Append(", ").Append(Names_C8_7[i]).Append(", ").Append(Names_C9_8[i]).Append(", ").Append(Names_C10_9[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();

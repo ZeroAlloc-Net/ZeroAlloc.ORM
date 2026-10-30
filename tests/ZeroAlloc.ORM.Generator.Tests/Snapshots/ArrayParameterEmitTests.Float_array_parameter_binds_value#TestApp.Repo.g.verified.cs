@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT COUNT(*) FROM items WHERE embedding = @embedding";
             var __p_embedding = __cmd.CreateParameter();
-            __p_embedding.ParameterName = "embedding";
+            __p_embedding.ParameterName = "@embedding";
             __p_embedding.Value = (object?)@embedding ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_embedding);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

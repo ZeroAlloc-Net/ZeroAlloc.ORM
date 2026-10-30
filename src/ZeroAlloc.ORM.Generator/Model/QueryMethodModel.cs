@@ -124,6 +124,31 @@ internal enum EmitShape
     ScalarList,
 }
 
+// #351 — how the emit spells a DbParameter's ParameterName. Each provider resolves a
+// name most cheaply in its own spelling:
+//   * Microsoft.Data.Sqlite looks the name up exactly, and for a bare name then tries
+//     each of `@`, `:` and `$` in front of it, building a string and a UTF-8 copy per
+//     try, on every statement it binds.
+//   * SqlClient adds a missing `@` while it writes the parameter list, without
+//     allocating on that path; the TVP and encryption paths build `"@" + name`.
+//   * Npgsql strips a leading `@` or `:` with a Substring, and MySqlConnector and
+//     MySql.Data strip a leading `@` or `?` the same way, so a bare name is free.
+internal enum ParameterNameStyle
+{
+    // The sigil the SQL writes in front of the name, `@id` for `@id`; the bare name
+    // when the SQL has no such token. No declared dialect: whatever the provider, the
+    // name it is handed is the token the SQL holds.
+    AsWritten,
+
+    // The sigil the SQL writes, else `@`. Sqlite and SQL Server: an exact name costs
+    // either nothing, where a bare one costs Sqlite a lookup per prefix and SqlClient a
+    // concatenation on its TVP and encryption paths.
+    AsWrittenOrAt,
+
+    // The bare name. PostgreSQL and MySQL, whose providers strip a sigil.
+    Bare,
+}
+
 // Mirror of ZeroAlloc.ORM.Abstractions.CommandKind. Re-declared on the model side
 // so QueryMethodModel stays cache-safe (no symbol/Compilation refs leak in via the
 // abstraction enum's metadata; this enum is a plain value type).
@@ -333,7 +358,12 @@ internal sealed record QueryMethodModel(
     // [LinqCommand(ThrowOnNoRows = true)] -- the message of the ZeroAllocOrmConcurrencyException
     // the non-query emit throws when ExecuteNonQueryAsync reports no rows affected, naming the
     // type and the method. Null for every other method, whose emit is unchanged.
-    string? LinqNoRowsMessage = null);
+    string? LinqNoRowsMessage = null,
+    // #351 — how the emit spells each ParameterName, from the repository's declared
+    // dialect. Emit-only: RenderRepository sets it once per method, so it plays no part
+    // in incremental caching. The default is the rule for a repository without a
+    // declared dialect.
+    ParameterNameStyle ParameterNameStyle = ParameterNameStyle.AsWritten);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,

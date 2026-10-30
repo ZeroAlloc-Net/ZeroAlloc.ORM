@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT COUNT(*) FROM T WHERE Sku IS @sku";
             var __p_sku = __cmd.CreateParameter();
-            __p_sku.ParameterName = "sku";
+            __p_sku.ParameterName = "@sku";
             __p_sku.Value = (object?)@sku?.Value ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_sku);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

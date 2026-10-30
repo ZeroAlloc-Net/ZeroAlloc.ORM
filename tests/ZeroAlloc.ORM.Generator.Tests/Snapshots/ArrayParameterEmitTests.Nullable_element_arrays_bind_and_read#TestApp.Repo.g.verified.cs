@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT id, labels, notes, extra FROM posts WHERE id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -67,15 +67,15 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "UPDATE posts SET labels = @labels, notes = @notes WHERE id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __p_labels = __cmd.CreateParameter();
-            __p_labels.ParameterName = "labels";
+            __p_labels.ParameterName = "@labels";
             __p_labels.Value = @labels is null ? global::System.DBNull.Value : (object?)(@labels as string?[]) ?? (object?)(@labels as global::System.Collections.Generic.List<string?>) ?? (string?[])[.. @labels];
             __cmd.Parameters.Add(__p_labels);
             var __p_notes = __cmd.CreateParameter();
-            __p_notes.ParameterName = "notes";
+            __p_notes.ParameterName = "@notes";
             __p_notes.Value = (object?)@notes ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_notes);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

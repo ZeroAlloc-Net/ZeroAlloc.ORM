@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT COUNT(*) FROM items WHERE weights = @weights";
             var __p_weights = __cmd.CreateParameter();
-            __p_weights.ParameterName = "weights";
+            __p_weights.ParameterName = "@weights";
             __p_weights.Value = @weights is null ? global::System.DBNull.Value : (object?)(@weights as double[]) ?? (object?)(@weights as global::System.Collections.Generic.List<double>) ?? (double[])[.. @weights];
             __cmd.Parameters.Add(__p_weights);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

@@ -12,7 +12,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.BulkInsertSql;
 // BulkInsert chunk loop hands the provider, for every SqlDialect. The chunk
 // SQL is `<head>(@A_0, @B_0), (@A_1, @B_1), ...<tail>`, where head and tail
 // are the author's SQL around the VALUES tuple, and each DbParameter is named
-// `A_<row>` with no sigil. Caching the full-chunk SQL and the parameter names
+// `@A_<row>` on SqlServer and Sqlite and `A_<row>` on PostgreSql and MySql, the
+// spelling each provider resolves most cheaply (#351). Caching the full-chunk SQL and the parameter names
 // must leave every byte of both unchanged, so each case checks the recorded
 // commands three ways: against a literal for a small batch, against a
 // reference builder for every chunk boundary, and against a SHA-256 of the
@@ -63,7 +64,7 @@ public class BulkInsertSqlCharacterizationTests
         for (var c = 0; c < commands.Count; c++)
         {
             commands[c].CommandText.Should().Be(ReferenceSql(head, tail, expectedChunks[c]));
-            commands[c].ParameterNames.Should().Equal(ReferenceNames(expectedChunks[c]));
+            commands[c].ParameterNames.Should().Equal(ReferenceNames(NameSigil(method), expectedChunks[c]));
         }
     }
 
@@ -75,7 +76,9 @@ public class BulkInsertSqlCharacterizationTests
 
         commands.Should().ContainSingle();
         commands[0].CommandText.Should().Be(TwoRowLiteral(method));
-        commands[0].ParameterNames.Should().Equal("CustomerId_0", "Total_0", "CustomerId_1", "Total_1");
+        var sigil = NameSigil(method);
+        commands[0].ParameterNames.Should().Equal(
+            sigil + "CustomerId_0", sigil + "Total_0", sigil + "CustomerId_1", sigil + "Total_1");
     }
 
     [Theory]
@@ -165,7 +168,9 @@ public class BulkInsertSqlCharacterizationTests
     };
 
     // SHA-256 over every recorded command of a 1000-row call, captured at
-    // 332d606, before the full-chunk SQL and parameter names were cached.
+    // 332d606, before the full-chunk SQL and parameter names were cached. The
+    // names were bare then; Fingerprint drops the `@` #351 added, so the SQL and
+    // the names are otherwise still byte-identical.
     // SqlServer.Insert and Sqlite.Insert share their SQL, so they share a value.
     private static string PreCacheFingerprint(string method) => method switch
     {
@@ -199,13 +204,19 @@ public class BulkInsertSqlCharacterizationTests
         return sb.Append(tail).ToString();
     }
 
-    private static List<string> ReferenceNames(int rows)
+    // #351 — the sigil each repository's dialect puts in front of a ParameterName.
+    private static string NameSigil(string method) =>
+        method.StartsWith("SqlServer.", StringComparison.Ordinal) || method.StartsWith("Sqlite.", StringComparison.Ordinal)
+            ? "@"
+            : string.Empty;
+
+    private static List<string> ReferenceNames(string sigil, int rows)
     {
         var names = new List<string>(rows * 2);
         for (var i = 0; i < rows; i++)
         {
-            names.Add("CustomerId_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            names.Add("Total_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            names.Add(sigil + "CustomerId_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            names.Add(sigil + "Total_" + i.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
         return names;
     }
@@ -216,7 +227,13 @@ public class BulkInsertSqlCharacterizationTests
         foreach (var command in commands)
         {
             sb.Append(command.CommandText).Append('\n');
-            sb.AppendJoin('\u001f', command.ParameterNames).Append('\n');
+            for (var i = 0; i < command.ParameterNames.Count; i++)
+            {
+                if (i > 0) sb.Append('\u001f');
+                var name = command.ParameterNames[i];
+                sb.Append(name, name.StartsWith('@') ? 1 : 0, name.StartsWith('@') ? name.Length - 1 : name.Length);
+            }
+            sb.Append('\n');
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }

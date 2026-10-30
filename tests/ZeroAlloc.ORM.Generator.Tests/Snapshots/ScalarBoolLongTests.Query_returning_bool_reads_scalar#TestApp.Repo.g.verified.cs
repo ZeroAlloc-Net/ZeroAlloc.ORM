@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM t WHERE id = @id)";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

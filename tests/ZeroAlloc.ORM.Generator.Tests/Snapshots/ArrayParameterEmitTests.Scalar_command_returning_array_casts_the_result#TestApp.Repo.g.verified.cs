@@ -17,11 +17,11 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "UPDATE posts SET tags = array_append(tags, @tag) WHERE id = @id RETURNING tags";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __p_tag = __cmd.CreateParameter();
-            __p_tag.ParameterName = "tag";
+            __p_tag.ParameterName = "@tag";
             __p_tag.Value = @tag;
             __cmd.Parameters.Add(__p_tag);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
@@ -48,7 +48,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT scores FROM posts WHERE id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

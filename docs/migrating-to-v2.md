@@ -131,3 +131,12 @@ __p_id.ParameterName = "orderId";
 
 See the cookbook's [Parameter prefixes](cookbook/provider-quirks.md#parameter-prefixes) section
 for how each provider binds the bare name.
+
+### Later in v2: spelled per dialect
+
+[#351](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/351): a bare name costs
+Microsoft.Data.Sqlite a string and a UTF-8 copy per prefix it retries, about 200 B per parameter
+per statement. The generator now spells each `ParameterName` the way the repository's declared
+dialect resolves it most cheaply: with the sigil the SQL writes on SQLite and SQL Server, bare on
+PostgreSQL and MySQL. Without a declared dialect it uses the SQL's own token, `"@id"` for `@id`.
+Binding is unchanged; code that reads a generated `ParameterName` back may see the `@` again.

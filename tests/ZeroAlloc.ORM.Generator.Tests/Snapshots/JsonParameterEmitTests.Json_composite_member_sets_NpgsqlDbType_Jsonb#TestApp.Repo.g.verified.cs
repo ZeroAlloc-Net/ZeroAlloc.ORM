@@ -18,11 +18,11 @@ partial class Repo
             __cmd.CommandText = "INSERT INTO docs (name, doc) VALUES (@payload_Name, @payload_Doc)";
             // EmitShape: CompositeBinding payload -> global::TestApp.Payload (fields: 2)
             var __p_payload_Name = __cmd.CreateParameter();
-            __p_payload_Name.ParameterName = "payload_Name";
+            __p_payload_Name.ParameterName = "@payload_Name";
             __p_payload_Name.Value = @payload.@Name;
             __cmd.Parameters.Add(__p_payload_Name);
             var __p_payload_Doc = __cmd.CreateParameter();
-            __p_payload_Doc.ParameterName = "payload_Doc";
+            __p_payload_Doc.ParameterName = "@payload_Doc";
             __p_payload_Doc.Value = @payload.@Doc;
             if (__p_payload_Doc is global::Npgsql.NpgsqlParameter __np_payload_Doc) __np_payload_Doc.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
             __cmd.Parameters.Add(__p_payload_Doc);
@@ -48,11 +48,11 @@ partial class Repo
             if (@payload is null)
             {
                 var __p_payload_Name = __cmd.CreateParameter();
-                __p_payload_Name.ParameterName = "payload_Name";
+                __p_payload_Name.ParameterName = "@payload_Name";
                 __p_payload_Name.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_payload_Name);
                 var __p_payload_Doc = __cmd.CreateParameter();
-                __p_payload_Doc.ParameterName = "payload_Doc";
+                __p_payload_Doc.ParameterName = "@payload_Doc";
                 __p_payload_Doc.Value = global::System.DBNull.Value;
                 if (__p_payload_Doc is global::Npgsql.NpgsqlParameter __np_payload_Doc) __np_payload_Doc.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
                 __cmd.Parameters.Add(__p_payload_Doc);
@@ -60,11 +60,11 @@ partial class Repo
             else
             {
                 var __p_payload_Name = __cmd.CreateParameter();
-                __p_payload_Name.ParameterName = "payload_Name";
+                __p_payload_Name.ParameterName = "@payload_Name";
                 __p_payload_Name.Value = @payload.Value.@Name;
                 __cmd.Parameters.Add(__p_payload_Name);
                 var __p_payload_Doc = __cmd.CreateParameter();
-                __p_payload_Doc.ParameterName = "payload_Doc";
+                __p_payload_Doc.ParameterName = "@payload_Doc";
                 __p_payload_Doc.Value = @payload.Value.@Doc;
                 if (__p_payload_Doc is global::Npgsql.NpgsqlParameter __np_payload_Doc) __np_payload_Doc.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
                 __cmd.Parameters.Add(__p_payload_Doc);

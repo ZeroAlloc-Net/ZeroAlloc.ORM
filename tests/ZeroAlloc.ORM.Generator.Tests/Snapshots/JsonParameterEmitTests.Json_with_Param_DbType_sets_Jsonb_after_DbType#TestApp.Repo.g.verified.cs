@@ -17,11 +17,11 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "UPDATE posts SET doc = @doc WHERE id = @id";
             var __p_id = __cmd.CreateParameter();
-            __p_id.ParameterName = "id";
+            __p_id.ParameterName = "@id";
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __p_doc = __cmd.CreateParameter();
-            __p_doc.ParameterName = "doc";
+            __p_doc.ParameterName = "@doc";
             __p_doc.DbType = global::System.Data.DbType.String;
             __p_doc.Value = @doc;
             if (__p_doc is global::Npgsql.NpgsqlParameter __np_doc) __np_doc.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
