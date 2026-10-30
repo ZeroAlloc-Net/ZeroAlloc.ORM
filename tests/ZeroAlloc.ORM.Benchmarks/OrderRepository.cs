@@ -7,6 +7,7 @@ namespace ZeroAlloc.ORM.Benchmarks;
 // primary-constructor connection-injection convention as the integration tests
 // (the generator discovers the IAsyncDbConnection parameter automatically).
 // One public type per file (MA0048).
+[Dialect(SqlDialect.Sqlite)]
 public sealed partial class OrderRepository(IAsyncDbConnection connection)
 {
     [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]

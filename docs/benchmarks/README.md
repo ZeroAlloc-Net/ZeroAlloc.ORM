@@ -19,8 +19,13 @@ The benchmark project lives at
 \* `PG` = the parallel files under `Postgres/`, gated behind the
 `[BenchmarkCategory("Postgres")]` attribute.
 
-Each class declares three `[Benchmark]` methods that all return identical
-shapes — divergence between them is pure framework overhead.
+Each class declares a `[Benchmark]` method for hand-written ADO.NET, Dapper.AOT
+and ZA.ORM, all returning identical shapes, so divergence between them is pure
+framework overhead. The single-row, multi-result and insert classes add
+`HandWrittenAsyncDb`, the hand-written code over `IAsyncDbConnection`, so the
+cost of the AdoNet.Async substrate shows apart from the generator's, and
+`PostgresMultiResultSetBench` adds `HandWrittenNpgsqlBatch`, the batch path
+ZA.ORM takes on Npgsql. Allocations are reported in bytes.
 
 ## How to run
 
@@ -74,8 +79,8 @@ the process to fixed CPUs where you can, for example `taskset -c 2-5 dotnet run 
 
 | File                            | Backend  | Captured on | Notes                              |
 |---------------------------------|----------|-------------|------------------------------------|
-| `v2.x-sqlite-results.md`        | Sqlite   | 2026-10-21  | 2.4.0; idle Windows 11 laptop, SDK 10.0.402, BenchmarkDotNet 0.15.8, 3 launches, pinned to 2 cores |
-| `v2.x-postgres-results.md`      | Postgres | 2026-10-21  | 2.4.0; same setup, Docker `postgres:16-alpine` on the same machine |
+| `v2.x-sqlite-results.md`        | Sqlite   | 2026-10-30  | #351; shared Linux VM, SDK 10.0.403, BenchmarkDotNet 0.15.8, 1 launch, not pinned |
+| `v2.x-postgres-results.md`      | Postgres | 2026-10-30  | #351; same setup, Docker `postgres:16-alpine` on the same machine |
 | `v0.7.0-sqlite-results.md`      | Sqlite   | 2026-06-01  | Historical: v0.7.0, Windows 11, SDK 10.0.300, BenchmarkDotNet 0.15.2 |
 
 The 2.x captures publish exact allocations and same-run ratios only; absolute timings are not

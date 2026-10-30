@@ -21,7 +21,7 @@ partial class Repo
                 var __cmd0 = __batch.CreateBatchCommand();
                 __cmd0.CommandText = "SELECT Id, Title FROM posts WHERE doc @> @filter";
                 var __p_filter_0 = __cmd0.CreateParameter();
-                __p_filter_0.ParameterName = "filter";
+                __p_filter_0.ParameterName = "@filter";
                 __p_filter_0.Value = @filter;
                 if (__p_filter_0 is global::Npgsql.NpgsqlParameter __np_filter_0) __np_filter_0.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
                 __cmd0.Parameters.Add(__p_filter_0);
@@ -30,7 +30,7 @@ partial class Repo
                 var __cmd1 = __batch.CreateBatchCommand();
                 __cmd1.CommandText = "SELECT COUNT(*) FROM posts WHERE doc @> @filter";
                 var __p_filter_1 = __cmd1.CreateParameter();
-                __p_filter_1.ParameterName = "filter";
+                __p_filter_1.ParameterName = "@filter";
                 __p_filter_1.Value = @filter;
                 if (__p_filter_1 is global::Npgsql.NpgsqlParameter __np_filter_1) __np_filter_1.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
                 __cmd1.Parameters.Add(__p_filter_1);
@@ -94,7 +94,7 @@ partial class Repo
                 await using var __cmd = __conn.CreateCommand();
                 __cmd.CommandText = "SELECT Id, Title FROM posts WHERE doc @> @filter; SELECT COUNT(*) FROM posts WHERE doc @> @filter;";
                 var __p_filter = __cmd.CreateParameter();
-                __p_filter.ParameterName = "filter";
+                __p_filter.ParameterName = "@filter";
                 __p_filter.Value = @filter;
                 if (__p_filter is global::Npgsql.NpgsqlParameter __np_filter) __np_filter.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
                 __cmd.Parameters.Add(__p_filter);
@@ -171,7 +171,7 @@ partial class Repo
             var __cmd0 = __batch.CreateBatchCommand();
             __cmd0.CommandText = "SELECT Id, Title FROM posts WHERE doc @> @filter";
             var __p_filter_0 = __cmd0.CreateParameter();
-            __p_filter_0.ParameterName = "filter";
+            __p_filter_0.ParameterName = "@filter";
             __p_filter_0.Value = @filter;
             if (__p_filter_0 is global::Npgsql.NpgsqlParameter __np_filter_0) __np_filter_0.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
             __cmd0.Parameters.Add(__p_filter_0);
@@ -180,7 +180,7 @@ partial class Repo
             var __cmd1 = __batch.CreateBatchCommand();
             __cmd1.CommandText = "SELECT COUNT(*) FROM posts WHERE doc @> @filter";
             var __p_filter_1 = __cmd1.CreateParameter();
-            __p_filter_1.ParameterName = "filter";
+            __p_filter_1.ParameterName = "@filter";
             __p_filter_1.Value = @filter;
             if (__p_filter_1 is global::Npgsql.NpgsqlParameter __np_filter_1) __np_filter_1.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
             __cmd1.Parameters.Add(__p_filter_1);

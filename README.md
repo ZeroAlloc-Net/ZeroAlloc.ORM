@@ -134,14 +134,18 @@ Every shape, option and diagnostic is in the [reference](https://github.com/Zero
 
 ## Performance
 
-SQLite, BenchmarkDotNet, captured at 2.4.0. Time is the same-run ratio against hand-written ADO.NET;
-allocations are exact bytes per call.
+SQLite, BenchmarkDotNet, captured 2026-10-30 on a shared VM. Time is the same-run ratio against
+hand-written ADO.NET, and rough; allocations are exact bytes per call.
 
 | Workload | ZA.ORM time | Dapper.AOT time | ZA.ORM alloc | Dapper.AOT alloc | Hand-written alloc |
 |---|---:|---:|---:|---:|---:|
-| Single-row read | 1.06× | 1.21× | 1,568 B | 1,800 B | 1,232 B |
-| 1,000-row read | 1.06× | 0.94× | 88,592 B | 130,001 B | 88,200 B |
-| Head + 10 lines | 1.09× | 1.27× | 3,400 B | 4,072 B | 2,680 B |
+| Single-row read | 0.84× | 0.99× | 1,376 B | 1,800 B | 1,232 B |
+| 1,000-row read | 1.05× | 0.94× | 88,592 B | 130,000 B | 88,200 B |
+| Head + 10 lines | 1.01× | 1.26× | 3,016 B | 4,264 B | 2,872 B |
+| Insert | 0.93× | 1.24× | 1,256 B | 1,888 B | 1,208 B |
+
+On the single-statement workloads ZA.ORM allocates exactly what the same hand-written code over
+`IAsyncDbConnection` does; the rest is the AdoNet.Async substrate's.
 
 Full tables, the insert workload, PostgreSQL and methodology: [SQLite](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-sqlite-results.md)
 and [PostgreSQL](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-postgres-results.md).

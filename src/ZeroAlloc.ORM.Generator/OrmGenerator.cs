@@ -258,7 +258,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         context.RegisterSourceOutput(repositoriesWithDialect, (sourceCtx, input) =>
         {
             var hadError = ReportDiagnostics(sourceCtx, input.Repository, input.Dialect);
-            if (!hadError) EmitRepository(sourceCtx, input.Repository);
+            if (!hadError) EmitRepository(sourceCtx, input.Repository, input.Dialect);
         });
 
         // ZAO042 — [StoreAsString] is only legal on enum types. This lives in its own
@@ -4297,12 +4297,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // method parameter. Returns null when the attribute is absent or doesn't set Name.
     // The named argument is a string literal; null/empty values fall back to the C# name.
     //
-    // v2.0, #219 — every emitted `ParameterName` is the bare name, with no provider
-    // sigil. The SQL placeholder carries the sigil the provider expects (`@id` for
-    // SQL Server, SQLite and Postgres, `:id` for Oracle) and every supported provider
-    // matches an unprefixed ParameterName to it. An override written with a sigil,
-    // `[Param(Name = "@orderId")]` as v1 required, is normalised to `orderId` so the
-    // one rule holds for every parameter and existing overrides keep compiling.
+    // v2.0, #219 — the override is kept as the bare name, with no provider sigil. An
+    // override written with a sigil, `[Param(Name = "@orderId")]` as v1 required, is
+    // normalised to `orderId` so existing overrides keep compiling. #351 — the emit
+    // then spells the ParameterName per dialect, with the sigil the SQL placeholder
+    // writes or bare; see ParameterNameStyle and BoundParameterName.
     internal static string? ReadParamNameOverride(IParameterSymbol p)
     {
         foreach (var attr in p.GetAttributes())
@@ -5461,12 +5460,72 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return declarations.AssemblyDefault;
     }
 
-    private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo)
-        => context.AddSource(repo.HintName, SourceText.From(RenderRepository(repo), Encoding.UTF8));
+    // #351 — how a method's ParameterNames are spelled; see ParameterNameStyle. A
+    // [LinqQuery] or [LinqCommand] method's SQL is rendered for PostgreSQL whatever the
+    // declaration, so without one it counts as PostgreSQL.
+    private static ParameterNameStyle ParameterNameStyleFor(QueryMethodModel m, int? dialect)
+    {
+        SqlDialectModel? known = dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared)
+            ? (SqlDialectModel)declared
+            : null;
+        if (known is null && m.LinqSourceComment is not null) known = SqlDialectModel.PostgreSql;
+        return known switch
+        {
+            SqlDialectModel.PostgreSql or SqlDialectModel.MySql => ParameterNameStyle.Bare,
+            SqlDialectModel.SqlServer or SqlDialectModel.Sqlite => ParameterNameStyle.AsWrittenOrAt,
+            _ => ParameterNameStyle.AsWritten,
+        };
+    }
+
+    // #351 — the ParameterName the emit binds `bareName` under, as a C# string literal.
+    private static string BoundParameterNameLiteral(QueryMethodModel m, string bareName) =>
+        SymbolDisplay.FormatLiteral(BoundParameterName(m, bareName), quote: true);
+
+    // #351 — the ParameterName the emit binds `bareName` under: bare, or with the sigil
+    // the method's SQL writes in front of it; see ParameterNameStyle.
+    private static string BoundParameterName(QueryMethodModel m, string bareName)
+    {
+        if (m.ParameterNameStyle == ParameterNameStyle.Bare) return bareName;
+        if (FindPlaceholderSigil(m.Sql, bareName) is { } sigil) return sigil + bareName;
+        return m.ParameterNameStyle == ParameterNameStyle.AsWrittenOrAt ? "@" + bareName : bareName;
+    }
+
+    // #351 — the sigil, `@`, `:` or `$`, in front of the first placeholder for `name` in
+    // `sql`, or null when the SQL has none. The match is case-insensitive, as SQL Server's
+    // is, and whole-word: `@id` does not match `@idx`, and neither `@@id`, a system
+    // variable, nor `x::id`, a PostgreSQL cast, counts as a placeholder.
+    internal static char? FindPlaceholderSigil(string sql, string name)
+    {
+        if (string.IsNullOrEmpty(sql) || name.Length == 0) return null;
+        var from = 1;
+        while (from < sql.Length)
+        {
+            var at = sql.IndexOf(name, from, StringComparison.OrdinalIgnoreCase);
+            if (at < 0) return null;
+            from = at + 1;
+            var sigil = sql[at - 1];
+            if (sigil != '@' && sigil != ':' && sigil != '$') continue;
+            var end = at + name.Length;
+            if (end < sql.Length && IsSqlIdentifierChar(sql[end])) continue;
+            if (at >= 2)
+            {
+                var before = sql[at - 2];
+                if (before == '@' || before == ':' || IsSqlIdentifierChar(before)) continue;
+            }
+            return sigil;
+        }
+        return null;
+    }
+
+    private static bool IsSqlIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    private static void EmitRepository(SourceProductionContext context, QueryRepositoryModel repo, int? dialect)
+        => context.AddSource(repo.HintName, SourceText.From(RenderRepository(repo, dialect), Encoding.UTF8));
 
     // The generated source for one repository. Internal so emit tests can render a
-    // hand-built model, such as a [LinqQuery] one no pipeline produces yet.
-    internal static string RenderRepository(QueryRepositoryModel repo)
+    // hand-built model, such as a [LinqQuery] one no pipeline produces yet. `dialect`
+    // is the declared SqlDialect value, null when none is declared.
+    internal static string RenderRepository(QueryRepositoryModel repo, int? dialect = null)
     {
         // Invariant: GroupBy never yields empty groups; repo.Methods is always non-empty.
 
@@ -5510,6 +5569,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             var m = repoMethod.LinqSourceComment is null
                 ? repoMethod
                 : repoMethod with { LinqSqlConstantName = LinqSqlConstantName(repoMethod, methodIndex) };
+            var nameStyle = ParameterNameStyleFor(m, dialect);
+            if (nameStyle != m.ParameterNameStyle) m = m with { ParameterNameStyle = nameStyle };
             EmitLinqSqlConstant(sb, m);
             switch (m.Shape)
             {
@@ -6067,9 +6128,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // of the placeholder in PlaceholderBindings — not the row index. The
         // ParameterName carries the row index suffix so the SQL `@a_0`, `@a_1`
         // bind to distinct DbParameter instances inside the same DbCommand.
-        // The name is bare, `a_0`, like every other emitted ParameterName (#219);
-        // only the SQL text carries the `@` sigil, which is the one
-        // BulkInsertValuesParser accepts in the author's VALUES tuple. #326 — the
+        // The name carries the `@` the SQL text writes, `@a_0`, the one
+        // BulkInsertValuesParser accepts in the author's VALUES tuple, unless the
+        // dialect binds bare names (#351, see ParameterNameStyle). #326 — the
         // names are read from the cache class's static arrays, not concatenated
         // per row.
         sb.AppendLine("                for (var __i = 0; __i < __thisChunk; __i++)");
@@ -6155,8 +6216,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // a nested static class initializes on its first use, so a repository that
     // never bulk-inserts does not pay for them.
     //
-    //   * Names_<placeholder>_<i>[row] holds `<placeholder>_<row>`, the bare
-    //     ParameterName, for every row of a full chunk.
+    //   * Names_<placeholder>_<i>[row] holds `@<placeholder>_<row>`, the
+    //     ParameterName, for every row of a full chunk. #351: bare, without the `@`,
+    //     for a dialect whose provider strips a sigil; see ParameterNameStyle.
     //   * FullChunkSql is the static head, ChunkSize tuples of `(@a_<row>, ...)`
     //     joined by ", ", then the static tail. It is built from the name arrays,
     //     so the SQL and the bound names cannot drift apart.
@@ -6175,6 +6237,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var chunkSize = mat.ChunkSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var headLiteral = SymbolDisplay.FormatLiteral(mat.InsertStaticHead, quote: true);
         var hasTail = !string.IsNullOrEmpty(mat.InsertStaticTail);
+        var bareNames = m.ParameterNameStyle == ParameterNameStyle.Bare;
 
         sb.AppendLine();
         sb.AppendLine($"    // The SQL and parameter names every full chunk of {m.MethodName} shares, built once.");
@@ -6190,7 +6253,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
         {
             var binding = mat.PlaceholderBindings[i];
-            var prefix = SymbolDisplay.FormatLiteral(binding.PlaceholderName + "_", quote: true);
+            // The SQL below always writes the `@` sigil, so it is the one a sigil-keeping
+            // style puts in the name.
+            var prefix = SymbolDisplay.FormatLiteral(
+                (bareNames ? string.Empty : "@") + binding.PlaceholderName + "_", quote: true);
             sb.AppendLine($"        internal static readonly string[] {BulkInsertNamesField(binding, i)} = BuildNames({prefix});");
         }
         sb.AppendLine("        private static readonly int[] TupleEnds = new int[ChunkSize];");
@@ -6220,7 +6286,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < mat.PlaceholderBindings.Length; i++)
         {
             if (i > 0) sb.Append(".Append(\", \")");
-            sb.Append($".Append('@').Append({BulkInsertNamesField(mat.PlaceholderBindings[i], i)}[i])");
+            sb.Append(bareNames ? ".Append('@')" : string.Empty)
+              .Append($".Append({BulkInsertNamesField(mat.PlaceholderBindings[i], i)}[i])");
         }
         sb.AppendLine(".Append(')');");
         sb.AppendLine("                TupleEnds[i] = sb.Length;");
@@ -8533,8 +8600,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
             if (!IsBoundByStatement(m, p, cmdIndex)) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var paramName = p.ParamNameOverride ?? p.Name;
-            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            var paramNameLiteral = BoundParameterNameLiteral(m, p.ParamNameOverride ?? p.Name);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, indent, local, p.Facets, output: null);
@@ -8580,13 +8646,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (p.CompositeFields.Length > 0)
             {
                 sb.AppendLine($"{indent}// EmitShape: CompositeBinding {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
-                EmitCompositeParameterBinding(sb, p, "__cmd", indent);
+                EmitCompositeParameterBinding(sb, m, p, "__cmd", indent);
                 continue;
             }
 
             var local = "__p_" + p.Name;
-            var paramName = p.ParamNameOverride ?? p.Name;
-            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            var paramNameLiteral = BoundParameterNameLiteral(m, p.ParamNameOverride ?? p.Name);
             sb.AppendLine($"{indent}var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
 
@@ -8799,13 +8864,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (p.CompositeFields.Length > 0)
             {
                 sb.AppendLine($"            // EmitShape: CompositeBinding {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
-                EmitCompositeParameterBinding(sb, p, cmdLocal, "            ", cmdIndex);
+                EmitCompositeParameterBinding(sb, m, p, cmdLocal, "            ", cmdIndex);
                 continue;
             }
 
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var paramName = p.ParamNameOverride ?? p.Name;
-            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            var paramNameLiteral = BoundParameterNameLiteral(m, p.ParamNameOverride ?? p.Name);
             sb.AppendLine($"            var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
@@ -9105,7 +9169,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     //
     // Emit shape per parameter:
     //     var __p_<name> = __cmd.CreateParameter();
-    //     __p_<name>.ParameterName = "<name>";
+    //     __p_<name>.ParameterName = "@<name>";   // #351: see BoundParameterName
     //     __p_<name>.Value = <name>;
     //     __cmd.Parameters.Add(__p_<name>);
     private static void EmitParameterBinding(StringBuilder sb, QueryMethodModel m)
@@ -9121,13 +9185,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (p.CompositeFields.Length > 0)
             {
                 sb.AppendLine($"            // EmitShape: CompositeBinding {p.Name} -> {p.CompositeTypeFullName} (fields: {p.CompositeFields.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
-                EmitCompositeParameterBinding(sb, p, "__cmd", "            ");
+                EmitCompositeParameterBinding(sb, m, p, "__cmd", "            ");
                 continue;
             }
 
             var local = "__p_" + p.Name;
-            var paramName = p.ParamNameOverride ?? p.Name;
-            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            var paramNameLiteral = BoundParameterNameLiteral(m, p.ParamNameOverride ?? p.Name);
             sb.AppendLine($"            var {local} = __cmd.CreateParameter();");
             sb.AppendLine($"            {local}.ParameterName = {paramNameLiteral};");
             EmitParameterFacets(sb, "            ", local, p.Facets, output: null);
@@ -9291,6 +9354,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // cases — batches re-bind each statement's parameter set independently.
     private static void EmitCompositeParameterBinding(
         StringBuilder sb,
+        QueryMethodModel m,
         ParameterInfo p,
         string cmdLocal,
         string indent,
@@ -9328,8 +9392,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             foreach (var field in p.CompositeFields)
             {
                 var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-                var paramName = p.Name + "_" + field.CtorArgName;
-                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                var paramNameLiteral = BoundParameterNameLiteral(m, p.Name + "_" + field.CtorArgName);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
                 EmitValueAssignment(sb, indent + "    ", local, "global::System.DBNull.Value", field.IsJson ? Jsonb : null);
@@ -9341,8 +9404,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             foreach (var field in p.CompositeFields)
             {
                 var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-                var paramName = p.Name + "_" + field.CtorArgName;
-                var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+                var paramNameLiteral = BoundParameterNameLiteral(m, p.Name + "_" + field.CtorArgName);
                 sb.AppendLine($"{indent}    var {local} = {cmdLocal}.CreateParameter();");
                 sb.AppendLine($"{indent}    {local}.ParameterName = {paramNameLiteral};");
 
@@ -9364,8 +9426,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         foreach (var field in p.CompositeFields)
         {
             var local = "__p_" + p.Name + "_" + field.CtorArgName + localSuffix;
-            var paramName = p.Name + "_" + field.CtorArgName;
-            var paramNameLiteral = SymbolDisplay.FormatLiteral(paramName, quote: true);
+            var paramNameLiteral = BoundParameterNameLiteral(m, p.Name + "_" + field.CtorArgName);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
             sb.AppendLine($"{indent}{local}.ParameterName = {paramNameLiteral};");
 

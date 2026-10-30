@@ -61,8 +61,8 @@ partial class Repo
     {
         private const int ChunkSize = 450;
         private const string Head = "INSERT INTO docs (id, doc) VALUES ";
-        internal static readonly string[] Names_Id_0 = BuildNames("Id_");
-        internal static readonly string[] Names_Doc_1 = BuildNames("Doc_");
+        internal static readonly string[] Names_Id_0 = BuildNames("@Id_");
+        internal static readonly string[] Names_Doc_1 = BuildNames("@Doc_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -84,7 +84,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_Id_0[i]).Append(", ").Append('@').Append(Names_Doc_1[i]).Append(')');
+                sb.Append('(').Append(Names_Id_0[i]).Append(", ").Append(Names_Doc_1[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();
@@ -103,11 +103,11 @@ partial class Repo
             __cmd.CommandText = "INSERT INTO docs (name, doc) VALUES (@payload_Name, @payload_Doc)";
             // EmitShape: CompositeBinding payload -> global::TestApp.Payload (fields: 2)
             var __p_payload_Name = __cmd.CreateParameter();
-            __p_payload_Name.ParameterName = "payload_Name";
+            __p_payload_Name.ParameterName = "@payload_Name";
             __p_payload_Name.Value = @payload.@Name;
             __cmd.Parameters.Add(__p_payload_Name);
             var __p_payload_Doc = __cmd.CreateParameter();
-            __p_payload_Doc.ParameterName = "payload_Doc";
+            __p_payload_Doc.ParameterName = "@payload_Doc";
             __p_payload_Doc.Value = @payload.@Doc;
             if (__p_payload_Doc is global::Npgsql.NpgsqlParameter __np_payload_Doc) __np_payload_Doc.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Jsonb;
             __cmd.Parameters.Add(__p_payload_Doc);

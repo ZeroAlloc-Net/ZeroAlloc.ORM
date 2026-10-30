@@ -38,7 +38,9 @@ public sealed partial class LegacyOrderRepository(IAsyncDbConnection connection)
 | `Sqlite` | SQLite, through Microsoft.Data.Sqlite |
 | `MySql` | MySQL, through MySqlConnector or MySql.Data |
 
-The attribute is optional and changes no generated code. It tunes the
+The attribute is optional. In the generated code it changes only how each
+`DbParameter.ParameterName` is spelled, the one its provider resolves most
+cheaply; see [Parameter prefixes](#parameter-prefixes). It also tunes the
 compile-time checks that depend on the provider:
 
 - [ZAO015](../diagnostics/ZAO015.md): a `[Param(DbType = ...)]` that the
@@ -382,8 +384,8 @@ consistent (lowercase is the safe default).
 ### Parameter prefix normalisation
 
 Npgsql accepts both `@name` and `:name` placeholders in the SQL and stores
-each parameter's name with a leading `@` or `:` trimmed, so the generator's
-bare `ParameterName` binds either form. For `CommandType.StoredProcedure`
+each parameter's name with a leading `@` or `:` trimmed, so a bare
+`ParameterName` binds either form, and is the one Npgsql need not trim. For `CommandType.StoredProcedure`
 Npgsql writes the `CALL` itself with named arguments, `"name" := $1`, again
 from the trimmed name. See [Parameter prefixes](#parameter-prefixes).
 
@@ -595,26 +597,36 @@ eliminates the variance.
 
 ### Parameter prefixes
 
-The rule since v2: **the SQL placeholder carries the provider's sigil, and
-the generated `DbParameter.ParameterName` carries none.**
+You write the placeholder the provider expects in the SQL: `@id` for SQL
+Server, SQLite, PostgreSQL and MySQL, or `:id` and `$id` where the provider
+accepts them. The generator passes the SQL through verbatim.
 
-- Write the placeholder the provider expects: `@id` for SQL Server, SQLite,
-  PostgreSQL and MySQL; `:id` for Oracle. The generator passes the SQL
-  through verbatim.
-- The generator emits `ParameterName = "id"`, a composite's fields as
-  `"total_Amount"`, and a `BulkInsert` row's values as `"CustomerId_0"`,
-  `"CustomerId_1"` and so on.
-- `[Param(Name = "...")]` takes the bare name. A single leading `@`, `:` or
-  `$` is dropped, so the v1 spelling `[Param(Name = "@orderId")]` still binds.
+The generated `DbParameter.ParameterName` is spelled the way the declared
+[dialect](#declaring-the-dialect)'s provider resolves it most cheaply:
 
-Each provider matches the bare name to the prefixed placeholder:
+| Declared dialect | Emitted for `int id` and `WHERE Id = @id` | Without a placeholder, as for a stored procedure |
+|---|---|---|
+| `Sqlite`, `SqlServer` | `"@id"`, the sigil the SQL writes: `":id"` for `:id` | `"@id"` |
+| `PostgreSql`, `MySql` | `"id"` | `"id"` |
+| None | `"@id"`, the token the SQL holds | `"id"` |
 
-| Provider | How a bare `ParameterName` binds |
+A `[LinqQuery]` or `[LinqCommand]` method's SQL is PostgreSQL, so without a
+declared dialect it binds bare names. A composite's fields follow the same
+rule, `"@total_Amount"` or `"total_Amount"`, and so does a `BulkInsert` row's
+value, `"@CustomerId_0"` or `"CustomerId_0"`.
+
+`[Param(Name = "...")]` takes the bare name. A single leading `@`, `:` or `$`
+is dropped, so the v1 spelling `[Param(Name = "@orderId")]` still binds, and
+the name is then spelled like any other.
+
+Why the spelling differs ([#351](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/351)):
+
+| Provider | How it resolves a `ParameterName` |
 |---|---|
-| Microsoft.Data.Sqlite | Looks the name up as written, then retries with `@`, `$` and `:` prepended. A statement that uses two of those for one name is rejected as ambiguous. |
-| Npgsql | Trims a leading `@` or `:` from every parameter name and matches placeholders against the trimmed name. |
-| Microsoft.Data.SqlClient | Prepends `@` when the name lacks one, in both the `sp_executesql` parameter list and stored-procedure RPC argument names. |
-| MySqlConnector | Trims a leading `@` or `?` when normalising the name. Not exercised by the test suite. |
+| Microsoft.Data.Sqlite | Looks the name up as written. A bare name is then retried with `@`, `:` and `$` prepended, each try building a string and a UTF-8 copy, on every statement: about 200 B per parameter. A statement that uses two of those for one name is rejected as ambiguous. |
+| Microsoft.Data.SqlClient | Writes a missing `@` while it builds the `sp_executesql` parameter list and the RPC argument names, without allocating. Its table-valued-parameter and Always Encrypted paths build `"@" + name`. |
+| Npgsql | Trims a leading `@` or `:` from every parameter name with a Substring, and matches placeholders against the trimmed name. |
+| MySqlConnector, MySql.Data | Trim a leading `@` or `?` with a Substring when normalising the name. Not exercised by the test suite. |
 
 `$1` / `?` positional placeholders are not supported; the generator binds
 by name.

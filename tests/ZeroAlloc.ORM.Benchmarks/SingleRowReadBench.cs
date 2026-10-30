@@ -79,6 +79,32 @@ public class SingleRowReadBench : IAsyncDisposable
         }
     }
 
+    // #351 — the same code over IAsyncDbConnection, the substrate ZA.ORM's generated method
+    // runs on. Its gap to HandWrittenAdoNet is AdoNet.Async's cost; ZA.ORM's gap to it is the
+    // generator's.
+    [Benchmark]
+    public async Task<OrderRow?> HandWrittenAsyncDb()
+    {
+        var cmd = _conn.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id";
+            var p = cmd.CreateParameter();
+            p.ParameterName = "@id";
+            p.Value = 1;
+            cmd.Parameters.Add(p);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (((IAsyncDisposable)reader).ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    return null;
+                }
+                return new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+            }
+        }
+    }
+
     // Dapper.AOT — the [module: DapperAot] above triggers the build-time
     // interceptor rewrite; this call site becomes the generated code.
     [Benchmark]

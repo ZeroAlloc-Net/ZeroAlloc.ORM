@@ -159,16 +159,18 @@ IReadOnlyList<Migration> applied = await runner.RunAsync(ct);
 
 ## Performance
 
-BenchmarkDotNet compares ZA.ORM with hand-written ADO.NET and Dapper.AOT, captured at 2.4.0 on 2026-10-21 on an otherwise idle machine. Allocations are exact. Speed is shown as same-run ratios; absolute timings are not published. Time is the ratio against hand-written ADO.NET, from three launches.
+BenchmarkDotNet compares ZA.ORM with hand-written ADO.NET and Dapper.AOT, captured on 2026-10-30 on a shared VM, one launch per benchmark. SQLite allocations are exact. Speed is shown as same-run ratios against hand-written ADO.NET; absolute timings are not published, and on this VM the ratios are rough. PostgreSQL allocations come from the integration suite's allocation gates, which read the same bytes run after run where BenchmarkDotNet's process-wide counter picks up Npgsql's background threads.
 
 | Workload | SQLite: time | SQLite: allocation | PostgreSQL: time | PostgreSQL: allocation |
 |---|---:|---:|---:|---:|
-| Single-row read | 1.06× | 1,568 B vs 1,232 B, +27% | 1.03× | +24% |
-| 1000-row read | 1.06× | 88,592 B vs 88,200 B, +0.4% | 1.01× | +2% |
-| Head + lines multi-result | 1.09× | 3,400 B vs 2,680 B, +27% | 1.00× | +56% |
-| Single insert | 1.20× | 1,856 B vs 1,208 B, +54% | 0.98× | +7% |
+| Single-row read | 0.84× | 1,376 B vs 1,232 B, +12% | 0.83× | 1,624 B vs 1,392 B, +17% |
+| 1000-row read | 1.05× | 88,592 B vs 88,200 B, +0.4% | 0.96× | +1% |
+| Head + lines multi-result | 1.01× | 3,016 B vs 2,872 B, +5% | 0.92× | 4,056 B vs 3,720 B as a batch, +9% |
+| Single insert | 0.93× | 1,256 B vs 1,208 B, +4% | 0.88× | 2,040 B vs 1,832 B, +11% |
 
-Full tables, per-launch spreads and methodology: [SQLite](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-sqlite-results.md) and [PostgreSQL](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-postgres-results.md).
+On SQLite, ZA.ORM allocates exactly what the same hand-written code over `IAsyncDbConnection` does; the remainder is the AdoNet.Async substrate's. Until [#351](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/351) it allocated 1,568 B per read and 1,856 B per insert, because Microsoft.Data.Sqlite retried prefixes on the bare parameter names it was given.
+
+Full tables and methodology: [SQLite](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-sqlite-results.md) and [PostgreSQL](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/benchmarks/v2.x-postgres-results.md).
 
 ## Diagnostics
 

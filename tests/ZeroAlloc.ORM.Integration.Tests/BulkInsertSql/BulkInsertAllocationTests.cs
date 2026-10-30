@@ -19,8 +19,9 @@ public class BulkInsertAllocationTests
     private const int RowCount = 2 * ChunkSize;
     private const int Iterations = 20;
 
-    private static readonly string[] CodeNames = Names("Code_");
-    private static readonly string[] LabelNames = Names("Label_");
+    // #351 — spelled as the SQL writes them, as the emitted loop binds them on Sqlite.
+    private static readonly string[] CodeNames = Names("@Code_");
+    private static readonly string[] LabelNames = Names("@Label_");
     private static readonly string FullChunkSql = BuildFullChunkSql();
 
     [Fact]
@@ -108,7 +109,7 @@ public class BulkInsertAllocationTests
         for (var i = 0; i < ChunkSize; i++)
         {
             if (i > 0) sb.Append(", ");
-            sb.Append("(@").Append(CodeNames[i]).Append(", @").Append(LabelNames[i]).Append(')');
+            sb.Append('(').Append(CodeNames[i]).Append(", ").Append(LabelNames[i]).Append(')');
         }
         return sb.ToString();
     }

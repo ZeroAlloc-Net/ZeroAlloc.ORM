@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "INSERT INTO T (Sku) VALUES (@sku)";
             var __p_sku = __cmd.CreateParameter();
-            __p_sku.ParameterName = "sku";
+            __p_sku.ParameterName = "@sku";
             __p_sku.Value = (object?)@sku?.Value ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_sku);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

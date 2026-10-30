@@ -4,6 +4,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 
 // ZA.ORM repository for PostgresInsertBench. One public type per file (MA0048).
+[Dialect(SqlDialect.PostgreSql)]
 public sealed partial class PostgresInsertRepository(IAsyncDbConnection connection)
 {
     [Command("INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)")]

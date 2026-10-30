@@ -18,11 +18,11 @@ partial class Repo
             __cmd.CommandText = "INSERT INTO T (Qty, Sku) VALUES (@line_Qty, @line_Sku)";
             // EmitShape: CompositeBinding line -> global::TestApp.Line (fields: 2)
             var __p_line_Qty = __cmd.CreateParameter();
-            __p_line_Qty.ParameterName = "line_Qty";
+            __p_line_Qty.ParameterName = "@line_Qty";
             __p_line_Qty.Value = @line.@Qty;
             __cmd.Parameters.Add(__p_line_Qty);
             var __p_line_Sku = __cmd.CreateParameter();
-            __p_line_Sku.ParameterName = "line_Sku";
+            __p_line_Sku.ParameterName = "@line_Sku";
             __p_line_Sku.Value = (object?)@line.@Sku?.Value ?? global::System.DBNull.Value;
             __cmd.Parameters.Add(__p_line_Sku);
             return await __cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);

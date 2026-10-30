@@ -4,6 +4,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks.Postgres;
 
 // ZA.ORM repository for PostgresMultiResultSetBench. One public type per file (MA0048).
+[Dialect(SqlDialect.PostgreSql)]
 public sealed partial class PostgresMultiResultSetRepository(IAsyncDbConnection connection)
 {
     [Query(

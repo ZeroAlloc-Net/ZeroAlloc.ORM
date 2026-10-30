@@ -5,6 +5,7 @@ using ZeroAlloc.ORM;
 namespace ZeroAlloc.ORM.Benchmarks;
 
 // ZA.ORM repository for MultiRowReadBench. One public type per file (MA0048).
+[Dialect(SqlDialect.Sqlite)]
 public sealed partial class MultiRowRepository(IAsyncDbConnection connection)
 {
     [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id")]

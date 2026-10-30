@@ -21,7 +21,7 @@ partial class Repo
                 var __cmd0 = __batch.CreateBatchCommand();
                 __cmd0.CommandText = "SELECT Id, Title FROM posts WHERE tags && @tags";
                 var __p_tags_0 = __cmd0.CreateParameter();
-                __p_tags_0.ParameterName = "tags";
+                __p_tags_0.ParameterName = "@tags";
                 __p_tags_0.Value = @tags is null ? global::System.DBNull.Value : (object?)(@tags as string[]) ?? (object?)(@tags as global::System.Collections.Generic.List<string>) ?? (string[])[.. @tags];
                 __cmd0.Parameters.Add(__p_tags_0);
                 __batch.BatchCommands.Add(__cmd0);
@@ -29,7 +29,7 @@ partial class Repo
                 var __cmd1 = __batch.CreateBatchCommand();
                 __cmd1.CommandText = "SELECT COUNT(*) FROM posts WHERE tags && @tags";
                 var __p_tags_1 = __cmd1.CreateParameter();
-                __p_tags_1.ParameterName = "tags";
+                __p_tags_1.ParameterName = "@tags";
                 __p_tags_1.Value = @tags is null ? global::System.DBNull.Value : (object?)(@tags as string[]) ?? (object?)(@tags as global::System.Collections.Generic.List<string>) ?? (string[])[.. @tags];
                 __cmd1.Parameters.Add(__p_tags_1);
                 __batch.BatchCommands.Add(__cmd1);
@@ -92,7 +92,7 @@ partial class Repo
                 await using var __cmd = __conn.CreateCommand();
                 __cmd.CommandText = "SELECT Id, Title FROM posts WHERE tags && @tags; SELECT COUNT(*) FROM posts WHERE tags && @tags;";
                 var __p_tags = __cmd.CreateParameter();
-                __p_tags.ParameterName = "tags";
+                __p_tags.ParameterName = "@tags";
                 __p_tags.Value = @tags is null ? global::System.DBNull.Value : (object?)(@tags as string[]) ?? (object?)(@tags as global::System.Collections.Generic.List<string>) ?? (string[])[.. @tags];
                 __cmd.Parameters.Add(__p_tags);
                 await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

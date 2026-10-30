@@ -60,8 +60,8 @@ partial class Repo
     {
         private const int ChunkSize = 450;
         private const string Head = "INSERT INTO T (Qty, Sku) VALUES ";
-        internal static readonly string[] Names_Qty_0 = BuildNames("Qty_");
-        internal static readonly string[] Names_Sku_1 = BuildNames("Sku_");
+        internal static readonly string[] Names_Qty_0 = BuildNames("@Qty_");
+        internal static readonly string[] Names_Sku_1 = BuildNames("@Sku_");
         private static readonly int[] TupleEnds = new int[ChunkSize];
         private static readonly string FullChunkSql = BuildFullChunkSql();
 
@@ -83,7 +83,7 @@ partial class Repo
             for (var i = 0; i < ChunkSize; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append('(').Append('@').Append(Names_Qty_0[i]).Append(", ").Append('@').Append(Names_Sku_1[i]).Append(')');
+                sb.Append('(').Append(Names_Qty_0[i]).Append(", ").Append(Names_Sku_1[i]).Append(')');
                 TupleEnds[i] = sb.Length;
             }
             return sb.ToString();

@@ -17,7 +17,7 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT name FROM t WHERE k = @k";
             var __p_k = __cmd.CreateParameter();
-            __p_k.ParameterName = "k";
+            __p_k.ParameterName = "@k";
             __p_k.Value = @k;
             __cmd.Parameters.Add(__p_k);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);

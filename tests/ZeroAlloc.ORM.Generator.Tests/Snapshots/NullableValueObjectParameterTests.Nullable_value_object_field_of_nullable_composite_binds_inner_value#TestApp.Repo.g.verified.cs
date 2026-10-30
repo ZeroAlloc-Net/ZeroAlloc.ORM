@@ -20,22 +20,22 @@ partial class Repo
             if (@line is null)
             {
                 var __p_line_Qty = __cmd.CreateParameter();
-                __p_line_Qty.ParameterName = "line_Qty";
+                __p_line_Qty.ParameterName = "@line_Qty";
                 __p_line_Qty.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_line_Qty);
                 var __p_line_Sku = __cmd.CreateParameter();
-                __p_line_Sku.ParameterName = "line_Sku";
+                __p_line_Sku.ParameterName = "@line_Sku";
                 __p_line_Sku.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_line_Sku);
             }
             else
             {
                 var __p_line_Qty = __cmd.CreateParameter();
-                __p_line_Qty.ParameterName = "line_Qty";
+                __p_line_Qty.ParameterName = "@line_Qty";
                 __p_line_Qty.Value = @line.Value.@Qty;
                 __cmd.Parameters.Add(__p_line_Qty);
                 var __p_line_Sku = __cmd.CreateParameter();
-                __p_line_Sku.ParameterName = "line_Sku";
+                __p_line_Sku.ParameterName = "@line_Sku";
                 __p_line_Sku.Value = (object?)@line.Value.@Sku?.Value ?? global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_line_Sku);
             }

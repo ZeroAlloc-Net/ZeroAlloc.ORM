@@ -20,22 +20,22 @@ partial class Repo
             if (@filter is null)
             {
                 var __p_filter_Name = __cmd.CreateParameter();
-                __p_filter_Name.ParameterName = "filter_Name";
+                __p_filter_Name.ParameterName = "@filter_Name";
                 __p_filter_Name.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_filter_Name);
                 var __p_filter_Tags = __cmd.CreateParameter();
-                __p_filter_Tags.ParameterName = "filter_Tags";
+                __p_filter_Tags.ParameterName = "@filter_Tags";
                 __p_filter_Tags.Value = global::System.DBNull.Value;
                 __cmd.Parameters.Add(__p_filter_Tags);
             }
             else
             {
                 var __p_filter_Name = __cmd.CreateParameter();
-                __p_filter_Name.ParameterName = "filter_Name";
+                __p_filter_Name.ParameterName = "@filter_Name";
                 __p_filter_Name.Value = @filter.Value.@Name;
                 __cmd.Parameters.Add(__p_filter_Name);
                 var __p_filter_Tags = __cmd.CreateParameter();
-                __p_filter_Tags.ParameterName = "filter_Tags";
+                __p_filter_Tags.ParameterName = "@filter_Tags";
                 var __p_filter_Tags_value = @filter.Value.@Tags;
                 __p_filter_Tags.Value = __p_filter_Tags_value is null ? global::System.DBNull.Value : (object?)(__p_filter_Tags_value as string[]) ?? (object?)(__p_filter_Tags_value as global::System.Collections.Generic.List<string>) ?? (string[])[.. __p_filter_Tags_value];
                 __cmd.Parameters.Add(__p_filter_Tags);

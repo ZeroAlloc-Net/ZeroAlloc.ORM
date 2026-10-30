@@ -4,17 +4,21 @@ using Xunit;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
-// v2.0 — provider-neutral parameter names, issue #219.
+// #351 — parameter names spelled per dialect. #219 made every emitted
+// `DbParameter.ParameterName` bare. Each provider resolves a name most cheaply in its
+// own spelling, so the emit now follows the repository's declared dialect:
 //
-// The SQL placeholder carries the provider's sigil, which the author writes:
-// `@id` for SQL Server, SQLite and Postgres, `:id` for Oracle. The emitted
-// `DbParameter.ParameterName` carries no sigil at all, so the same generated
-// code binds against whichever placeholder form the SQL uses. Every supported
-// provider matches an unprefixed ParameterName to a prefixed placeholder.
+//   * Sqlite and SqlServer: the sigil the SQL placeholder writes, `@id` for `@id`, and
+//     `@` when the SQL has no placeholder for it, as for a stored procedure.
+//     Microsoft.Data.Sqlite otherwise tries each prefix in front of a bare name.
+//   * PostgreSql and MySql: the bare name. Npgsql and MySqlConnector strip a sigil
+//     with a Substring.
+//   * No declared dialect: the token the SQL holds, so `@id` for `@id`, and the bare
+//     name when the SQL has none. A [LinqQuery] renders PostgreSQL, so it binds bare.
 //
 // These tests pin the rule for every emit path that names a parameter: scalar,
-// value object, composite, composite in batch mode, BulkInsert, Identity,
-// stored procedure with output parameters, and the [Param(Name)] override.
+// value object, composite, BulkInsert, Identity, stored procedure with output
+// parameters, and the [Param(Name)] override.
 public class ParameterNamePrefixTests
 {
     private const string Usings = """
@@ -39,9 +43,12 @@ public class ParameterNamePrefixTests
         RegexOptions.CultureInvariant,
         System.TimeSpan.FromSeconds(1));
 
-    private static string Generate(string members)
+    private static string Generate(string members, string? dialect = null, bool assemblyLevel = false)
     {
-        var source = Usings + "public sealed partial class Repo(IAsyncDbConnection connection)\n{\n"
+        var attribute = dialect is null ? string.Empty : $"[Dialect(SqlDialect.{dialect})]\n";
+        var source = (assemblyLevel ? Usings.Replace("namespace TestApp;", attribute.Replace("[", "[assembly: ") + "namespace TestApp;", System.StringComparison.Ordinal) : Usings)
+            + (assemblyLevel ? string.Empty : attribute)
+            + "public sealed partial class Repo(IAsyncDbConnection connection)\n{\n"
             + members + "\n}\n";
         var result = GeneratorHarness.RunGenerator(source);
         Assert.DoesNotContain(result.Diagnostics, d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
@@ -67,95 +74,141 @@ public class ParameterNamePrefixTests
         return string.Join(",", names);
     }
 
-    private static void AssertNoPrefix(string generated)
+    private const string ScalarQuery = """
+        [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
+        public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
+        """;
+
+    private const string StoredProcedure = """
+        [StoredProcedure("usp_InsertOrder")]
+        public partial Task<(OrderRow Result, int NewOrderId)> InsertAsync(
+            int customerId, int newOrderId, CancellationToken ct);
+        """;
+
+    [Theory]
+    [InlineData(null, "@id")]
+    [InlineData("Sqlite", "@id")]
+    [InlineData("SqlServer", "@id")]
+    [InlineData("PostgreSql", "id")]
+    [InlineData("MySql", "id")]
+    public void Scalar_parameter_is_named_per_dialect(string? dialect, string expected)
     {
-        foreach (var name in EmittedNames(generated))
-        {
-            Assert.False(
-                name.Length > 0 && (name[0] == '@' || name[0] == ':' || name[0] == '$'),
-                $"Emitted ParameterName \"{name}\" carries a provider sigil.");
-        }
+        Assert.Equal(expected, Joined(Generate(ScalarQuery, dialect)));
     }
 
-    [Fact]
-    public void Scalar_parameter_emits_unprefixed_name()
+    [Theory]
+    [InlineData("Sqlite", "@id")]
+    [InlineData("PostgreSql", "id")]
+    public void Assembly_level_dialect_names_the_parameters(string dialect, string expected)
     {
-        var generated = Generate("""
-            [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id")]
+        Assert.Equal(expected, Joined(Generate(ScalarQuery, dialect, assemblyLevel: true)));
+    }
+
+    [Theory]
+    [InlineData(null, ":id")]
+    [InlineData(null, "$id")]
+    [InlineData("Sqlite", ":id")]
+    [InlineData("Sqlite", "$id")]
+    public void Sigil_the_SQL_writes_is_kept(string? dialect, string placeholder)
+    {
+        var generated = Generate($$"""
+            [Query("SELECT Id, CustomerId, Total FROM Orders WHERE Id = {{placeholder}}")]
             public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
-            """);
+            """, dialect);
 
-        Assert.Equal("id", Joined(generated));
-        AssertNoPrefix(generated);
+        Assert.Equal(placeholder, Joined(generated));
     }
 
-    [Fact]
-    public void Composite_parameter_emits_unprefixed_field_names()
+    [Theory]
+    [InlineData("SELECT 1 WHERE @@id = @idx AND @id = 1", '@')]
+    [InlineData("SELECT x::id FROM t WHERE y = $id", '$')]
+    [InlineData("SELECT 1 WHERE a = @ID", '@')]
+    [InlineData("SELECT 1 WHERE a = @idx OR b = x@id", null)]
+    [InlineData("SELECT @@id", null)]
+    public void Placeholder_sigil_is_found_as_a_whole_word(string sql, char? expected)
+    {
+        Assert.Equal(expected, OrmGenerator.FindPlaceholderSigil(sql, "id"));
+    }
+
+    [Theory]
+    [InlineData(null, "@id,@total_Amount,@total_Currency")]
+    [InlineData("PostgreSql", "id,total_Amount,total_Currency")]
+    public void Composite_parameter_fields_are_named_per_dialect(string? dialect, string expected)
     {
         var generated = Generate("""
             [Command("UPDATE Orders SET Amount = @total_Amount, Currency = @total_Currency WHERE Id = @id", Kind = CommandKind.NonQuery)]
             public partial Task<int> UpdateAsync(int id, Money total, CancellationToken ct);
-            """);
+            """, dialect);
 
-        Assert.Equal("id,total_Amount,total_Currency", Joined(generated, sorted: true));
-        AssertNoPrefix(generated);
+        Assert.Equal(expected, Joined(generated, sorted: true));
     }
 
-    [Fact]
-    public void Identity_command_emits_unprefixed_name()
+    [Theory]
+    [InlineData(null, "@customerId")]
+    [InlineData("PostgreSql", "customerId")]
+    public void Identity_command_is_named_per_dialect(string? dialect, string expected)
     {
         var generated = Generate("""
             [Command("INSERT INTO Orders (CustomerId) VALUES (@customerId) RETURNING Id", Kind = CommandKind.Identity)]
             public partial Task<int> InsertAsync(int customerId, CancellationToken ct);
-            """);
+            """, dialect);
 
-        Assert.Equal("customerId", Joined(generated));
+        Assert.Equal(expected, Joined(generated));
+    }
+
+    // A procedure's CommandText holds no placeholder, so without a declared dialect the
+    // names stay bare, and SqlServer gets the `@` its own parameter list writes.
+    [Theory]
+    [InlineData(null, "customerId,newOrderId")]
+    [InlineData("SqlServer", "@customerId,@newOrderId")]
+    public void Stored_procedure_parameters_are_named_per_dialect(string? dialect, string expected)
+    {
+        Assert.Equal(expected, Joined(Generate(StoredProcedure, dialect)));
     }
 
     [Fact]
-    public void Stored_procedure_with_output_parameter_emits_unprefixed_names()
+    public void BulkInsert_names_carry_the_sigil_the_built_SQL_writes()
     {
-        var generated = Generate("""
-            [StoredProcedure("usp_InsertOrder")]
-            public partial Task<(OrderRow Result, int NewOrderId)> InsertAsync(
-                int customerId, int newOrderId, CancellationToken ct);
-            """);
-
-        Assert.Equal("customerId,newOrderId", Joined(generated));
-    }
-
-    [Fact]
-    public void BulkInsert_emits_unprefixed_row_indexed_names()
-    {
-        // The SQL text the chunk loop builds keeps the author's `@` placeholder;
-        // only the ParameterName side drops it.
         var generated = Generate("""
             [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@CustomerId, @Total)", Kind = CommandKind.BulkInsert)]
             public partial Task<int> InsertManyAsync(IReadOnlyList<BulkRow> rows, CancellationToken ct);
             """);
 
-        // #326 — each row reads its name from a static array the cache class
-        // fills once with `<placeholder>_<row>`.
-        Assert.Contains("Names_CustomerId_0 = BuildNames(\"CustomerId_\");", generated, System.StringComparison.Ordinal);
-        Assert.Contains("Names_Total_1 = BuildNames(\"Total_\");", generated, System.StringComparison.Ordinal);
+        // #326 — each row reads its name from a static array the cache class fills
+        // once with `@<placeholder>_<row>`, and the SQL is built from the same names.
+        Assert.Contains("Names_CustomerId_0 = BuildNames(\"@CustomerId_\");", generated, System.StringComparison.Ordinal);
+        Assert.Contains("Names_Total_1 = BuildNames(\"@Total_\");", generated, System.StringComparison.Ordinal);
+        Assert.Contains("sb.Append('(').Append(Names_CustomerId_0[i]).Append(\", \").Append(Names_Total_1[i])", generated, System.StringComparison.Ordinal);
         Assert.Contains(".ParameterName = __ZaoBulkInsert0_InsertManyAsync.Names_CustomerId_0[__i];", generated, System.StringComparison.Ordinal);
-        Assert.Contains(".ParameterName = __ZaoBulkInsert0_InsertManyAsync.Names_Total_1[__i];", generated, System.StringComparison.Ordinal);
-        Assert.DoesNotContain("BuildNames(\"@", generated, System.StringComparison.Ordinal);
-        Assert.DoesNotContain(".ParameterName = \"@", generated, System.StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void BulkInsert_names_are_bare_on_PostgreSql()
+    {
+        var generated = Generate("""
+            [Command("INSERT INTO Orders (CustomerId, Total) VALUES (@CustomerId, @Total)", Kind = CommandKind.BulkInsert)]
+            public partial Task<int> InsertManyAsync(IReadOnlyList<BulkRow> rows, CancellationToken ct);
+            """, "PostgreSql");
+
+        Assert.Contains("Names_CustomerId_0 = BuildNames(\"CustomerId_\");", generated, System.StringComparison.Ordinal);
+        Assert.Contains("sb.Append('(').Append('@').Append(Names_CustomerId_0[i]).Append(\", \").Append('@').Append(Names_Total_1[i])", generated, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildNames(\"@", generated, System.StringComparison.Ordinal);
+    }
+
+    // The override is stored bare, #219, and then named like any other parameter.
     [Theory]
-    [InlineData("@orderId")]
-    [InlineData(":orderId")]
-    [InlineData("$orderId")]
-    [InlineData("orderId")]
-    public void Param_name_override_is_emitted_without_its_sigil(string overrideName)
+    [InlineData("@orderId", null, "@orderId")]
+    [InlineData(":orderId", null, "@orderId")]
+    [InlineData("$orderId", null, "@orderId")]
+    [InlineData("orderId", null, "@orderId")]
+    [InlineData("@orderId", "PostgreSql", "orderId")]
+    public void Param_name_override_is_named_like_the_SQL_placeholder(string overrideName, string? dialect, string expected)
     {
         var generated = Generate($$"""
             [Query("SELECT 1 WHERE @orderId = 42")]
             public partial Task<int> SearchAsync([Param(Name = "{{overrideName}}")] int id, CancellationToken ct);
-            """);
+            """, dialect);
 
-        Assert.Equal("orderId", Joined(generated));
+        Assert.Equal(expected, Joined(generated));
     }
 }

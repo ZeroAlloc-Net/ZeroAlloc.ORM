@@ -64,6 +64,24 @@ public class InsertBench : IAsyncDisposable
         }
     }
 
+    // #351 — the same code over IAsyncDbConnection, the substrate ZA.ORM's generated method
+    // runs on. Its gap to HandWrittenAdoNet is AdoNet.Async's cost; ZA.ORM's gap to it is the
+    // generator's.
+    [Benchmark]
+    public async Task<int> HandWrittenAsyncDb()
+    {
+        var id = ++_nextId;
+        var cmd = _conn.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = "INSERT INTO Orders (Id, CustomerId, Total) VALUES (@id, @cust, @total)";
+            var pId = cmd.CreateParameter(); pId.ParameterName = "@id"; pId.Value = id; cmd.Parameters.Add(pId);
+            var pCust = cmd.CreateParameter(); pCust.ParameterName = "@cust"; pCust.Value = 100; cmd.Parameters.Add(pCust);
+            var pTotal = cmd.CreateParameter(); pTotal.ParameterName = "@total"; pTotal.Value = 9.99m; cmd.Parameters.Add(pTotal);
+            return await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+    }
+
     [Benchmark]
     public Task<int> Dapper_AOT()
     {
