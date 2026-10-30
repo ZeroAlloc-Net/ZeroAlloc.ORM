@@ -75,7 +75,7 @@ public class ZAO022Tests
 
         public sealed record Row(System.Guid Id, string Name);
 
-        public enum Status { Open, Closed }
+        public readonly record struct Code(int Value);
 
         """;
 
@@ -185,7 +185,7 @@ public class ZAO022Tests
             """);
 
         Assert.EndsWith(
-            "a tuple of result sets takes one element per result set, each a scalar, a row or a list of rows",
+            "a tuple of result sets takes one element per result set, each a scalar, a row, or a list of rows or scalars",
             diagnostic.GetMessage(CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
     }
 
@@ -193,12 +193,12 @@ public class ZAO022Tests
     public void Other_shapes_get_the_list_of_supported_shapes()
     {
         var diagnostic = SingleZao022("""
-                [Query("SELECT status FROM t")]
-                public partial Task<Status> GetStatusAsync(CancellationToken ct);
+                [Query("SELECT code FROM t")]
+                public partial Task<Code> GetCodeAsync(CancellationToken ct);
             """);
 
         Assert.EndsWith(
-            "supported shapes are a scalar such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
+            "supported shapes are a scalar or enum such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
                 + "a list of rows or scalars as List<T>, IReadOnlyList<T> or IList<T>, a tuple of result sets, "
                 + "a PostgreSQL array T[], or IAsyncEnumerable<TRow>",
             diagnostic.GetMessage(CultureInfo.InvariantCulture), System.StringComparison.Ordinal);

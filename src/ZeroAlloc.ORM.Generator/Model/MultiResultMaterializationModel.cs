@@ -10,13 +10,17 @@ internal enum MultiResultElementKind
     Scalar,
     Row,
     List,
+    // #410 — a list of a scalar: List<int>, List<string?>, List<Status>. One column
+    // per row, read through the scalar's convention; Columns holds that one column.
+    ScalarList,
 }
 
 // One tuple element's materialization plan. Mirrors the cache-safety contract of
 // MaterializationModel — strings + primitives + EquatableArray<ColumnBinding> — so the
 // surrounding QueryMethodModel stays equatable across incremental-generator runs.
 //
-//   Kind            -- discriminator: Scalar / Row / List (see MultiResultElementKind).
+//   Kind            -- discriminator: Scalar / Row / List / ScalarList (see
+//                      MultiResultElementKind).
 //   TupleFieldName  -- the element's name as declared in the tuple type
 //                      (e.g. "Head", "Lines"). Used by the emitter to render the
 //                      local variable suffix and for diagnostic context.
