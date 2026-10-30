@@ -346,20 +346,14 @@ internal sealed record QueryMethodModel(
     // a nullable result returns null as before. Always false off the LINQ path, so the
     // [Query] scalar emit is unchanged.
     bool LinqThrowsOnNoElements = false,
-    // [LinqQuery] — for a tuple companion's batch, the SQL names of the parameters each
-    // statement renders, in statement order. Each batch command then binds only its own
-    // statement's parameters. Default off the LINQ multi-result path: every batch command binds
-    // every parameter, as before.
-    EquatableArray<EquatableArray<string>> LinqStatementParameters = default,
-    // [LinqQuery] — for a tuple companion's batch, each statement's rendered SQL, in order.
-    // The batch emit uses them as the commands' CommandText instead of splitting Sql again,
-    // so the batch never depends on SqlStatementSplitter reading the rendered SQL back.
-    // Default off the LINQ multi-result path, which goes on splitting Sql.
-    EquatableArray<string> LinqStatements = default,
     // [LinqCommand(ThrowOnNoRows = true)] -- the message of the ZeroAllocOrmConcurrencyException
     // the non-query emit throws when ExecuteNonQueryAsync reports no rows affected, naming the
     // type and the method. Null for every other method, whose emit is unchanged.
     string? LinqNoRowsMessage = null,
+    // #427 — [LinqQuery] list shapes: the bound of a literal Take(n), capped, as the
+    // capacity of the List the emit fills, so a page of up to n rows never grows the list.
+    // Zero for every other method, whose emit keeps `new List<T>()`.
+    int LinqListCapacity = 0,
     // #351 — how the emit spells each ParameterName, from the repository's declared
     // dialect. Emit-only: RenderRepository sets it once per method, so it plays no part
     // in incremental caching. The default is the rule for a repository without a

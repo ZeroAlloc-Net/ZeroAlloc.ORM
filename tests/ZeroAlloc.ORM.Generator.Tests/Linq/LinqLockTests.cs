@@ -149,8 +149,8 @@ public class LinqLockTests
                      Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).Select(e => new ExecutionLine(e.Id, e.InputTokens)));
             }
             """,
-            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"Id\" = @id LIMIT 1 FOR UPDATE\"",
-            "SELECT \"Id\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" = @id\"");
+            "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"Id\" = @id LIMIT 1 FOR UPDATE;\\nSELECT \"Id\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" = @id\"",
+            "__cmd.Transaction = @tx;");
     }
 
     // PostgreSQL rejects FOR UPDATE with GROUP BY and with aggregates, and a lock means nothing

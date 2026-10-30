@@ -25,7 +25,7 @@ partial class TaskStore
             __p_skip.Value = @skip;
             __cmd.Parameters.Add(__p_skip);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>();
+            var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>(10);
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 try

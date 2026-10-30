@@ -92,6 +92,32 @@ internal static class HandWrittenAsyncDb
         }
     }
 
+    // #427 — the two statements as one `;`-joined command, with no CanCreateBatch branch: the
+    // shape BatchMode.Auto emits on a PostgreSQL repository.
+    public static async Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetOrderWithLinesJoinedAsync(
+        IAsyncDbConnection connection, WorkloadNames names, int id)
+    {
+        var cmd = connection.CreateCommand();
+        await using (cmd.ConfigureAwait(false))
+        {
+            cmd.CommandText = WorkloadSql.MultiResult;
+            AddParameter(cmd.CreateParameter(), cmd.Parameters, names.Id, id);
+            var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+            await using (((IAsyncDisposable)reader).ConfigureAwaitAsDisposable())
+            {
+                if (!await reader.ReadAsync().ConfigureAwait(false)) return null;
+                var head = new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
+                await reader.NextResultAsync().ConfigureAwait(false);
+                var lines = new List<OrderLineRow>();
+                while (await reader.ReadAsync().ConfigureAwait(false))
+                {
+                    lines.Add(new OrderLineRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt32(3)));
+                }
+                return (head, lines);
+            }
+        }
+    }
+
     private static void AddParameter(IDbDataParameter parameter, IDataParameterCollection parameters, string name, object value)
     {
         parameter.ParameterName = name;

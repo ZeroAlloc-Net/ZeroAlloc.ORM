@@ -17,174 +17,78 @@ partial class TaskStore
         if (__openedHere) await __conn.OpenAsync(ct).ConfigureAwait(false);
         try
         {
-            if (__conn.CanCreateBatch)
+            await using var __cmd = __conn.CreateCommand();
+            __cmd.CommandText = __sql0_Page;
+            var __p_skip = __cmd.CreateParameter();
+            __p_skip.ParameterName = "skip";
+            __p_skip.DbType = global::System.Data.DbType.Int32;
+            __p_skip.Value = @skip;
+            __cmd.Parameters.Add(__p_skip);
+            var __p_take = __cmd.CreateParameter();
+            __p_take.ParameterName = "take";
+            __p_take.DbType = global::System.Data.DbType.Int32;
+            __p_take.Value = @take;
+            __cmd.Parameters.Add(__p_take);
+            await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            var __elem0 = new global::System.Collections.Generic.List<global::TestApp.TaskHead>();
+            while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                await using var __batch = __conn.CreateBatch();
-
-                var __cmd0 = __batch.CreateBatchCommand();
-                __cmd0.CommandText = "SELECT \"Id\", \"Title\" FROM \"Tasks\" ORDER BY \"CreatedAt\" DESC, \"Id\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)";
-                var __p_skip_0 = __cmd0.CreateParameter();
-                __p_skip_0.ParameterName = "skip";
-                __p_skip_0.DbType = global::System.Data.DbType.Int32;
-                __p_skip_0.Value = @skip;
-                __cmd0.Parameters.Add(__p_skip_0);
-                var __p_take_0 = __cmd0.CreateParameter();
-                __p_take_0.ParameterName = "take";
-                __p_take_0.DbType = global::System.Data.DbType.Int32;
-                __p_take_0.Value = @take;
-                __cmd0.Parameters.Add(__p_take_0);
-                __batch.BatchCommands.Add(__cmd0);
-
-                var __cmd1 = __batch.CreateBatchCommand();
-                __cmd1.CommandText = "SELECT \"Id\", \"TaskId\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" IN (SELECT \"Id\" FROM \"Tasks\" ORDER BY \"CreatedAt\" DESC, \"Id\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)) ORDER BY \"ExecutedAt\", \"Id\"";
-                var __p_skip_1 = __cmd1.CreateParameter();
-                __p_skip_1.ParameterName = "skip";
-                __p_skip_1.DbType = global::System.Data.DbType.Int32;
-                __p_skip_1.Value = @skip;
-                __cmd1.Parameters.Add(__p_skip_1);
-                var __p_take_1 = __cmd1.CreateParameter();
-                __p_take_1.ParameterName = "take";
-                __p_take_1.DbType = global::System.Data.DbType.Int32;
-                __p_take_1.Value = @take;
-                __cmd1.Parameters.Add(__p_take_1);
-                __batch.BatchCommands.Add(__cmd1);
-
-                await using var __reader = await __batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
-                var __elem0 = new global::System.Collections.Generic.List<global::TestApp.TaskHead>();
-                while (await __reader.ReadAsync(ct).ConfigureAwait(false))
+                try
                 {
-                    try
-                    {
-                        __elem0.Add(new global::TestApp.TaskHead(
-                            __reader.GetGuid(0),
-                            __reader.GetString(1)));
-                    }
-                    catch (global::System.Exception __ex) when (__NullColumn0(__reader, __ex) is { } __nullColumn)
-                    {
-                        throw __nullColumn;
-                    }
-
-                    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-                    static global::System.Exception? __NullColumn0(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
-                    {
-                        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
-                            return null;
-                        if (__r.IsDBNull(0))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.TaskHead' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(1))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'Title' of 'TestApp.TaskHead' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
-                        return null;
-                    }
+                    __elem0.Add(new global::TestApp.TaskHead(
+                        __reader.GetGuid(0),
+                        __reader.GetString(1)));
+                }
+                catch (global::System.Exception __ex) when (__NullColumn0(__reader, __ex) is { } __nullColumn)
+                {
+                    throw __nullColumn;
                 }
 
-                if (!await __reader.NextResultAsync(ct).ConfigureAwait(false))
-                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Expected 2 result sets; got " + 1 + ".");
-                var __elem1 = new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>();
-                while (await __reader.ReadAsync(ct).ConfigureAwait(false))
+                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                static global::System.Exception? __NullColumn0(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
                 {
-                    try
-                    {
-                        __elem1.Add(new global::TestApp.ExecutionLine(
-                            __reader.GetGuid(0),
-                            __reader.GetGuid(1),
-                            __reader.GetInt32(2)));
-                    }
-                    catch (global::System.Exception __ex) when (__NullColumn1(__reader, __ex) is { } __nullColumn)
-                    {
-                        throw __nullColumn;
-                    }
-
-                    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-                    static global::System.Exception? __NullColumn1(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
-                    {
-                        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
-                            return null;
-                        if (__r.IsDBNull(0))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(1))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'TaskId' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(2))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(2) + "' is NULL, but parameter 'InputTokens' of 'TestApp.ExecutionLine' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
                         return null;
-                    }
+                    if (__r.IsDBNull(0))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.TaskHead' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
+                    if (__r.IsDBNull(1))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'Title' of 'TestApp.TaskHead' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
+                    return null;
                 }
-                return (__elem0, __elem1);
             }
-            else
+
+            if (!await __reader.NextResultAsync(ct).ConfigureAwait(false))
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Expected 2 result sets; got " + 1 + ".");
+            var __elem1 = new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>();
+            while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                await using var __cmd = __conn.CreateCommand();
-                __cmd.CommandText = __sql0_Page;
-                var __p_skip = __cmd.CreateParameter();
-                __p_skip.ParameterName = "skip";
-                __p_skip.DbType = global::System.Data.DbType.Int32;
-                __p_skip.Value = @skip;
-                __cmd.Parameters.Add(__p_skip);
-                var __p_take = __cmd.CreateParameter();
-                __p_take.ParameterName = "take";
-                __p_take.DbType = global::System.Data.DbType.Int32;
-                __p_take.Value = @take;
-                __cmd.Parameters.Add(__p_take);
-                await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-                var __elem0 = new global::System.Collections.Generic.List<global::TestApp.TaskHead>();
-                while (await __reader.ReadAsync(ct).ConfigureAwait(false))
+                try
                 {
-                    try
-                    {
-                        __elem0.Add(new global::TestApp.TaskHead(
-                            __reader.GetGuid(0),
-                            __reader.GetString(1)));
-                    }
-                    catch (global::System.Exception __ex) when (__NullColumn0(__reader, __ex) is { } __nullColumn)
-                    {
-                        throw __nullColumn;
-                    }
-
-                    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-                    static global::System.Exception? __NullColumn0(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
-                    {
-                        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
-                            return null;
-                        if (__r.IsDBNull(0))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.TaskHead' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(1))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'Title' of 'TestApp.TaskHead' is the non-nullable type 'string'. Declare it as 'string?' to receive null.", __inner);
-                        return null;
-                    }
+                    __elem1.Add(new global::TestApp.ExecutionLine(
+                        __reader.GetGuid(0),
+                        __reader.GetGuid(1),
+                        __reader.GetInt32(2)));
+                }
+                catch (global::System.Exception __ex) when (__NullColumn1(__reader, __ex) is { } __nullColumn)
+                {
+                    throw __nullColumn;
                 }
 
-                if (!await __reader.NextResultAsync(ct).ConfigureAwait(false))
-                    throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Expected 2 result sets; got " + 1 + ".");
-                var __elem1 = new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>();
-                while (await __reader.ReadAsync(ct).ConfigureAwait(false))
+                [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                static global::System.Exception? __NullColumn1(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
                 {
-                    try
-                    {
-                        __elem1.Add(new global::TestApp.ExecutionLine(
-                            __reader.GetGuid(0),
-                            __reader.GetGuid(1),
-                            __reader.GetInt32(2)));
-                    }
-                    catch (global::System.Exception __ex) when (__NullColumn1(__reader, __ex) is { } __nullColumn)
-                    {
-                        throw __nullColumn;
-                    }
-
-                    [global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-                    static global::System.Exception? __NullColumn1(global::System.Data.Async.IAsyncDataRecord __r, global::System.Exception __inner)
-                    {
-                        if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
-                            return null;
-                        if (__r.IsDBNull(0))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(1))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'TaskId' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
-                        if (__r.IsDBNull(2))
-                            return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(2) + "' is NULL, but parameter 'InputTokens' of 'TestApp.ExecutionLine' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                    if (__inner is not (global::System.InvalidCastException or global::System.InvalidOperationException or global::System.Data.SqlTypes.SqlNullValueException))
                         return null;
-                    }
+                    if (__r.IsDBNull(0))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(0) + "' is NULL, but parameter 'Id' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
+                    if (__r.IsDBNull(1))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(1) + "' is NULL, but parameter 'TaskId' of 'TestApp.ExecutionLine' is the non-nullable type 'System.Guid'. Declare it as 'System.Guid?' to receive null.", __inner);
+                    if (__r.IsDBNull(2))
+                        return new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Column '" + __r.GetName(2) + "' is NULL, but parameter 'InputTokens' of 'TestApp.ExecutionLine' is the non-nullable type 'int'. Declare it as 'int?' to receive null.", __inner);
+                    return null;
                 }
-                return (__elem0, __elem1);
             }
+            return (__elem0, __elem1);
         }
         finally
         {

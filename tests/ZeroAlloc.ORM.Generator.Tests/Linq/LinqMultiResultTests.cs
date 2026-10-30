@@ -10,7 +10,7 @@ namespace ZeroAlloc.ORM.Generator.Tests.Linq;
 
 // A parent with its children: a companion returns a tuple of IQuery<T>, one complete chain per
 // element, and the method returns the matching tuple through the [Query] multi-result path. Each
-// element is its own statement of one batch; a Row element is the first row or null, a List
+// element is its own statement of one `;`-joined command; a Row element is the first row or null, a List
 // element every row, a Scalar element the value of a terminal.
 public class LinqMultiResultTests
 {
@@ -80,7 +80,7 @@ public class LinqMultiResultTests
         """;
 
     // Row + List: the head is the first row or null, under LIMIT 1; the lines are every row.
-    // Both statements run as one batch, each with its own CommandText.
+    // #427 — both statements run as one `;`-joined command, not an NpgsqlBatch.
     [Fact]
     public void Head_and_lines_by_id()
     {
@@ -101,8 +101,9 @@ public class LinqMultiResultTests
             """,
             "// LINQ: TaskStore.WithExecutionsQuery",
             "SELECT \"Id\", \"Title\" FROM \"Tasks\" WHERE \"Id\" = @id LIMIT 1;\\nSELECT \"Id\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" = @id ORDER BY \"ExecutedAt\"",
-            "__cmd1.CommandText = \"SELECT \"Id\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" = @id ORDER BY \"ExecutedAt\"\";",
-            "global::TestApp.TaskHead? __elem0 = null;");
+            "__cmd.CommandText = __sql0_WithExecutions;",
+            "global::TestApp.TaskHead? __elem0 = null;",
+            generated => Assert.DoesNotContain("CreateBatch", generated, StringComparison.Ordinal));
     }
 
     // Row + List + Scalar: a Count is always one value; a non-nullable Average over no rows
@@ -152,10 +153,9 @@ public class LinqMultiResultTests
             }
             """,
             "WHERE \"SessionId\" = @id AND \"Role\" <> @role ORDER BY \"CreatedAt\", \"Id\"",
-            "var __p_role_1 = __cmd1.CreateParameter();",
-            "var __p_id_0 = __cmd0.CreateParameter();",
-            "var __p_id_1 = __cmd1.CreateParameter();",
-            generated => Assert.DoesNotContain("__p_role_0", generated, StringComparison.Ordinal));
+            "var __p_role = __cmd.CreateParameter();",
+            "var __p_id = __cmd.CreateParameter();",
+            "__cmd.CommandText = __sql0_Session;");
     }
 
     // Every terminal value a single LINQ method reads as a scalar is a tuple element too, emitted
@@ -233,9 +233,9 @@ public class LinqMultiResultTests
             "WHERE \"TaskId\" = @id ORDER BY \"ExecutedAt\"");
     }
 
-    // A parameter only the head chain reads binds on the head's command alone.
+    // #427 — the joined command binds each parameter once, whichever statements read it.
     [Fact]
-    public void Parameter_used_only_by_parent_statement()
+    public void Each_parameter_binds_once_on_the_joined_command()
     {
         var (result, _) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + """
             [Dialect(SqlDialect.PostgreSql)]
@@ -252,9 +252,65 @@ public class LinqMultiResultTests
 
         Assert.Empty(result.Results[0].Diagnostics);
         var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString()));
-        Assert.Contains("var __p_title_0 = __cmd0.CreateParameter();", generated, StringComparison.Ordinal);
-        Assert.DoesNotContain("__p_title_1", generated, StringComparison.Ordinal);
-        Assert.Contains("var __p_id_1 = __cmd1.CreateParameter();", generated, StringComparison.Ordinal);
+        Assert.Equal(1, Occurrences(generated, "var __p_title = __cmd.CreateParameter();"));
+        Assert.Equal(1, Occurrences(generated, "var __p_id = __cmd.CreateParameter();"));
+        Assert.DoesNotContain("__p_id_1", generated, StringComparison.Ordinal);
+    }
+
+    // #427 — a literal Take(n) sizes the list the emit fills, on every list shape: a list of
+    // rows, a list of scalars and both tuple element kinds. A Take past the cap sizes the list
+    // at the cap; a parameter Take, or no Take, keeps the unsized list.
+    [Fact]
+    public void Literal_take_sizes_the_list()
+    {
+        var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(TopQuery))]
+                public partial Task<List<TaskHead>> Top(CancellationToken ct);
+
+                [LinqQuery(nameof(TopIdsQuery))]
+                public partial Task<List<Guid>> TopIds(CancellationToken ct);
+
+                [LinqQuery(nameof(ManyQuery))]
+                public partial Task<IReadOnlyList<TaskHead>> Many(CancellationToken ct);
+
+                [LinqQuery(nameof(PageQuery))]
+                public partial Task<List<TaskHead>> Page(int take, CancellationToken ct);
+
+                [LinqQuery(nameof(WithExecutionsQuery))]
+                public partial Task<(List<ExecutionLine> Executions, List<int> Tokens, List<ExecutionLine> All)> WithExecutions(Guid id, CancellationToken ct);
+
+                private static IQuery<TaskHead> TopQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(25).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static IQuery<Guid> TopIdsQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(7).Select(t => t.Id);
+
+                private static IQuery<TaskHead> ManyQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(50000).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static IQuery<TaskHead> PageQuery(int take) =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(take).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static (IQuery<ExecutionLine>, IQuery<int>, IQuery<ExecutionLine>) WithExecutionsQuery(Guid id) =>
+                    (Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Take(10).Select(e => new ExecutionLine(e.Id, e.InputTokens)),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Take(3).Select(e => e.InputTokens),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+            }
+            """);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString()));
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>(25);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::System.Guid>(7);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>(1024);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>();", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>(10);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<int>(3);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>();", generated, StringComparison.Ordinal);
     }
 
     // A nullable outer tuple keeps [Query]'s meaning: null when the first result set is empty.
@@ -275,7 +331,7 @@ public class LinqMultiResultTests
             """,
             "LIMIT 1;\\nSELECT",
             "    return null;",
-            "if (__conn.CanCreateBatch)",
+            "__cmd.CommandText = __sql0_WithExecutions;",
             "await __reader.NextResultAsync(ct)");
     }
 
@@ -376,7 +432,7 @@ public class LinqMultiResultTests
         Assert.Equal("(IQuery<TaskHead>, int)", located);
     }
 
-    // Every batch command binds a parameter the same way, so an enum parameter compared with a
+    // A parameter binds one way for every statement, so an enum parameter compared with a
     // column that stores names in one statement and integers in another cannot bind for both.
     [Fact]
     public void Enum_parameter_stored_differently_across_statements_reports_ZAO111()
@@ -429,6 +485,14 @@ public class LinqMultiResultTests
         Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
         var span = diagnostic.Location.SourceSpan;
         return (diagnostic, tree.ToString().Substring(span.Start, span.Length));
+    }
+
+    private static int Occurrences(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
+            count++;
+        return count;
     }
 
     private static void VerifyCompiled(

@@ -15,8 +15,8 @@ namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 // allocate: exact, with no tolerance, so one more object per call fails the gate.
 //
 // The hand-written baselines bind bare names, which Npgsql resolves without a Substring, and
-// read the multi-result workload through a batch, as the generated code does where the
-// provider supports one.
+// read the multi-result workload as one `;`-joined command, as the generated code does on a
+// PostgreSQL repository since #427.
 [Collection(PostgresAllocationGateGroup.Name)]
 public class PostgresWorkloadAllocationGateTests
 {
@@ -24,15 +24,18 @@ public class PostgresWorkloadAllocationGateTests
 
     // Unlike on Sqlite, the generator gap is not zero here: these calls complete
     // asynchronously, so each async method's state machine is boxed, and the generated
-    // method's is larger than the hand-written one's. The state-machine boxes and the
-    // connection-open `finally` are #427. Since AdoNet.Async 1.5.6 the adapter's reader
-    // wrapper pools its state machine, so a read's total gap is 128 B below 1.5.5's.
+    // method's is larger than the hand-written one's. #427 measured the connection-open
+    // `finally` at 41 B a call and kept it: removing it costs 120 B on a closed connection.
+    // Since AdoNet.Async 1.5.6 the adapter's reader wrapper pools its state machine, so a
+    // read's total gap is 128 B below 1.5.5's. Since #427 the multi-result read runs one
+    // joined command instead of a batch, against joined baselines: its gaps fell from 48 B
+    // and 208 B.
     private const long SingleRowReadGeneratorGap = 24;
     private const long SingleRowReadTotalGap = 104;
     private const long InsertGeneratorGap = 32;
     private const long InsertTotalGap = 80;
-    private const long MultiResultGeneratorGap = 48;
-    private const long MultiResultTotalGap = 208;
+    private const long MultiResultGeneratorGap = 40;
+    private const long MultiResultTotalGap = 120;
 
     private int _nextId;
 
@@ -87,13 +90,11 @@ public class PostgresWorkloadAllocationGateTests
             var repo = new PostgresWorkloadRepo(fx.Connection);
             var raw = fx.RawConnection;
             var conn = fx.Connection;
-            conn.CanCreateBatch.Should().BeTrue("the generated method and both baselines read through a batch");
-
             var bytes = await MeasureAsync(
                 () => new ValueTask<(OrderRow Head, List<OrderLineRow> Lines)?>(
-                    HandWrittenAdoNet.GetOrderWithLinesBatchAsync(raw, WorkloadNames.Bare, WorkloadSql.HeadId)),
+                    HandWrittenAdoNet.GetOrderWithLinesAsync(raw, WorkloadNames.Bare, WorkloadSql.HeadId)),
                 () => new ValueTask<(OrderRow Head, List<OrderLineRow> Lines)?>(
-                    HandWrittenAsyncDb.GetOrderWithLinesAsync(conn, WorkloadNames.Bare, WorkloadSql.HeadId)),
+                    HandWrittenAsyncDb.GetOrderWithLinesJoinedAsync(conn, WorkloadNames.Bare, WorkloadSql.HeadId)),
                 () => new ValueTask<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?>(
                     repo.GetOrderWithLinesAsync(WorkloadSql.HeadId, CancellationToken.None))).ConfigureAwait(false);
             bytes.ShouldFit("multi-result read", MultiResultGeneratorGap, MultiResultTotalGap);

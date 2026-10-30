@@ -62,7 +62,7 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
 
     // #351 — bare names: Npgsql strips a leading `@` with a Substring, so a bare name is its
     // cheapest spelling, the one ZA.ORM binds on [Dialect(SqlDialect.PostgreSql)]. This row
-    // runs one `;`-joined command; HandWrittenNpgsqlBatch runs the batch ZA.ORM uses.
+    // runs one `;`-joined command, as ZA.ORM's BatchMode.Auto does on PostgreSQL since #427.
     [Benchmark(Baseline = true)]
     public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenAdoNet()
     {
@@ -95,8 +95,8 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
         }
     }
 
-    // #351 — the two statements as an NpgsqlBatch, the path ZA.ORM's BatchMode.Auto takes on
-    // Npgsql, whose connection reports CanCreateBatch.
+    // #351 — the two statements as an NpgsqlBatch, the path ZA.ORM's BatchMode.Always takes;
+    // Auto took it on Npgsql, whose connection reports CanCreateBatch, until #427.
     [Benchmark]
     public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenNpgsqlBatch()
     {
@@ -132,8 +132,8 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
     }
 
     // #351 — the batch over IAsyncDbConnection, the substrate ZA.ORM's generated method runs
-    // on. Its gap to HandWrittenNpgsqlBatch is AdoNet.Async's cost; ZA.ORM's gap to it is the
-    // generator's.
+    // on. Its gap to HandWrittenNpgsqlBatch is AdoNet.Async's cost; ZeroAlloc_ORM_Batch's gap
+    // to it is the generator's. The joined rows' substrate gap is gated in the integration tests.
     [Benchmark]
     public async Task<(OrderRow Head, List<OrderLineRow> Lines)?> HandWrittenAsyncDb()
     {
@@ -212,4 +212,9 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
     [Benchmark]
     public Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> ZeroAlloc_ORM()
         => _repo.GetOrderWithLinesAsync(1, default);
+
+    // #427 — BatchMode.Always: the NpgsqlBatch that Auto ran on PostgreSQL before #427.
+    [Benchmark]
+    public Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> ZeroAlloc_ORM_Batch()
+        => _repo.GetOrderWithLinesBatchAsync(1, default);
 }

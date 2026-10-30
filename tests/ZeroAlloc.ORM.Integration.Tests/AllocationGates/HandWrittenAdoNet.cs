@@ -63,38 +63,6 @@ internal static class HandWrittenAdoNet
         }
     }
 
-    // A DbBatch of the two statements, the shape the generated code runs where the
-    // provider supports batches, as Npgsql does.
-    public static async Task<(OrderRow Head, List<OrderLineRow> Lines)?> GetOrderWithLinesBatchAsync(
-        DbConnection connection, WorkloadNames names, int id)
-    {
-        var batch = connection.CreateBatch();
-        await using (batch.ConfigureAwait(false))
-        {
-            var headCmd = batch.CreateBatchCommand();
-            headCmd.CommandText = WorkloadSql.HeadStatement;
-            AddParameter(headCmd.CreateParameter(), headCmd.Parameters, names.Id, id);
-            batch.BatchCommands.Add(headCmd);
-            var linesCmd = batch.CreateBatchCommand();
-            linesCmd.CommandText = WorkloadSql.LinesStatement;
-            AddParameter(linesCmd.CreateParameter(), linesCmd.Parameters, names.Id, id);
-            batch.BatchCommands.Add(linesCmd);
-            var reader = await batch.ExecuteReaderAsync().ConfigureAwait(false);
-            await using (reader.ConfigureAwait(false))
-            {
-                if (!await reader.ReadAsync().ConfigureAwait(false)) return null;
-                var head = new OrderRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetDecimal(2));
-                await reader.NextResultAsync().ConfigureAwait(false);
-                var lines = new List<OrderLineRow>();
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    lines.Add(new OrderLineRow(reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetInt32(3)));
-                }
-                return (head, lines);
-            }
-        }
-    }
-
     private static void AddParameter(DbParameter parameter, DbParameterCollection parameters, string name, object value)
     {
         parameter.ParameterName = name;

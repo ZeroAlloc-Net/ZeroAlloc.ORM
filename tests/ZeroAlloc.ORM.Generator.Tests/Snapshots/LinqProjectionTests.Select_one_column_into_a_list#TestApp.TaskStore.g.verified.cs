@@ -70,7 +70,7 @@ partial class TaskStore
             __p_min.Value = @min;
             __cmd.Parameters.Add(__p_min);
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            var __list = new global::System.Collections.Generic.List<int>();
+            var __list = new global::System.Collections.Generic.List<int>(10);
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 try

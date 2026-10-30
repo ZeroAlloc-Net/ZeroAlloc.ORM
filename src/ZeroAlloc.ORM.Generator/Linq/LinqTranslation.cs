@@ -128,9 +128,6 @@ internal sealed record LinqBoundQuery(
     EquatableArray<string> NameBoundEnumParameters,
     EquatableArray<DiagnosticInfo> Diagnostics)
 {
-    /// <summary>Each statement's rendered SQL, in order; <see cref="Sql"/> is these joined.</summary>
-    public EquatableArray<string> Statements { get; init; }
-
     /// <summary>
     /// The parameters compared with or set into a column whose store type the map knows, each at
     /// its first such use: a jsonb column, as a <c>[Json]</c> parameter binds, or a <c>DateTime</c>
