@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.12.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.2...v2.12.0) (2026-10-30)
+
+
+### Features
+
+* LINQ Select of one value into a list, and non-null date Min and Max ([#440](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/440)) ([e916d0b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e916d0b97daa01e401c8e591cfc030938f2336a7)), closes [#426](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/426)
+
+
+### Tests
+
+* measure the PostgreSQL allocation gates on the path most calls take ([#437](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/437)) ([e303887](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e3038870f39f7adc2e8e1ca34e245a49e2a932ad)), closes [#434](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/434)
+
 ## [2.11.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.1...v2.11.2) (2026-10-30)
 
 
