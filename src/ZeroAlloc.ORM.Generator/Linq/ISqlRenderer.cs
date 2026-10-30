@@ -36,6 +36,7 @@ internal sealed class SqlNameScope
     private readonly HashSet<SqlExpression> _projected = new();
     private ImmutableHashSet<string> _nameBoundParameters = ImmutableHashSet<string>.Empty;
     private ImmutableHashSet<string> _xidParameters = ImmutableHashSet<string>.Empty;
+    private ImmutableDictionary<string, SqlStoreType> _storeTypes = ImmutableDictionary<string, SqlStoreType>.Empty;
 
     /// <param name="map">The FROM entity's map.</param>
     /// <param name="entityDisplay">The FROM entity as messages show it.</param>
@@ -140,6 +141,16 @@ internal sealed class SqlNameScope
     {
         get => _parent?.XidParameters ?? _xidParameters;
         set => _xidParameters = value;
+    }
+
+    /// <summary>
+    /// The store type each parameter binds with explicitly, by SQL name, decided by
+    /// <see cref="ParameterStoreTypes"/> before the render; a null test's cast follows it.
+    /// </summary>
+    public ImmutableDictionary<string, SqlStoreType> StoreTypes
+    {
+        get => _parent?.StoreTypes ?? _storeTypes;
+        set => _storeTypes = value;
     }
 
     /// <summary>
@@ -339,8 +350,17 @@ internal sealed class SqlNameScope
     /// through the source its alias names.
     /// </summary>
     public bool IsTimestampTz(SqlMemberExpression member)
+        => DateTimeStorageOf(member) == DateTimeColumnStorage.TimestampTz;
+
+    /// <summary>
+    /// How the member's <c>DateTime</c> column is stored, through the source its alias names:
+    /// <see cref="DateTimeColumnStorage.None"/> for a member the map has no column for, or whose
+    /// column is not a <c>DateTime</c>.
+    /// </summary>
+    public DateTimeColumnStorage DateTimeStorageOf(SqlMemberExpression member)
         => SourceOf(member.SourceAlias).Columns.TryGetValue(member.Member, out var column)
-            && column.DateTimeStorage == DateTimeColumnStorage.TimestampTz;
+            ? column.DateTimeStorage
+            : DateTimeColumnStorage.None;
 
     private Source SourceOf(string? alias)
     {

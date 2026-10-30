@@ -12,6 +12,6 @@ internal static class NpgsqlStub
 {
     public const string Source = """
         namespace Npgsql { public class NpgsqlParameter { public NpgsqlTypes.NpgsqlDbType NpgsqlDbType { get; set; } } }
-        namespace NpgsqlTypes { public enum NpgsqlDbType { Jsonb = 14, Xid = 42 } }
+        namespace NpgsqlTypes { public enum NpgsqlDbType { Timestamp = 21, TimestampTz = 26, Jsonb = 14, Xid = 42 } }
         """;
 }

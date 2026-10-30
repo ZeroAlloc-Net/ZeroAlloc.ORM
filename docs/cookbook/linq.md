@@ -86,13 +86,14 @@ internal static class TaskMap;
   without the attribute, `[ColumnMap(nameof(E.P), EnumAsString = true)]` stores this one column by
   name; elsewhere the enum keeps its integer storage.
 - A `DateTime` column may be a `timestamp` or a `timestamptz`, and the entity does not say which.
-  Declare it so `.Date` is exact, see [GroupBy](#groupby): for every `DateTime` column in the
-  assembly with `[assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]`, or
-  for one with `[ColumnMap(nameof(E.P), DateTimeStorage = DateTimeStorage.TimestampTz)]`. A
-  column's own setting other than `Default` wins over the assembly default, so
-  `DateTimeStorage.Timestamp` marks one `timestamp` column under a `TimestampTz` default.
-  A `DateTimeStorage` of `Timestamp` or `TimestampTz` on a property that is not a `DateTime` or
-  `DateTime?` reports ZAO106.
+  Declare it so `.Date` is exact, see [GroupBy](#groupby), and so a parameter compared with or set
+  into the column binds as its type, see [DateTime parameters](#datetime-parameters): for every
+  `DateTime` column in the assembly with
+  `[assembly: EntityMapDefaults(DateTimeStorage = DateTimeStorage.TimestampTz)]`, or for one with
+  `[ColumnMap(nameof(E.P), DateTimeStorage = DateTimeStorage.TimestampTz)]`. A column's own setting
+  other than `Default` wins over the assembly default, so `DateTimeStorage.Timestamp` marks one
+  `timestamp` column under a `TimestampTz` default. A `DateTimeStorage` of `Timestamp` or
+  `TimestampTz` on a property that is not a `DateTime` or `DateTime?` reports ZAO106.
 
   ```csharp
   // EF Core's Npgsql default
@@ -565,9 +566,41 @@ PostgreSQL has to know a parameter's type even where it only meets `IS NULL`. So
 gets a `DbType` derived from its type, such as `String`, `Int32`, `Int64` or `Guid`. A parameter
 without one, such as an array, `DateTime`, `DateOnly` or `TimeSpan`, gets a cast on its null test
 instead: `@ids::uuid[] IS NULL`. A nullable one projected by `Select` is cast there too:
-`SELECT "Id", @at::timestamptz`. A nullable parameter of a type with no such cast, such as `byte[]?`,
-reports ZAO102 in a null test or a projection. A `[Param(DbType = ...)]` you write on the method's
-parameter wins over the generated type, and ZAO015 checks it against the dialect as for `[Query]`.
+`SELECT "Id", @at::timestamptz`. A `DateTime` parameter that binds as a declared column's type is
+cast to that type, `@at::timestamp` for a `timestamp` column; see
+[DateTime parameters](#datetime-parameters). A nullable parameter of a type with no such cast, such
+as `byte[]?`, reports ZAO102 in a null test or a projection. A `[Param(DbType = ...)]` you write on
+the method's parameter wins over the generated type, and ZAO015 checks it against the dialect as for
+`[Query]`.
+
+### DateTime parameters
+
+A `DateTime` parameter compared with a column whose map declares its storage, in `Where`, a join's
+condition, an IN subquery or a keyset `Sql.Row`, or set into such a column by `ExecuteUpdate`, binds
+as that column's type: `NpgsqlDbType.Timestamp` for `DateTimeStorage.Timestamp`,
+`NpgsqlDbType.TimestampTz` for `DateTimeStorage.TimestampTz`. This is how EF Core's Npgsql provider
+binds it. Npgsql then checks the value's `Kind` before the command is sent:
+
+| Column's storage | `Kind` `Utc` | `Kind` `Local` | `Kind` `Unspecified` |
+|---|---|---|---|
+| `TimestampTz` | compared as the UTC moment | `ArgumentException` | `ArgumentException` |
+| `Timestamp` | `ArgumentException` | compared as its wall clock | compared as its wall clock |
+| `Default` | sent as `timestamptz` | sent as `timestamp` | sent as `timestamp` |
+
+With `Default` storage Npgsql picks the type from the `Kind`, as in `[Command]`. PostgreSQL then
+converts a value that meets a column of the other type through the session's `TimeZone`, so the
+comparison is off by the session's offset from UTC. Declaring the storage turns that silent shift
+into the exception. The exception reads
+`Cannot write DateTime with Kind=Local to PostgreSQL type 'timestamp with time zone'`, or with the
+`Kind` and type that apply. Convert the value first, for example with `ToUniversalTime()` for a
+`timestamptz` column or `DateTime.SpecifyKind` for a `timestamp` one.
+
+A parameter binds one way for the whole method. One that meets a `timestamp` column and a
+`timestamptz` one, in one statement or in two of a tuple, reports ZAO102. Beside its column it may
+meet a column whose storage is `Default` or sit in a projection, which take the declared type as
+well. A `[Param(DbType = ...)]` written on the parameter wins and is sent as written. The explicit
+type needs Npgsql: without a reference to it, such a parameter reports
+[ZAO082](../diagnostics/ZAO082.md).
 
 A parameter the rendered SQL does not use, for example one that only a projection dropped by `Count()`
 read, stays in the signature but is not bound.
@@ -862,8 +895,8 @@ the row:
   jsonb equality: it compares the documents, so whitespace and key order do not matter. A parameter
   that also meets a text column, or sits in another form such as `LIKE`, reports ZAO102, since it
   cannot bind both ways.
-- A `DateTime` parameter binds by its `DateTimeKind`, as in `[Command]`. The map's `DateTimeStorage`
-  does not decide it yet; see [#403](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/403).
+- A `DateTime` parameter set into a column its map declares `Timestamp` or `TimestampTz` binds as
+  that type, as in a comparison; see [DateTime parameters](#datetime-parameters).
 
 Every computed value reads the row as it was before the statement, as in SQL and in EF Core. Here
 `TotalInputTokens` adds the old `TurnCount`, not the one `+ 1` just set:

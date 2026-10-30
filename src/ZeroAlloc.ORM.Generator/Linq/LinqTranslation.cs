@@ -132,10 +132,12 @@ internal sealed record LinqBoundQuery(
     public EquatableArray<string> Statements { get; init; }
 
     /// <summary>
-    /// The parameters an UPDATE sets into a jsonb column, by map or by <c>[Json]</c>, each at its
-    /// first such setter: they bind as jsonb, as a <c>[Json]</c> parameter does.
+    /// The parameters compared with or set into a column whose store type the map knows, each at
+    /// its first such use: a jsonb column, as a <c>[Json]</c> parameter binds, or a <c>DateTime</c>
+    /// column declared a <c>timestamp</c> or a <c>timestamptz</c>. They bind with that type
+    /// explicitly; see <see cref="ParameterStoreTypes"/>.
     /// </summary>
-    public EquatableArray<SqlParameterExpression> JsonParameters { get; init; }
+    public EquatableArray<SqlTypedParameter> TypedParameters { get; init; }
 }
 
 /// <summary>

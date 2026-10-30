@@ -206,14 +206,14 @@ internal sealed record ParameterInfo(
     // v2.0, #235 — the BulkInsert row collection. It binds one DbParameter per
     // placeholder and row, never one for itself, so no `[Param]` member applies.
     bool IsBulkInsertCollection = false,
-    // A string marked `[Json]`: the binding sets NpgsqlDbType.Jsonb after `.Value`.
-    bool IsJson = false,
+    // The NpgsqlDbType member the binding sets after `.Value`, or null for the provider's own
+    // inference: Jsonb for a string marked `[Json]`, or for a [LinqQuery] or [LinqCommand] string
+    // compared with or set into a jsonb column; Xid for a uint compared with xmin; Timestamp or
+    // TimestampTz for a DateTime compared with or set into a column its map declares so.
+    string? NpgsqlDbType = null,
     // [LinqQuery] only: the rendered SQL never names the parameter, for instance when a Count
     // drops the projection that used it. The signature keeps it; no DbParameter is bound.
-    bool IsUnreferenced = false,
-    // [LinqQuery] and [LinqCommand]: a uint compared with xmin. The binding sets
-    // NpgsqlDbType.Xid after `.Value`.
-    bool IsXid = false);
+    bool IsUnreferenced = false);
 
 // v2.0, #235 — `[Param]` members that shape the DbParameter's type. Each field is
 // null unless the adopter wrote the member, so the emit sets only what was asked
