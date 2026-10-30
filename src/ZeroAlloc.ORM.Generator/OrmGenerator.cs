@@ -5485,11 +5485,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return declarations.AssemblyDefault;
     }
 
-    // #351 — how a method's ParameterNames are spelled; see ParameterNameStyle. A
-    // [LinqQuery] or [LinqCommand] method's SQL is rendered for PostgreSQL whatever the
-    // declaration, so without one it counts as PostgreSQL.
-    // The repository's declared dialect; a [LinqQuery] method, which only renders
-    // PostgreSQL, reads as PostgreSQL without one. Null for no or an unknown dialect.
+    // The repository's declared dialect. A [LinqQuery] or [LinqCommand] method's SQL is
+    // rendered for PostgreSQL whatever the declaration, so without one it counts as
+    // PostgreSQL. Null for no dialect or an unknown one.
     private static SqlDialectModel? KnownDialect(QueryMethodModel m, int? dialect)
     {
         SqlDialectModel? known = dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared)
@@ -5499,6 +5497,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         return known;
     }
 
+    // #351 — how a method's ParameterNames are spelled; see ParameterNameStyle.
     private static ParameterNameStyle ParameterNameStyleFor(QueryMethodModel m, int? dialect)
     {
         return KnownDialect(m, dialect) switch

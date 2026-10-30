@@ -276,8 +276,8 @@ an existence. Over a page they count the page:
 
 A companion can return a tuple of 2 to 7 `IQuery<T>`, one per result set, with a tuple literal of
 complete chains as its body. The method returns the matching tuple. Each element becomes its own
-statement, and the statements run as one `IAsyncDbBatch` round trip, through the same multi-result
-path as a [`[Query]` head and lines method](multi-result-set.md):
+statement, and the statements run as one `;`-joined command in one round trip, through the same
+multi-result path as a [`[Query]` head and lines method](multi-result-set.md):
 
 ```csharp
 [LinqQuery(nameof(WithExecutionsQuery))]
@@ -301,7 +301,8 @@ SELECT "Id", "InputTokens" FROM "Executions" WHERE "TaskId" = @id ORDER BY "Exec
 - A missing parent reads as a `null` head and an empty child list. With a nullable tuple,
   `Task<(TaskHead? Head, List<ExecutionLine> Executions)?>`, the whole tuple is `null` when the first
   result set is empty, as for `[Query]`.
-- Each batch command binds only the parameters its own statement uses.
+- The command binds each parameter once, whichever statements use it. Releases before #427 ran
+  the statements as an `IAsyncDbBatch`, one command per statement.
 - The caller assembles the object graph from the tuple. An element that does not fit its chain, or a
   tuple of another length, reports [ZAO112](../diagnostics/ZAO112.md), naming the element.
 
@@ -342,7 +343,7 @@ ORDER BY "ExecutedAt", "Id"
 ```
 
 - The children are exactly those of the returned parents when the data does not change between
-  the two statements. Under PostgreSQL's default READ COMMITTED each statement of the batch reads
+  the two statements. Under PostgreSQL's default READ COMMITTED each statement of the command reads
   its own snapshot, so a row inserted or reordered between them can shift the page. For a strict
   guarantee, call the method inside a REPEATABLE READ transaction, where both statements share one
   snapshot. Either way, group the children by their parent id, so a stray child drops out.

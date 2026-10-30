@@ -275,7 +275,7 @@ public sealed partial class OrmGenerator
     // and a full page never grows it. The cap keeps a large Take that reads a few rows from
     // allocating a large empty array up front; past it the list grows as usual. A parameter
     // Take has no bound known here, and gives zero, the unsized list.
-    internal const int MaxLinqListCapacity = 1024;
+    private const int MaxLinqListCapacity = 1024;
 
     private static int ListCapacity(SqlStatement statement)
         => statement is SqlSelectStatement { Paging.Limit: SqlLiteralExpression { Kind: SqlLiteralKind.Number } limit }
