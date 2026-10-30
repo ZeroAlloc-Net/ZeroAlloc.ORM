@@ -14,12 +14,12 @@ public sealed partial class PostgresMultiResultSetRepository(IAsyncDbConnection 
         int id,
         CancellationToken ct);
 
-    // #427 — the same statements as one `;`-joined command, the Never mode, against the
-    // NpgsqlBatch that Auto picks on Npgsql.
+    // #427 — the same statements as an NpgsqlBatch, which Always forces; Auto above runs one
+    // `;`-joined command on PostgreSQL.
     [Query(
         "SELECT Id, CustomerId, Total FROM Orders WHERE Id = @id; SELECT Id, OrderId, Sku, Qty FROM OrderLines WHERE OrderId = @id;",
-        Batch = BatchMode.Never)]
-    public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetOrderWithLinesJoinedAsync(
+        Batch = BatchMode.Always)]
+    public partial Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> GetOrderWithLinesBatchAsync(
         int id,
         CancellationToken ct);
 }

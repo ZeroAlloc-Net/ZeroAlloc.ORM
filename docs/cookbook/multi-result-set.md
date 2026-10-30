@@ -79,13 +79,17 @@ The generator emits two dispatch paths and picks one based on `[Query(Batch = ..
 
 | Mode               | Behavior                                                                                  |
 | ------------------ | ----------------------------------------------------------------------------------------- |
-| `BatchMode.Auto`   | Default. At runtime, branches on `connection.CanCreateBatch`: provider supports `IAsyncDbBatch` -> use it; otherwise fall back to a single command with `;`-joined SQL and `NextResultAsync`. |
+| `BatchMode.Auto`   | Default. On a PostgreSQL repository, and so on every `[LinqQuery]`, a single command with `;`-joined SQL and `NextResultAsync`. On any other dialect, or none, a runtime branch on `connection.CanCreateBatch`: provider supports `IAsyncDbBatch` -> use it; otherwise fall back to the `;`-joined command. |
 | `BatchMode.Always` | Always use `IAsyncDbBatch`. Fails at runtime if the provider does not support batches.    |
 | `BatchMode.Never`  | Always use the single-command `;`-joined fallback with `NextResultAsync`.                 |
 
 - **Prefer `Auto`** unless you know the provider intimately. The `;`-joined path
   is universally supported but goes through one logical command boundary;
   `IAsyncDbBatch` (when available) gives the provider freedom to pipeline.
+- **On PostgreSQL `Auto` runs the joined command.** Npgsql supports batches, but an
+  `NpgsqlBatch` of a head and its lines allocated 976 B more per call than the joined
+  command and was not measurably faster: the round trip dominates (#427). Earlier releases
+  took the batch there. Write `Always` to keep it.
 - **`Never`** is useful when targeting providers whose `IAsyncDbBatch` shape is
   brittle (older ADO.NET drivers, in-memory test doubles) or when a
   query-rewriting middleware sits in front of the connection.

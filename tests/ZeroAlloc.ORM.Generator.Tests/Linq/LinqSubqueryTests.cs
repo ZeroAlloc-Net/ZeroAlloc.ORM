@@ -109,14 +109,12 @@ public class LinqSubqueryTests
             """,
             "SELECT \"Id\", \"Title\" FROM \"Tasks\" ORDER BY \"CreatedAt\" DESC, \"Id\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)",
             "SELECT \"Id\", \"TaskId\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" IN (SELECT \"Id\" FROM \"Tasks\" ORDER BY \"CreatedAt\" DESC, \"Id\" LIMIT GREATEST(@take, 0) OFFSET GREATEST(@skip, 0)) ORDER BY \"ExecutedAt\", \"Id\"",
-            "__cmd1.CommandText = \"SELECT \"Id\", \"TaskId\", \"InputTokens\" FROM \"Executions\" WHERE \"TaskId\" IN (",
+            "__cmd.CommandText = __sql0_Page;",
             generated =>
             {
-                // Both batch commands bind skip and take: the child reads them in its subquery.
-                Assert.Contains("__p_take_0.ParameterName = \"take\"", generated, StringComparison.Ordinal);
-                Assert.Contains("__p_skip_0.ParameterName = \"skip\"", generated, StringComparison.Ordinal);
-                Assert.Contains("__p_take_1.ParameterName = \"take\"", generated, StringComparison.Ordinal);
-                Assert.Contains("__p_skip_1.ParameterName = \"skip\"", generated, StringComparison.Ordinal);
+                // The joined command binds skip and take once; the child reads them in its subquery.
+                Assert.Contains("__p_take.ParameterName = \"take\"", generated, StringComparison.Ordinal);
+                Assert.Contains("__p_skip.ParameterName = \"skip\"", generated, StringComparison.Ordinal);
             });
     }
 

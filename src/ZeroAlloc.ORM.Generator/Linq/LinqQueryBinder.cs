@@ -110,7 +110,6 @@ internal static class LinqQueryBinder
             new EquatableArray<string>(storage.ByName),
             default)
         {
-            Statements = new EquatableArray<string>(ImmutableArray.Create(sql)),
             TypedParameters = new EquatableArray<SqlTypedParameter>(typedParameters),
         };
     }

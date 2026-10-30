@@ -225,8 +225,6 @@ public sealed partial class OrmGenerator
             : method with
             {
                 MultiResultMaterialization = BindElements(method.MultiResultMaterialization, statements, bound.EnumAsStringOrdinals),
-                LinqStatementParameters = StatementParameters(statements),
-                LinqStatements = bound.Statements,
             };
         method = BindEnumsByName(method, bound.NameBoundEnumParameters, read.Translation.Facets);
         method = BindStoreTypes(method, bound.TypedParameters);
@@ -257,18 +255,6 @@ public sealed partial class OrmGenerator
             };
         }
         return materialization with { Elements = new EquatableArray<MultiResultElement>(elements.MoveToImmutable()) };
-    }
-
-    // The SQL names each statement renders, so each batch command binds only its own.
-    private static EquatableArray<EquatableArray<string>> StatementParameters(EquatableArray<SqlStatement> statements)
-    {
-        var perStatement = ImmutableArray.CreateBuilder<EquatableArray<string>>(statements.Length);
-        foreach (var statement in statements)
-        {
-            var names = SqlParameterReferences.Collect(statement).ToImmutableArray().Sort(System.StringComparer.Ordinal);
-            perStatement.Add(new EquatableArray<string>(names));
-        }
-        return new EquatableArray<EquatableArray<string>>(perStatement.MoveToImmutable());
     }
 
     // Every SQL name any statement renders.

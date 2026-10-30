@@ -5488,19 +5488,36 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // #351 — how a method's ParameterNames are spelled; see ParameterNameStyle. A
     // [LinqQuery] or [LinqCommand] method's SQL is rendered for PostgreSQL whatever the
     // declaration, so without one it counts as PostgreSQL.
-    private static ParameterNameStyle ParameterNameStyleFor(QueryMethodModel m, int? dialect)
+    // The repository's declared dialect; a [LinqQuery] method, which only renders
+    // PostgreSQL, reads as PostgreSQL without one. Null for no or an unknown dialect.
+    private static SqlDialectModel? KnownDialect(QueryMethodModel m, int? dialect)
     {
         SqlDialectModel? known = dialect is { } declared && Enum.IsDefined(typeof(SqlDialectModel), declared)
             ? (SqlDialectModel)declared
             : null;
         if (known is null && m.LinqSourceComment is not null) known = SqlDialectModel.PostgreSql;
-        return known switch
+        return known;
+    }
+
+    private static ParameterNameStyle ParameterNameStyleFor(QueryMethodModel m, int? dialect)
+    {
+        return KnownDialect(m, dialect) switch
         {
             SqlDialectModel.PostgreSql or SqlDialectModel.MySql => ParameterNameStyle.Bare,
             SqlDialectModel.SqlServer or SqlDialectModel.Sqlite => ParameterNameStyle.AsWrittenOrAt,
             _ => ParameterNameStyle.AsWritten,
         };
     }
+
+    // #427 — BatchMode.Auto on PostgreSQL runs the statements as one `;`-joined command.
+    // Npgsql reports CanCreateBatch, but its NpgsqlBatch, one batch command per statement,
+    // allocated 976 B more per call than the joined command and was not measurably faster,
+    // since the round trip dominates. BatchMode.Always keeps the batch. Every other dialect,
+    // and no dialect, keeps the runtime branch on CanCreateBatch.
+    private static BatchEmitStrategy BatchStrategyFor(QueryMethodModel m, int? dialect)
+        => m.Strategy == BatchEmitStrategy.BatchWithFallback && KnownDialect(m, dialect) == SqlDialectModel.PostgreSql
+            ? BatchEmitStrategy.JoinedStatementsOnly
+            : m.Strategy;
 
     // #351 — the ParameterName the emit binds `bareName` under, as a C# string literal.
     private static string BoundParameterNameLiteral(QueryMethodModel m, string bareName) =>
@@ -5596,6 +5613,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 : repoMethod with { LinqSqlConstantName = LinqSqlConstantName(repoMethod, methodIndex) };
             var nameStyle = ParameterNameStyleFor(m, dialect);
             if (nameStyle != m.ParameterNameStyle) m = m with { ParameterNameStyle = nameStyle };
+            var strategy = BatchStrategyFor(m, dialect);
+            if (strategy != m.Strategy) m = m with { Strategy = strategy };
             EmitLinqSqlConstant(sb, m);
             switch (m.Shape)
             {
@@ -8536,7 +8555,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        var statements = BatchStatements(m);
+        var statements = SqlStatementSplitter.Split(m.Sql);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -8590,7 +8609,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // (Auto, sharing try/finally) can re-use the same body shape.
     private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var statements = BatchStatements(m);
+        var statements = SqlStatementSplitter.Split(m.Sql);
         EmitBatchSetupWithIndent(sb, m, statements, indent);
         sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -8608,11 +8627,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
     }
-
-    // The statements a multi-result batch runs, one command each. A [LinqQuery] tuple
-    // companion carries the statements it rendered; [Query] SQL is split on `;`.
-    private static ImmutableArray<string> BatchStatements(QueryMethodModel m)
-        => m.LinqStatements.Length > 0 ? m.LinqStatements.Values : SqlStatementSplitter.Split(m.Sql);
 
     // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
     // top-level BatchAlways path still calls the no-indent version through its
@@ -8640,7 +8654,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
-            if (!IsBoundByStatement(m, p, cmdIndex)) continue;
             var local = "__p_" + p.Name + "_" + cmdIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var paramNameLiteral = BoundParameterNameLiteral(m, p.ParamNameOverride ?? p.Name);
             sb.AppendLine($"{indent}var {local} = {cmdLocal}.CreateParameter();");
@@ -8874,20 +8887,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine();
     }
 
-    // [LinqQuery] — a tuple companion's batch command binds only the parameters its own
-    // statement renders; see QueryMethodModel.LinqStatementParameters. Every other batch binds
-    // every parameter on every command.
-    private static bool IsBoundByStatement(QueryMethodModel m, ParameterInfo p, int cmdIndex)
-    {
-        if (m.LinqStatementParameters.Length == 0 || cmdIndex >= m.LinqStatementParameters.Length) return true;
-        var sqlName = p.ParamNameOverride ?? p.Name;
-        foreach (var name in m.LinqStatementParameters[cmdIndex])
-        {
-            if (string.Equals(name, sqlName, StringComparison.Ordinal)) return true;
-        }
-        return false;
-    }
-
     // Per-statement parameter binding. Identical to EmitParameterBinding apart from
     // (a) targeting a specific `__cmdN` local instead of the implicit `__cmd` and
     // (b) suffixing the per-parameter local with the command index so two commands
@@ -8897,7 +8896,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         foreach (var p in m.MethodParameters)
         {
             if (p.IsCancellationToken || p.IsTransaction || p.IsUnreferenced) continue;
-            if (!IsBoundByStatement(m, p, cmdIndex)) continue;
 
             // v0.5 Phase B — composite parameter unpacks per-batch-statement.
             // The cmdIndex suffix keeps locals distinct across batch statements
