@@ -7194,6 +7194,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
+    // #427 — the capacity argument of a generated `new List<T>(...)`: the bound of a [LinqQuery]
+    // literal Take, or nothing, the unsized list, for every other list.
+    private static string ListCapacityArgument(int capacity)
+        => capacity > 0 ? capacity.ToString(System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+
     // #400 — a [Query] returning a list of a primitive scalar: column 0 of every row,
     // buffered as EmitListResultSet buffers rows. A nullable element maps NULL to
     // null with IsDBNull, which it needs for correctness. A non-nullable element is
@@ -7226,7 +7231,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.LinqListCapacity)});");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("            {");
         if (col.IsNullable)
@@ -8343,7 +8348,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>();");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.LinqListCapacity)});");
         var cols = mat.Columns;
         var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
         // Same ordinal-hoisting pattern as Streaming/FlatRow paths: column-name
@@ -9039,7 +9044,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 }
             case MultiResultElementKind.List:
                 {
-                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>();");
+                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{el.ElementTypeName}>({ListCapacityArgument(el.ListCapacity)});");
                     // v0.3-CLN1 — hoist GetOrdinal(<name>) per column-name-resolved
                     // column. #326 — before the read loop, so once per result set;
                     // the element's own prefix keeps two result sets that share a
@@ -9063,7 +9068,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     // element maps NULL to null; a non-nullable one is read directly and
                     // the #249 finder names the tuple element when column 0 is NULL.
                     var column = el.Columns[0];
-                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{ScalarListElementType(el)}>();");
+                    sb.AppendLine($"{indent}{declarePrefix}{localName} = new global::System.Collections.Generic.List<{ScalarListElementType(el)}>({ListCapacityArgument(el.ListCapacity)});");
                     sb.AppendLine($"{indent}while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
                     sb.AppendLine($"{indent}{{");
                     var checks = column.IsNullable

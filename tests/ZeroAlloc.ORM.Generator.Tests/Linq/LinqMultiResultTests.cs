@@ -257,6 +257,62 @@ public class LinqMultiResultTests
         Assert.Contains("var __p_id_1 = __cmd1.CreateParameter();", generated, StringComparison.Ordinal);
     }
 
+    // #427 — a literal Take(n) sizes the list the emit fills, on every list shape: a list of
+    // rows, a list of scalars and both tuple element kinds. A Take past the cap sizes the list
+    // at the cap; a parameter Take, or no Take, keeps the unsized list.
+    [Fact]
+    public void Literal_take_sizes_the_list()
+    {
+        var (result, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(TopQuery))]
+                public partial Task<List<TaskHead>> Top(CancellationToken ct);
+
+                [LinqQuery(nameof(TopIdsQuery))]
+                public partial Task<List<Guid>> TopIds(CancellationToken ct);
+
+                [LinqQuery(nameof(ManyQuery))]
+                public partial Task<IReadOnlyList<TaskHead>> Many(CancellationToken ct);
+
+                [LinqQuery(nameof(PageQuery))]
+                public partial Task<List<TaskHead>> Page(int take, CancellationToken ct);
+
+                [LinqQuery(nameof(WithExecutionsQuery))]
+                public partial Task<(List<ExecutionLine> Executions, List<int> Tokens, List<ExecutionLine> All)> WithExecutions(Guid id, CancellationToken ct);
+
+                private static IQuery<TaskHead> TopQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(25).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static IQuery<Guid> TopIdsQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(7).Select(t => t.Id);
+
+                private static IQuery<TaskHead> ManyQuery() =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(50000).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static IQuery<TaskHead> PageQuery(int take) =>
+                    Sql.Table<TaskEntity>().OrderBy(t => t.CreatedAt).Take(take).Select(t => new TaskHead(t.Id, t.Title));
+
+                private static (IQuery<ExecutionLine>, IQuery<int>, IQuery<ExecutionLine>) WithExecutionsQuery(Guid id) =>
+                    (Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Take(10).Select(e => new ExecutionLine(e.Id, e.InputTokens)),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Take(3).Select(e => e.InputTokens),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.Id).Select(e => new ExecutionLine(e.Id, e.InputTokens)));
+            }
+            """);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+        var generated = string.Concat(result.GeneratedTrees.Select(t => t.ToString()));
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>(25);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::System.Guid>(7);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>(1024);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.TaskHead>();", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>(10);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<int>(3);", generated, StringComparison.Ordinal);
+        Assert.Contains("new global::System.Collections.Generic.List<global::TestApp.ExecutionLine>();", generated, StringComparison.Ordinal);
+    }
+
     // A nullable outer tuple keeps [Query]'s meaning: null when the first result set is empty.
     [Fact]
     public void Nullable_outer_tuple()

@@ -360,6 +360,10 @@ internal sealed record QueryMethodModel(
     // the non-query emit throws when ExecuteNonQueryAsync reports no rows affected, naming the
     // type and the method. Null for every other method, whose emit is unchanged.
     string? LinqNoRowsMessage = null,
+    // #427 — [LinqQuery] list shapes: the bound of a literal Take(n), capped, as the
+    // capacity of the List the emit fills, so a page of up to n rows never grows the list.
+    // Zero for every other method, whose emit keeps `new List<T>()`.
+    int LinqListCapacity = 0,
     // #351 — how the emit spells each ParameterName, from the repository's declared
     // dialect. Emit-only: RenderRepository sets it once per method, so it plays no part
     // in incremental caching. The default is the rule for a repository without a

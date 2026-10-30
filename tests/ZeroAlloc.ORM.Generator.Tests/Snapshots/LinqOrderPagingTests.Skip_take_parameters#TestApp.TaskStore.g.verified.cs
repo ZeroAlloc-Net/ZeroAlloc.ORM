@@ -78,7 +78,7 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql1_Top;
             await using var __reader = await __cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-            var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>();
+            var __list = new global::System.Collections.Generic.List<global::TestApp.TaskSummary>(20);
             while (await __reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 try

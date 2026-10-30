@@ -511,6 +511,10 @@ caps at 1: `Take(5)` gives `LIMIT 1`, `Take(0)` gives `LIMIT 0`, and a parameter
 `LIMIT LEAST(GREATEST(@take, 0), 1)`. Paging a list or a stream without an ordering warns with
 [ZAO110](../diagnostics/ZAO110.md).
 
+A literal `Take(n)` on a list, or on a list element of a tuple, also sizes the list: the method
+creates it with capacity `n`, up to 1024, so a full page never grows the list. A parameter `Take` has
+no bound the generator knows, and its list starts empty and grows as usual.
+
 ### Predicates
 
 | C# | SQL |

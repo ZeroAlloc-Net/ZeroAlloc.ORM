@@ -57,6 +57,10 @@ internal sealed record MultiResultElement(
     // NULL over no rows, throws InvalidOperationException("Sequence contains no elements") as
     // LINQ does. See QueryMethodModel.LinqThrowsOnNoElements. Always false off the LINQ path.
     public bool ThrowsOnNoElements { get; init; }
+
+    // #427 — [LinqQuery] — a List or ScalarList element's capacity from its statement's
+    // literal Take, as QueryMethodModel.LinqListCapacity. Zero off the LINQ path.
+    public int ListCapacity { get; init; }
 }
 
 // Materialization plan for a tuple return type. Each `Elements[i]` corresponds to
