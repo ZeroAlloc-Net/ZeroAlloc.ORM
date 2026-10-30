@@ -44,6 +44,10 @@ public sealed class PostgresFixture : IAsyncDisposable
     // keep the fixture's surface minimal (post-review Fix 8).
     internal string ConnectionString => _container.GetConnectionString();
 
+    // The provider connection under Connection, for a test that measures hand-written
+    // ADO.NET against the same database.
+    internal NpgsqlConnection RawConnection => _raw ?? throw new InvalidOperationException("Fixture not initialised.");
+
     public PostgresFixture() : this(slim: false)
     {
     }

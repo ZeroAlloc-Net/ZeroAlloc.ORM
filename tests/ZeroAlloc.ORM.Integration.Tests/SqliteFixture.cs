@@ -15,6 +15,10 @@ public sealed class SqliteFixture : IAsyncDisposable
 
     public IAsyncDbConnection Connection { get; private set; } = null!;
 
+    // The provider connection under Connection, for a test that measures hand-written
+    // ADO.NET against the same database.
+    internal SqliteConnection RawConnection => _raw;
+
     public async ValueTask InitializeAsync()
     {
         Connection = _raw.AsAsync();
