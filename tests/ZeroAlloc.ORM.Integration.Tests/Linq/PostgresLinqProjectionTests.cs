@@ -71,6 +71,28 @@ public sealed class PostgresLinqProjectionTests
     }
 
     [Fact]
+    public async Task Select_of_one_value_reads_a_list_of_it()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqRepo(fx.Connection);
+        var project = ProjectId.From(Guid.NewGuid());
+        var due = new DateTimeOffset(2026, 11, 1, 12, 30, 0, TimeSpan.Zero);
+        await repo.InsertTaskAsync(Guid.NewGuid(), project, "b", WorkStatus.Done, "Feature", Created, null, [], 2, CancellationToken.None)
+            .ConfigureAwait(false);
+        await repo.InsertTaskAsync(Guid.NewGuid(), project, "a", WorkStatus.Open, "Bug", Created, due, [], 1, CancellationToken.None)
+            .ConfigureAwait(false);
+        await repo.InsertTaskAsync(Guid.NewGuid(), project, "c", WorkStatus.Done, "Bug", Created, null, [], 3, CancellationToken.None)
+            .ConfigureAwait(false);
+        var ct = CancellationToken.None;
+
+        (await repo.TitlesAsync(2, ct).ConfigureAwait(false)).Should().Equal("b", "c");
+        (await repo.TitlesAsync(9, ct).ConfigureAwait(false)).Should().BeEmpty();
+        (await repo.KindsAsync(ct).ConfigureAwait(false)).Should().Equal(WorkKind.Bug, WorkKind.Feature, WorkKind.Bug);
+        (await repo.DueDatesAsync(ct).ConfigureAwait(false)).Should().Equal(due, null, null);
+        (await repo.StatusesAsync(ct).ConfigureAwait(false)).Should().Equal(WorkStatus.Open, WorkStatus.Done);
+    }
+
+    [Fact]
     public async Task Reserved_and_mixed_case_identifiers_are_quoted()
     {
         await using var fx = await CreateAsync().ConfigureAwait(false);

@@ -210,6 +210,29 @@ public class LinqMultiResultTests
         Assert.Contains(result.GeneratedTrees, t => t.ToString().Contains("__elem1", StringComparison.Ordinal));
     }
 
+    // A one-column Select is a list element of its values, and a non-null DateTime Max a scalar
+    // element that throws over no rows.
+    [Fact]
+    public void Scalar_list_and_non_null_date_elements()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(TokensQuery))]
+                public partial Task<(List<int> Tokens, DateTime Last)> Tokens(Guid id, CancellationToken ct);
+
+                private static (IQuery<int>, IQuery<DateTime>) TokensQuery(Guid id) =>
+                    (Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).OrderBy(e => e.ExecutedAt).Select(e => e.InputTokens),
+                     Sql.Table<ExecutionEntity>().Where(e => e.TaskId == id).Max(e => e.ExecutedAt));
+            }
+            """,
+            "__elem0.Add(__reader.GetInt32(0));",
+            "if (__reader.IsDBNull(0)) throw new global::System.InvalidOperationException(\"Sequence contains no elements\");",
+            "SELECT max(\"ExecutedAt\") FROM \"Executions\"",
+            "WHERE \"TaskId\" = @id ORDER BY \"ExecutedAt\"");
+    }
+
     // A parameter only the head chain reads binds on the head's command alone.
     [Fact]
     public void Parameter_used_only_by_parent_statement()

@@ -51,6 +51,32 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(StampedBeforeQuery))]
     public partial Task<List<StampRow>> StampedBeforeAsync(DateTime? at, CancellationToken ct);
 
+    [LinqQuery(nameof(TitlesQuery))]
+    public partial Task<List<string>> TitlesAsync(int min, CancellationToken ct);
+
+    [LinqQuery(nameof(KindsQuery))]
+    public partial Task<IReadOnlyList<WorkKind>> KindsAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(DueDatesQuery))]
+    public partial Task<IList<DateTimeOffset?>> DueDatesAsync(CancellationToken ct);
+
+    [LinqQuery(nameof(StatusesQuery))]
+    public partial Task<List<WorkStatus>> StatusesAsync(CancellationToken ct);
+
+    // One value per row, read as a list of it.
+    private static IQuery<string> TitlesQuery(int min) =>
+        Sql.Table<TaskEntity>().Where(t => t.Order >= min).OrderBy(t => t.Order).Select(t => t.Title);
+
+    // Kind is stored by name, so each value is parsed.
+    private static IQuery<WorkKind> KindsQuery() =>
+        Sql.Table<TaskEntity>().OrderBy(t => t.Order).Select(t => t.Kind);
+
+    private static IQuery<DateTimeOffset?> DueDatesQuery() =>
+        Sql.Table<TaskEntity>().OrderBy(t => t.Order).Select(t => t.DueAt);
+
+    private static IQuery<WorkStatus> StatusesQuery() =>
+        Sql.Table<TaskEntity>().GroupBy(t => t.Status).OrderBy(g => g.Key).Select(g => g.Key);
+
     private static IQuery<TaskProjection> ProjectionsQuery() =>
         Sql.Table<TaskEntity>().Select(t => new TaskProjection(t.Id, t.ProjectId, t.Status, t.Kind, t.Tags, t.DueAt));
 

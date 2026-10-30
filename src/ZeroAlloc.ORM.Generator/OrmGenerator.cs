@@ -4849,6 +4849,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // set for `T?` and Nullable<T>; an oblivious reference type reads as non-nullable.
     // TargetTypeFullName is the type as declared, `?` included, which ScalarList names
     // its List<T> with.
+    // Whether a [LinqQuery] Select of one value of `type` reads as a scalar list: the type has
+    // the one-column model above.
+    internal static bool IsScalarColumn(ITypeSymbol type, ConventionContext conventionContext)
+        => TryBuildScalarColumnMaterialization(type, conventionContext) is not null;
+
     private static MaterializationModel? TryBuildScalarColumnMaterialization(
         ITypeSymbol type,
         ConventionContext conventionContext)
@@ -7120,6 +7125,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // messages match the Scalar command's and point at the nullable return type.
     // #410 — the read goes through the column's convention, so an enum is cast or
     // parsed; a primitive has none and reads as the bare GetXxx call.
+    // #426 — a [LinqQuery] Min or Max throws InvalidOperationException for both instead, as
+    // EmitScalarConvert does; see QueryMethodModel.LinqThrowsOnNoElements.
     private static void EmitRequiredScalar(StringBuilder sb, QueryMethodModel m, string connectionAccess)
     {
         var mat = m.Materialization;
@@ -7148,10 +7155,20 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBinding(sb, m);
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
-        sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
-        sb.AppendLine("            if (__reader.IsDBNull(0))");
-        sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
+        if (m.LinqThrowsOnNoElements)
+        {
+            // A [LinqQuery] Min or Max of a non-null date: one row, NULL over no rows, which
+            // LINQ's non-nullable overload reports as no elements.
+            sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false) || __reader.IsDBNull(0))");
+            sb.AppendLine("                throw new global::System.InvalidOperationException(\"Sequence contains no elements\");");
+        }
+        else
+        {
+            sb.AppendLine($"            if (!await __reader.ReadAsync({ct}).ConfigureAwait(false))");
+            sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
+            sb.AppendLine("            if (__reader.IsDBNull(0))");
+            sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
+        }
         sb.AppendLine($"            return {BuildPositionalReadExpression(col, 0)};");
         BuildConnectionEpilogue(sb, "        ");
         sb.AppendLine("    }");

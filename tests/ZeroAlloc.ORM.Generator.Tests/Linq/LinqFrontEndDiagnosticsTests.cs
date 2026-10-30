@@ -262,20 +262,47 @@ public class LinqFrontEndDiagnosticsTests
         Assert.Equal("n.Label", located);
     }
 
-    [Fact]
-    public void Scalar_projection_reports_ZAO107_at_the_projection()
+    // A Select of one value reads a list of it; one value from a Select, a stream of them and a
+    // list of a Count are not read.
+    [Theory]
+    [InlineData("IQuery<int>", ".Select(t => t.Order)", "Task<int>")]
+    [InlineData("IQuery<string>", ".Select(t => t.Title)", "Task<string?>")]
+    [InlineData("IQuery<string>", ".Select(t => t.Title)", "IAsyncEnumerable<string>")]
+    [InlineData("IQuery<int>", ".Count()", "Task<List<int>>")]
+    [InlineData("IQuery<bool>", ".Any()", "Task<IReadOnlyList<bool>>")]
+    [InlineData("IQuery<int>", ".Select(t => t.Order)", "Task<List<long>>")]
+    public void Scalar_select_into_another_shape_reports_ZAO112(string queryType, string chain, string returnType)
     {
         var (d, located) = Single(Repo + """
-                [LinqQuery(nameof(TitlesQuery))]
-                public partial Task<List<string>> Titles(CancellationToken ct);
+                [LinqQuery(nameof(FindQuery))]
+                public partial RETURN Find(CancellationToken ct);
 
-                private static IQuery<string> TitlesQuery() =>
-                    Sql.Table<TaskEntity>().Select(t => t.Title);
+                private static QUERY FindQuery() =>
+                    Sql.Table<TaskEntity>()CHAIN;
+            }
+            """.Replace("RETURN", returnType, StringComparison.Ordinal)
+                .Replace("QUERY", queryType, StringComparison.Ordinal)
+                .Replace("CHAIN", chain, StringComparison.Ordinal));
+
+        Assert.Equal("ZAO112", d.Id);
+        Assert.Equal(returnType, located);
+    }
+
+    // A Select of a value with no single-column reader, such as a tuple, still needs a record.
+    [Fact]
+    public void Tuple_projection_reports_ZAO107_at_the_projection()
+    {
+        var (d, located) = Single(Repo + """
+                [LinqQuery(nameof(PairsQuery))]
+                public partial Task<List<(Guid, string)>> Pairs(CancellationToken ct);
+
+                private static IQuery<(Guid, string)> PairsQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => (t.Id, t.Title));
             }
             """);
 
         Assert.Equal("ZAO107", d.Id);
-        Assert.Equal("t.Title", located);
+        Assert.Equal("(t.Id, t.Title)", located);
     }
 
     private const string Priced = """

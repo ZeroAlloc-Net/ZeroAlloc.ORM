@@ -185,6 +185,45 @@ public class LinqScalarAggregateTests
             """);
     }
 
+    // A non-null DateTime or DateTimeOffset Min or Max throws over no rows, as LINQ to Objects'
+    // does: min and max are NULL there.
+    [Fact]
+    public void Min_max_non_null_date_throws_on_no_rows()
+    {
+        VerifyCompiled(Repo + """
+                [LinqQuery(nameof(MaxLocalAtQuery))]
+                public partial Task<DateTime> MaxLocalAt(CancellationToken ct);
+
+                [LinqQuery(nameof(MinCreatedAtQuery))]
+                public partial ValueTask<DateTimeOffset> MinCreatedAt(CancellationToken ct);
+
+                private static IQuery<DateTime> MaxLocalAtQuery() => Sql.Table<TaskEntity>().Max(t => t.LocalAt);
+
+                private static IQuery<DateTimeOffset> MinCreatedAtQuery() => Sql.Table<TaskEntity>().Min(t => t.CreatedAt);
+            }
+            """);
+    }
+
+    // A non-null string has no value for no rows, where Enumerable.Min<string> and EF Core give
+    // null, so the message points to string?.
+    [Fact]
+    public void Non_null_string_min_reports_ZAO112_pointing_to_nullable()
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(LinqWhereTests.Prelude + Repo + """
+                [LinqQuery(nameof(MinTitleQuery))]
+                public partial Task<string> MinTitle(CancellationToken ct);
+
+                private static IQuery<string> MinTitleQuery() => Sql.Table<TaskEntity>().Min(t => t.Title);
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO112", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal("Task<string>", tree.ToString().Substring(span.Start, span.Length));
+        Assert.Contains("'Task<string?>'", diagnostic.GetMessage(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+    }
+
     // A nullable ordering key keeps its NULLS FIRST inside the paged subquery, where it decides
     // which rows the sum reads.
     [Fact]
@@ -265,7 +304,6 @@ public class LinqScalarAggregateTests
     [Theory]
     [InlineData("IQuery<Guid>", ".Min(t => t.Id)", "Task<Guid>")]
     [InlineData("IQuery<Guid?>", ".Max(t => (Guid?)t.Id)", "Task<Guid?>")]
-    [InlineData("IQuery<DateTime>", ".Max(t => t.LocalAt)", "Task<DateTime>")]
     [InlineData("IQuery<float>", ".Min(t => t.Weight)", "Task<float>")]
     [InlineData("IQuery<short>", ".Max(t => t.Rank)", "Task<short>")]
     [InlineData("IQuery<WorkStatus>", ".Max(t => t.Status)", "Task<WorkStatus>")]

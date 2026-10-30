@@ -14,16 +14,14 @@ internal static partial class LinqQueryReader
     private const string CollectionsNamespace = "System.Collections.Generic";
 
     // The result shape the method's return type asks for, given the companion's IQuery<TRow>;
-    // null when it does not fit, which is ZAO112.
-    private static LinqResultShape? ClassifyShape(ITypeSymbol returnType, ITypeSymbol rowType)
+    // null when it does not fit, which is ZAO112. `scalarRow` is whether TRow is a value one
+    // column reads, such as a string or an int, rather than a record: then the rows are one
+    // Select's values, read only as a list, or a terminal's one value. Which of the two the
+    // chain gives is known once it is read; Read checks the shape against it.
+    private static LinqResultShape? ClassifyShape(ITypeSymbol returnType, ITypeSymbol rowType, bool scalarRow)
     {
-        // IQuery<int>, IQuery<long> and IQuery<bool> come from Count, LongCount and Any; a row is
-        // always a record. Another IQuery<T> of a scalar can also be a Select of one column,
-        // which the chain reports as ZAO107, so it takes the list shapes here; Read reports a
-        // Sum, Min, Max or Average read as rows.
-        var counted = rowType.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Boolean;
         if (IsGeneric(returnType, CollectionsNamespace, "IAsyncEnumerable`1", out var streamed))
-            return !counted && IsRow(streamed, rowType) ? LinqResultShape.Stream : null;
+            return !scalarRow && IsRow(streamed, rowType) ? LinqResultShape.Stream : null;
         // Task<T> and ValueTask<T> take the same shapes, as they do for [Query].
         if (!IsGeneric(returnType, TasksNamespace, "Task`1", out var result)
             && !IsGeneric(returnType, TasksNamespace, "ValueTask`1", out result))
@@ -37,20 +35,21 @@ internal static partial class LinqQueryReader
     // the terminal's one value. Null when it does not fit.
     private static LinqResultShape? ClassifyResult(ITypeSymbol result, ITypeSymbol rowType)
     {
-        var counted = rowType.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Boolean;
+        // A list of records, or of one Select's values: List<int> reads Select(t => t.Order),
+        // and Read reports it after Count, whose IQuery<int> is the same.
         if (IsGeneric(result, CollectionsNamespace, "List`1", out var element)
             || IsGeneric(result, CollectionsNamespace, "IReadOnlyList`1", out element)
             || IsGeneric(result, CollectionsNamespace, "IList`1", out element))
         {
-            return !counted && IsRow(element, rowType) ? LinqResultShape.List : null;
+            return IsRow(element, rowType) ? LinqResultShape.List : null;
         }
 
+        var counted = rowType.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Boolean;
         if (counted || IsTerminalValue(rowType))
         {
             // The one value of a terminal, read as Task<T> or ValueTask<T>. [LinqQuery] takes a
-            // string terminal only as string?, null for no row and for NULL. [Query] reads a
-            // non-null string too, throwing for both, but LINQ's Min and Max semantics for that
-            // case are not decided, so the restriction is LINQ's.
+            // string terminal only as string?, null for no row and for NULL: Min and Max give
+            // no string over no rows, see NonNullString.
             return IsRow(result, rowType)
                 && (!result.IsReferenceType || result.NullableAnnotation == NullableAnnotation.Annotated)
                     ? LinqResultShape.Scalar
@@ -65,24 +64,34 @@ internal static partial class LinqQueryReader
                 : null;
     }
 
+    // Whether the method returns Task<string> or ValueTask<string> where the companion gives
+    // IQuery<string>: ZAO112 then points to string?. Enumerable.Min<string> and EF Core give
+    // null over no rows, so a non-null string has no correct value there.
+    private static bool NonNullString(ITypeSymbol returnType, ITypeSymbol rowType)
+        => rowType.SpecialType == SpecialType.System_String
+            && (IsGeneric(returnType, TasksNamespace, "Task`1", out var result)
+                || IsGeneric(returnType, TasksNamespace, "ValueTask`1", out result))
+            && result.SpecialType == SpecialType.System_String
+            && result.NullableAnnotation != NullableAnnotation.Annotated;
+
     // The values a terminal gives that [Query] reads as a scalar: int, long and bool from Count,
-    // LongCount and Any; and from Sum, Average, Min and Max a non-null int, long, double or
-    // decimal through Convert, a nullable one of those, DateTime or DateTimeOffset through the
-    // nullable scalar's reader, or a string. Others, such as Guid, which PostgreSQL has no min
-    // for, or a non-null DateTime, are ZAO112. [Query] reads a non-null DateTime scalar, but
-    // [LinqQuery] does not take one as a terminal value: that restriction is LINQ's.
+    // LongCount and Any; and from Sum, Average, Min and Max an int, long, double or decimal
+    // through Convert, a DateTime or DateTimeOffset through the one-column reader, either kind
+    // nullable through the nullable scalar's, or a string. A non-null Average, Min or Max throws
+    // over no rows, as LINQ's non-nullable overloads do. Others, such as Guid, which PostgreSQL
+    // has no min for, are ZAO112.
     private static bool IsTerminalValue(ITypeSymbol type)
     {
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
-        {
-            var underlying = nullable.TypeArguments[0];
-            return IsAggregateNumber(underlying.SpecialType)
-                || underlying.SpecialType == SpecialType.System_DateTime
-                || IsDateTimeOffset(underlying);
-        }
-        return IsAggregateNumber(type.SpecialType)
+            return IsAggregateValue(nullable.TypeArguments[0]);
+        return IsAggregateValue(type)
             || type.SpecialType is SpecialType.System_Boolean or SpecialType.System_String;
     }
+
+    private static bool IsAggregateValue(ITypeSymbol type)
+        => IsAggregateNumber(type.SpecialType)
+            || type.SpecialType == SpecialType.System_DateTime
+            || IsDateTimeOffset(type);
 
     private static bool IsAggregateNumber(SpecialType type)
         => type is SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Double or SpecialType.System_Decimal;
