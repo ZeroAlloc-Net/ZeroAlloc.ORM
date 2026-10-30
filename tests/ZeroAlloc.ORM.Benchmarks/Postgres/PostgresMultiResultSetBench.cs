@@ -212,4 +212,9 @@ public class PostgresMultiResultSetBench : IAsyncDisposable
     [Benchmark]
     public Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> ZeroAlloc_ORM()
         => _repo.GetOrderWithLinesAsync(1, default);
+
+    // #427 — BatchMode.Never: one `;`-joined command instead of the NpgsqlBatch above.
+    [Benchmark]
+    public Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?> ZeroAlloc_ORM_Joined()
+        => _repo.GetOrderWithLinesJoinedAsync(1, default);
 }
