@@ -63,6 +63,61 @@ public class LinqProjectionTests
             """);
     }
 
+    // Select of one value reads a list of it through the [Query] scalar list shape: a column,
+    // an enum through its storage, by name for an EnumAsString column, or a group's key.
+    [Fact]
+    public void Select_one_column_into_a_list()
+    {
+        VerifyCompiled(Prelude + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(TitlesQuery))]
+                public partial Task<List<string>> Titles(CancellationToken ct);
+
+                [LinqQuery(nameof(OrdersQuery))]
+                public partial ValueTask<IReadOnlyList<int>> Orders(int min, CancellationToken ct);
+
+                [LinqQuery(nameof(DueDatesQuery))]
+                public partial Task<IList<DateTimeOffset?>> DueDates(CancellationToken ct);
+
+                [LinqQuery(nameof(StatusesQuery))]
+                public partial Task<List<WorkStatus>> Statuses(CancellationToken ct);
+
+                [LinqQuery(nameof(KindsQuery))]
+                public partial Task<List<WorkKind>> Kinds(CancellationToken ct);
+
+                [LinqQuery(nameof(GroupedStatusesQuery))]
+                public partial Task<List<WorkStatus>> GroupedStatuses(CancellationToken ct);
+
+                [LinqQuery(nameof(TitleCountQuery))]
+                public partial Task<int> TitleCount(CancellationToken ct);
+
+                private static IQuery<string> TitlesQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => t.Title);
+
+                private static IQuery<int> OrdersQuery(int min) =>
+                    Sql.Table<TaskEntity>().Where(t => t.Order >= min).OrderBy(t => t.Order).Take(10).Select(t => t.Order);
+
+                private static IQuery<DateTimeOffset?> DueDatesQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => t.DueAt);
+
+                private static IQuery<WorkStatus> StatusesQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => t.Status);
+
+                private static IQuery<WorkKind> KindsQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => t.Kind);
+
+                private static IQuery<WorkStatus> GroupedStatusesQuery() =>
+                    Sql.Table<TaskEntity>().GroupBy(t => t.Status).Select(g => g.Key);
+
+                // Count drops the projection, as it drops a record's.
+                private static IQuery<int> TitleCountQuery() =>
+                    Sql.Table<TaskEntity>().Select(t => t.Title).Count();
+            }
+            """);
+    }
+
     [Fact]
     public void Select_into_nullable_single_appends_limit_1()
     {

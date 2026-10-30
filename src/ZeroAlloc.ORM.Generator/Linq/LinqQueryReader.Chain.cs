@@ -137,7 +137,7 @@ internal static partial class LinqQueryReader
         {
             context.Report(LinqDiagnostics.UnsupportedProjection(
                 chain.Group is null
-                    ? "the chain must end with Select(x => new Row(...)), constructing a positional record"
+                    ? "the chain must end with Select(x => new Row(...)), constructing a positional record, or with Select(x => x.Column), selecting one value"
                     : "a GroupBy must end with Select(g => new Row(...)), constructing a positional record from g.Key and group aggregates",
                 body.GetLocation()));
             return null;

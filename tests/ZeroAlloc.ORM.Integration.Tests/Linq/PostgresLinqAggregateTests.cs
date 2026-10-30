@@ -196,5 +196,30 @@ public sealed class PostgresLinqAggregateTests
 
         var max = () => repo.MaxInputAsync(none, CancellationToken.None);
         await max.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
+
+        var lastExecuted = () => repo.LastExecutedRequiredAsync(none, CancellationToken.None);
+        await lastExecuted.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
+
+        var earliest = async () => await repo.EarliestCreatedRequiredAsync(CancellationToken.None).ConfigureAwait(false);
+        await earliest.Should().ThrowAsync<InvalidOperationException>().WithMessage("Sequence contains no elements").ConfigureAwait(false);
+    }
+
+    // A non-null DateTime or DateTimeOffset Min or Max reads the value when there are rows.
+    [Fact]
+    public async Task Non_nullable_date_min_and_max_read_the_value()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqAggregateRepo(fx.Connection);
+        var task = Guid.NewGuid();
+        await InsertAsync(repo, task, 1, 1, executedAt: Executed).ConfigureAwait(false);
+        await InsertAsync(repo, task, 1, 1, executedAt: Executed.AddHours(3)).ConfigureAwait(false);
+        var ct = CancellationToken.None;
+
+        (await repo.LastExecutedRequiredAsync(task, ct).ConfigureAwait(false)).Should().Be(Executed.AddHours(3));
+
+        var created = new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero);
+        await repo.InsertTaskAsync(Guid.NewGuid(), Guid.NewGuid(), created, null, ct).ConfigureAwait(false);
+        await repo.InsertTaskAsync(Guid.NewGuid(), Guid.NewGuid(), created.AddDays(-1), null, ct).ConfigureAwait(false);
+        (await repo.EarliestCreatedRequiredAsync(ct).ConfigureAwait(false)).Should().Be(created.AddDays(-1));
     }
 }

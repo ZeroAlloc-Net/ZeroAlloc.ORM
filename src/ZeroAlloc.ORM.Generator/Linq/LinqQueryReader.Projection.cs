@@ -21,10 +21,14 @@ internal static partial class LinqQueryReader
 
         if (chain.IsSubquery) return ReadSubquerySelect(invocation, returned, row, chain, context);
 
-        if (Unwrap(returned) is not IObjectCreationOperation creation)
-            return RejectProjection("Select must construct a positional record with 'new'", returned, context);
-
         var expectedRow = invocation.TargetMethod.TypeArguments[1];
+        if (Unwrap(returned) is not IObjectCreationOperation creation)
+        {
+            return OrmGenerator.IsScalarColumn(expectedRow, context.Conventions)
+                ? ReadValueSelect(returned, row, expectedRow, chain, context)
+                : RejectProjection("Select must construct a positional record with 'new', or select one value of a type one column reads", returned, context);
+        }
+
         if (creation.Type is not INamedTypeSymbol { IsRecord: true } record
             || !SymbolEqualityComparer.Default.Equals(record, expectedRow))
         {
@@ -61,6 +65,26 @@ internal static partial class LinqQueryReader
         }
 
         chain.Projection = ImmutableArray.Create(items);
+        return true;
+    }
+
+    // Select(t => t.Title): one value per row, which the method reads as a list of it, as a
+    // [Query] reads a list of a scalar. The value is read as one argument of a record is.
+    private static bool ReadValueSelect(
+        IOperation returned,
+        IParameterSymbol row,
+        ITypeSymbol selected,
+        ChainBuilder chain,
+        ReaderContext context)
+    {
+        context.XminAllowed = chain.Group is null;
+        var item = chain.Group is { } group
+            ? ReadGroupedItem(returned, row, group, context)
+            : ReadProjectionItem(returned, row, context);
+        context.XminAllowed = false;
+        if (item is null || !CheckXminProjection(item, returned, selected, context)) return false;
+        RecordLiftedProjection(item, returned, selected, context);
+        chain.Projection = ImmutableArray.Create(item);
         return true;
     }
 

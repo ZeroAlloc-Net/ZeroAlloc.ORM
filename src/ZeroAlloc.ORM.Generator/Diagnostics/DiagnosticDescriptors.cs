@@ -749,7 +749,8 @@ internal static class DiagnosticDescriptors
 
     // ZAO107 — an unsupported projection. Select must construct a positional record through the
     // constructor rows are read with, each argument a mapped column, a companion parameter or a
-    // literal. Reported at the projection or the offending argument.
+    // literal, or select one value of a type one column reads. Reported at the projection or the
+    // offending argument.
     //
     // MessageArgs:
     //   {0} = what is wrong

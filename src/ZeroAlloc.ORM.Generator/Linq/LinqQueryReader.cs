@@ -70,8 +70,13 @@ internal static partial class LinqQueryReader
         }
         else
         {
-            var shape = ClassifyShape(method.ReturnType, companion.RowTypes[0]);
-            if (shape is null) return Failed(comment, ShapeMismatch(method, methodSyntax, companion.Symbol!));
+            var shape = ClassifyShape(method.ReturnType, companion.RowTypes[0], OrmGenerator.IsScalarColumn(companion.RowTypes[0], context.Conventions));
+            if (shape is null)
+            {
+                return Failed(comment, NonNullString(method.ReturnType, companion.RowTypes[0])
+                    ? NonNullStringMismatch(method, methodSyntax, companion.Symbol!)
+                    : ShapeMismatch(method, methodSyntax, companion.Symbol!));
+            }
             shapes = ImmutableArray.Create(shape.Value);
         }
 
@@ -95,8 +100,9 @@ internal static partial class LinqQueryReader
             var statement = ReadStatement(companion.Bodies[i], shapes[i], context);
             if (statement is null) return Failed(comment, context.Diagnostics.ToArray());
 
-            // A Sum, Min, Max or Average gives one value, which a list or a stream cannot read.
-            if (statement is SqlScalarAggregateStatement && shapes[i] != LinqResultShape.Scalar)
+            // A terminal gives one value, which a list or a stream cannot read; a Select gives
+            // rows, which only a list reads when each is one value.
+            if (!FitsShape(statement, shapes[i], () => OrmGenerator.IsScalarColumn(companion.RowTypes[i], context.Conventions)))
             {
                 return Failed(comment, companion.IsTuple
                     ? ElementMismatch(method.Name, methodSyntax, companion.Symbol!, TupleElementsOf(method)[i], i,
@@ -119,6 +125,29 @@ internal static partial class LinqQueryReader
             XidParameters = new EquatableArray<string>(context.XidParameters.OrderBy(n => n, StringComparer.Ordinal).ToImmutableArray()),
             XminProjections = new EquatableArray<LinqXminProjection>(context.XminProjections.ToImmutableArray()),
         };
+    }
+
+    // Whether the statement the chain gives is what the shape reads: a terminal's one value as a
+    // scalar; a Select's rows as any row shape, or only as a list when each is one value. A
+    // write has no rows, so `scalarRow` is asked only of a Select.
+    private static bool FitsShape(SqlStatement statement, LinqResultShape shape, Func<bool> scalarRow) => statement switch
+    {
+        SqlAggregateStatement or SqlScalarAggregateStatement => shape == LinqResultShape.Scalar,
+        SqlSelectStatement => shape == LinqResultShape.List || !scalarRow(),
+        _ => true,
+    };
+
+    // ZAO112 for Task<string> from IQuery<string>, which names string? as the type to return.
+    private static DiagnosticInfo NonNullStringMismatch(IMethodSymbol method, MethodDeclarationSyntax syntax, IMethodSymbol companion)
+    {
+        var wrapper = ((INamedTypeSymbol)method.ReturnType).Name;
+        return LinqDiagnostics.ShapeMismatchAt(
+            method.Name,
+            "'" + method.ReturnType.ToDisplayString() + "'",
+            "'" + companion.ReturnType.ToDisplayString() + "'",
+            "return '" + wrapper + "<string?>': Min and Max give null over no rows, as Enumerable.Min<string> does, "
+                + "where a non-null string has no value",
+            syntax.ReturnType.GetLocation());
     }
 
     // ZAO112, at the method's return type.

@@ -240,10 +240,11 @@ The method's return type picks the shape. `T` is the companion's row type.
 | `Task<List<T>>`, `Task<IReadOnlyList<T>>`, `Task<IList<T>>`, or the same in `ValueTask` | every row |
 | `Task<T?>` or `ValueTask<T?>` | the first row, or `null`: `LIMIT 1` is added, or `LIMIT 0` with `Take(0)` |
 | `IAsyncEnumerable<T>` | streamed rows; the token needs `[EnumeratorCancellation]` |
+| `Task<List<T>>`, `Task<IReadOnlyList<T>>`, `Task<IList<T>>`, or the same in `ValueTask`, after `Select(t => t.Column)` | one value per row, see [Projection](#projection) |
 | `Task<int>` or `ValueTask<int>` after `.Count()` | `SELECT count(*)::int ...` |
 | `Task<long>` or `ValueTask<long>` after `.LongCount()` | `SELECT count(*) ...` |
 | `Task<bool>` or `ValueTask<bool>` after `.Any()` | `SELECT EXISTS (SELECT 1 ...)` |
-| `Task<int>`, `Task<long>`, `Task<double>`, `Task<decimal>`, a nullable one, `DateTime?`, `DateTimeOffset?` or `string?`, or the same in `ValueTask`, after `Sum`, `Min`, `Max` or `Average` | see [Scalar aggregates](#scalar-aggregates) |
+| `Task<int>`, `Task<long>`, `Task<double>`, `Task<decimal>`, `Task<DateTime>`, `Task<DateTimeOffset>`, a nullable one, or `string?`, or the same in `ValueTask`, after `Sum`, `Min`, `Max` or `Average` | see [Scalar aggregates](#scalar-aggregates) |
 
 Any other return type reports [ZAO112](../diagnostics/ZAO112.md).
 
@@ -434,8 +435,27 @@ a mapped column, a companion parameter or a literal; named arguments are put in 
 .Select(t => new TaskLine(t.Id, t.Title, t.Order))   // SELECT "Id", "Title", "Order"
 ```
 
-A column stored by name reads back into its enum. Any other projection, such as an anonymous type, an
-expression or a single column into `List<Guid>`, reports [ZAO107](../diagnostics/ZAO107.md). After a
+A column stored by name reads back into its enum.
+
+`Select` of one value reads one column, and the method returns a list of it. The value is a type one
+column reads: a `string`, a number, a `bool`, a `Guid`, a date or time, or an enum, nullable or not:
+
+```csharp
+[LinqQuery(nameof(TitlesQuery))]
+public partial Task<List<string>> Titles(int min, CancellationToken ct);
+
+private static IQuery<string> TitlesQuery(int min) =>
+    Sql.Table<TaskEntity>().Where(t => t.Order >= min).OrderBy(t => t.Order).Select(t => t.Title);
+    // SELECT "Title" FROM "Tasks" WHERE "Order" >= @min ORDER BY "Order"
+```
+
+A NULL in a non-nullable element throws `ZeroAllocOrmMaterializationException`, naming the row; declare
+`List<string?>` to read it as `null`. After a `GroupBy`, `Select(g => g.Key)` reads the keys. Only a list
+reads these values: `Task<string?>` for the first one, and `IAsyncEnumerable<string>`, report
+[ZAO112](../diagnostics/ZAO112.md).
+
+Any other projection, such as an anonymous type, a tuple, an expression, or one typed id or value object,
+reports [ZAO107](../diagnostics/ZAO107.md). After a
 `GroupBy` the arguments are group keys and aggregates instead, see [GroupBy](#groupby); after a `Join`
 they read the joined sources, see [Joins](#joins).
 
@@ -453,7 +473,7 @@ lock may come anywhere before `Select`.
 | `ThenBy(t => t.B)`, `ThenByDescending` | `, "B"`, `, "B" DESC` |
 | `Skip(skip)` | `OFFSET GREATEST(@skip, 0)`, or `OFFSET 5` for a literal |
 | `Take(take)` | `LIMIT GREATEST(@take, 0)`, or `LIMIT 10` for a literal |
-| `Select(t => new Row(...))` | the `SELECT` list |
+| `Select(t => new Row(...))`, `Select(t => t.Column)` | the `SELECT` list |
 | `Count()`, `LongCount()`, `Any()` | see [Result shapes](#result-shapes) |
 | `Sum`, `Min`, `Max`, `Average` | see [Scalar aggregates](#scalar-aggregates) |
 | `GroupBy(t => key)` | see [GroupBy](#groupby) |
@@ -639,12 +659,14 @@ The result follows LINQ to Objects, with these rules:
   fraction. A `decimal` average agrees with LINQ only to about 16 significant digits, because
   PostgreSQL's `avg(numeric)` has its own scale. This is a known difference.
 - `Average`, `Min` and `Max` over no rows return `null` for a nullable result: `Task<double?>`,
-  `Task<DateTime?>`. For a non-null result such as `Task<double>` they throw
+  `Task<DateTime?>`. For a non-null result such as `Task<double>` or `Task<DateTime>` they throw
   `InvalidOperationException` with LINQ's message, "Sequence contains no elements", when no row
   matches, as LINQ does. Ask for the nullable result, or check with `Any()`, when the set can be empty.
 - `Min` and `Max` over a `bool`, a `Guid` or an enum stored by name report ZAO102, because
   PostgreSQL has no such aggregate or would compare names. A method that returns an enum from a
   terminal reports [ZAO112](../diagnostics/ZAO112.md).
+- `Min` and `Max` over a string return `Task<string?>`, `null` over no rows, as `Enumerable.Min<string>`
+  and EF Core do. A non-null `Task<string>` reports [ZAO112](../diagnostics/ZAO112.md).
 - `Min` and `Max` over a string compare by the database collation, where LINQ uses the current
   culture, so they can pick a different string: under the `C` collation `"B"` is less than `"a"`.
   This is a known difference.
@@ -1172,7 +1194,7 @@ the row, in a projection, before it.
 | [ZAO104](../diagnostics/ZAO104.md) | Error | The queried entity has no `[TableMap]`. |
 | [ZAO105](../diagnostics/ZAO105.md) | Error | The chain uses a member that is not a mapped column. |
 | [ZAO106](../diagnostics/ZAO106.md) | Error | A `[TableMap]`, `[OwnedMap]` or `[ColumnMap]` is invalid: a duplicate, an unknown property or path, a shared column, `EnumAsString` on a non-enum, `DateTimeStorage` on a non-`DateTime`, `Json` on a non-`string`, or an owned property whose type has no properties to map. |
-| [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is not a positional record of columns, parameters and literals. |
+| [ZAO107](../diagnostics/ZAO107.md) | Error | The projection is neither a positional record of columns, parameters and literals nor one value one column reads. |
 | [ZAO108](../diagnostics/ZAO108.md) | Error | The repository does not declare `[Dialect(SqlDialect.PostgreSql)]`. |
 | [ZAO109](../diagnostics/ZAO109.md) | Error | Code calls a companion, which never runs. |
 | [ZAO110](../diagnostics/ZAO110.md) | Warning | `Skip` or `Take` without an ordering returns rows in no defined order. |
@@ -1204,7 +1226,7 @@ Write any of these as a raw `[Query]` or `[Command]`:
 - Owned collections, `OwnsMany`: `[OwnedMap]` on a collection reports ZAO106.
 - A stream, `IAsyncEnumerable<T>`, as a tuple element (ZAO112), and a companion tuple of more than
   7 elements (ZAO100).
-- Projecting a single column into a list of scalars, such as `Select(t => t.Id)` into `List<Guid>`
-  (ZAO107). Project into a one-member record instead.
+- Selecting one typed id or value object, such as `Select(t => t.ProjectId)` (ZAO107), and one
+  selected value as `Task<T?>` (ZAO112). Project into a one-member record, or read the list.
 - `Skip` and `Take` after `Select` (ZAO102). Put them before it.
 - Dialects other than PostgreSQL (ZAO108).

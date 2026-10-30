@@ -103,6 +103,18 @@ internal sealed partial class LinqAggregateRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(EarliestCreatedQuery))]
     public partial Task<DateTimeOffset?> EarliestCreatedAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(LastExecutedRequiredQuery))]
+    public partial Task<DateTime> LastExecutedRequiredAsync(Guid taskId, CancellationToken ct);
+
+    [LinqQuery(nameof(EarliestCreatedRequiredQuery))]
+    public partial ValueTask<DateTimeOffset> EarliestCreatedRequiredAsync(CancellationToken ct);
+
+    private static IQuery<DateTime> LastExecutedRequiredQuery(Guid taskId) =>
+        Sql.Table<ExecutionEntity>().Where(e => e.TaskId == taskId).Max(e => e.ExecutedAt);
+
+    private static IQuery<DateTimeOffset> EarliestCreatedRequiredQuery() =>
+        Sql.Table<TaskEntity>().Min(t => t.CreatedAt);
+
     // sum(real) adds in float4; the column is cast so the doubles add as LINQ adds them.
     private static IQuery<double?> SumWeightQuery(Guid taskId) =>
         Sql.Table<ExecutionEntity>().Where(e => e.TaskId == taskId).Sum(e => (double?)e.Weight);

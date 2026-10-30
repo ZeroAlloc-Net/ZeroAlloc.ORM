@@ -73,8 +73,9 @@ internal static class LinqDiagnostics
 
     private const string SingleShapes =
         "return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; "
+        + "after a Select of one value, Task or ValueTask of List<T>, IReadOnlyList<T> or IList<T> of it; "
         + "after Count, LongCount or Any, return Task or ValueTask of int, long or bool; after Sum, Average, Min or Max, "
-        + "of the value it gives: int, long, double or decimal, one of those or DateTime or DateTimeOffset as nullable, or string?";
+        + "of the value it gives: int, long, double, decimal, DateTime or DateTimeOffset, one of those as nullable, or string?";
 
     private static DiagnosticInfo Create(string id, Location? location, params string[] args)
         => new(id, LocationInfo.From(location), Args(args));
