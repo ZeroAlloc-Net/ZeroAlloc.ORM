@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.11.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.2...v2.11.0) (2026-10-30)
+
+
+### Features
+
+* bind LINQ DateTime parameters as the column's declared storage ([#430](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/430)) ([6b95bce](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/6b95bce99292ed33b2e555876e6a9428d6acd498)), closes [#403](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/403)
+* read enums at query scalar position and scalar lists in tuples ([#428](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/428)) ([2d206ab](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/2d206ab90acbf9bcc814d90ab60b9d8a72d9747b)), closes [#410](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/410)
+
+
+### Bug Fixes
+
+* bind a string parameter compared with a jsonb column as jsonb in LINQ ([#424](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/424)) ([34093ec](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/34093ecb6eed83a281b65739eec9609859fd9114))
+
+
+### Performance Improvements
+
+* spell generated parameter names per dialect ([#431](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/431)) ([b380152](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/b3801520ffe9fc58ef6ac478567601236c713cb4)), closes [#351](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/351)
+
 ## [2.10.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.10.1...v2.10.2) (2026-10-29)
 
 
