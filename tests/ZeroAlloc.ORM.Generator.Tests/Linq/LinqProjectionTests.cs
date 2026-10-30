@@ -152,6 +152,44 @@ public class LinqProjectionTests
             """);
     }
 
+    // A class value object that no row shape reads reads as one column too; a record or a class
+    // with one public constructor would be a row, and Select of it reports ZAO107.
+    [Fact]
+    public void Select_class_value_object_column_into_a_list()
+    {
+        VerifyCompiled(Prelude.Replace("public sealed record TaskSummary", """
+            public sealed class Code
+            {
+                private Code(string value) => Value = value;
+
+                public string Value { get; }
+
+                public static Code From(string value) => new(value);
+            }
+
+            public sealed class Coded
+            {
+                public Guid Id { get; private set; }
+                public Code Code { get; private set; } = Code.From("");
+            }
+
+            [TableMap(typeof(Coded), "Coded")]
+            internal static class CodedMap;
+
+            public sealed record TaskSummary
+            """, System.StringComparison.Ordinal) + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(CodesQuery))]
+                public partial Task<List<Code>> Codes(CancellationToken ct);
+
+                private static IQuery<Code> CodesQuery() =>
+                    Sql.Table<Coded>().OrderBy(t => t.Id).Select(t => t.Code);
+            }
+            """);
+    }
+
     [Fact]
     public void Select_into_nullable_single_appends_limit_1()
     {

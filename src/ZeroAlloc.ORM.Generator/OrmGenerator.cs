@@ -1963,8 +1963,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // non-nullable or oblivious string. The nullable forms returned NullableScalar
         // above. Same ordering rule as bool / long, so [Materialize(Factory)] keeps winning.
         // #410 — an enum takes these shapes too, read through its convention, and #429 a
-        // value-type id or value object: RequiredScalar when non-nullable, NullableScalar
-        // with the one-column model for Task<Status?> or Task<OrderId?>. After factory
+        // value-type id or value object, or a class one no row shape reads: RequiredScalar
+        // when non-nullable, NullableScalar with the one-column model for Task<Status?> or
+        // Task<OrderId?>. A row class keeps the FlatRow / DomainEntity path below. After factory
         // resolution, so [Materialize(Factory)] keeps winning here as well.
         if (TryBuildScalarColumnMaterialization(inner, conventionContext) is { } scalarColumn)
         {
@@ -4843,8 +4844,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // as a tuple scalar element does: its underlying integral reader and a cast, or
     // GetString and Enum.Parse for [StoreAsString]. #429 — a value-type id or value
     // object, such as `readonly record struct OrderId(int Value)`, reads through its
-    // convention too; a class one, record or not, stays out and reads through the
-    // row shapes, which return null for no row. IsNullable is
+    // convention too, and so does a class one that no row shape reads; a record or a
+    // class with one public constructor stays out and reads through the row shapes,
+    // which return null for no row. IsNullable is
     // set for `T?` and Nullable<T>; an oblivious reference type reads as non-nullable.
     // TargetTypeFullName is the type as declared, `?` included, which ScalarList names
     // its List<T> with.
@@ -4875,9 +4877,17 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
         else
         {
-            // #429 — a value-type id or value object reads through its convention, as a
-            // tuple scalar element does. A class one keeps the row path.
-            if (!unwrapped.IsValueType) return null;
+            // #429 — a typed id or value object reads through its convention, as a tuple
+            // scalar element does. A class one that a row shape reads, a record or a class
+            // with one public constructor, keeps the row path: rows win, as in a list. Only
+            // a class no row shape reads, such as one built by a From factory behind a
+            // private constructor, falls back to the scalar.
+            if (!unwrapped.IsValueType
+                && (TryBuildFlatRowMaterialization(unwrapped, conventionContext) is not null
+                    || TryBuildDomainEntityMaterialization(unwrapped, conventionContext) is not null))
+            {
+                return null;
+            }
             var resolution = ConventionDiscovery.Resolve(unwrapped, conventionContext);
             if (resolution.Kind is not (ConventionKind.ValueObject or ConventionKind.StaticFactory or ConventionKind.SingleArgCtor))
                 return null;
