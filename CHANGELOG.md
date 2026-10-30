@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.1...v2.11.2) (2026-10-30)
+
+
+### Performance Improvements
+
+* require AdoNet.Async 1.5.6, which pools the reader wrapper's state machine ([#435](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/435)) ([4dad5b3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/4dad5b33a6f9e3586f802b584b72ba5e0baba157))
+
 ## [2.11.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.11.0...v2.11.1) (2026-10-30)
 
 
