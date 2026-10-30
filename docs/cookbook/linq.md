@@ -438,8 +438,9 @@ a mapped column, a companion parameter or a literal; named arguments are put in 
 A column stored by name reads back into its enum.
 
 `Select` of one value reads one column, and the method returns a list of it. The value is a type one
-column reads: a `string`, a number, a `bool`, a `Guid`, a date or time, an enum, or a value-type typed id
-or value object such as `readonly record struct ProjectId(Guid Value)`, nullable or not:
+column reads: a `string`, a number, a `bool`, a `Guid`, a date or time, an enum, or a typed id or value
+object such as `readonly record struct ProjectId(Guid Value)`, nullable or not. A class one counts only when
+no row shape reads it, such as one built by a `From` factory behind a private constructor:
 
 ```csharp
 [LinqQuery(nameof(TitlesQuery))]
@@ -455,8 +456,8 @@ A NULL in a non-nullable element throws `ZeroAllocOrmMaterializationException`, 
 reads these values: `Task<string?>` for the first one, and `IAsyncEnumerable<string>`, report
 [ZAO112](../diagnostics/ZAO112.md).
 
-Any other projection, such as an anonymous type, a tuple, an expression, or one class typed id or value
-object, reports [ZAO107](../diagnostics/ZAO107.md). After a
+Any other projection, such as an anonymous type, a tuple, an expression, or one typed id or value object
+that reads as a row, a record or a class with one public constructor, reports [ZAO107](../diagnostics/ZAO107.md). After a
 `GroupBy` the arguments are group keys and aggregates instead, see [GroupBy](#groupby); after a `Join`
 they read the joined sources, see [Joins](#joins).
 

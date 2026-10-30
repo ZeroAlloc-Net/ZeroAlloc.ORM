@@ -10,8 +10,10 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 // #429 — a value-type typed id or value object at [Query] scalar position, Task<OrderId>,
 // Task<OrderId?> and List<OrderId>, used to report ZAO022. It reads its one column through
 // its convention, the constructor or From factory, as a tuple scalar element does. A class
-// one keeps the row path, which returns null for no row. In a list a row still wins, so a
-// non-null record struct such as List<OrderId> reads as a one-column row, as it did before.
+// one that a row shape reads, a record or a class with one public constructor, keeps the row
+// path, which returns null for no row; a class one no row shape reads, such as Code below,
+// falls back to the scalar. In a list a row still wins, so a non-null record struct such as
+// List<OrderId> reads as a one-column row, as it did before.
 public class QueryScalarValueTypeIdTests
 {
     private const string Header = """
@@ -36,6 +38,15 @@ public class QueryScalarValueTypeIdTests
         }
 
         public sealed record CustomerId(Guid Value);
+
+        public sealed class Code
+        {
+            private Code(int value) => Value = value;
+
+            public int Value { get; }
+
+            public static Code From(int value) => new(value);
+        }
 
         public sealed partial class Repo(IAsyncDbConnection connection)
         {
@@ -90,6 +101,10 @@ public class QueryScalarValueTypeIdTests
                 [Query("SELECT v FROM t; SELECT v FROM t")] public partial Task<(OrderId Head, List<OrderId?> Ids)> IdsAsync(CancellationToken ct);
                 [Query("SELECT v FROM t WHERE k = @k")] public partial Task<CustomerId?> CustomerAsync(int k, CancellationToken ct);
                 [Query("SELECT v FROM t")] public partial Task<List<CustomerId>> CustomersAsync(CancellationToken ct);
+                [Query("SELECT v FROM t WHERE k = @k")] public partial Task<Code> CodeAsync(int k, CancellationToken ct);
+                [Query("SELECT v FROM t WHERE k = @k")] public partial Task<Code?> MaybeCodeAsync(int k, CancellationToken ct);
+                [Query("SELECT v FROM t")] public partial Task<List<Code>> CodeListAsync(CancellationToken ct);
+                [Query("SELECT v FROM t")] public partial Task<IReadOnlyList<Code?>> MaybeCodeListAsync(CancellationToken ct);
             """);
         var (run, compilation) = GeneratorHarness.RunGeneratorAndGetCompilation(source);
 
@@ -109,6 +124,19 @@ public class QueryScalarValueTypeIdTests
         Assert.DoesNotContain("TODO", generated, System.StringComparison.Ordinal);
         Assert.Contains("new global::TestApp.OrderId(__reader.GetInt32(0))", generated, System.StringComparison.Ordinal);
         Assert.Contains("global::TestApp.Sku.From(__reader.GetString(0))", generated, System.StringComparison.Ordinal);
+        Assert.Contains("global::TestApp.Code.From(__reader.GetInt32(0))", generated, System.StringComparison.Ordinal);
+    }
+
+    // A class value object no row shape reads falls back to the one-column scalar: NULL and no
+    // row read as null.
+    [Fact]
+    public void Query_returning_nullable_class_value_object_without_a_row_shape_reads_through_From()
+    {
+        var source = Repo("""
+                [Query("SELECT code FROM t WHERE k = @k")]
+                public partial Task<Code?> GetCodeAsync(int k, CancellationToken ct);
+            """);
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator("#nullable enable\n" + source));
     }
 
     // A class id is a row, so its non-nullable form keeps pointing at Task<TId?>.

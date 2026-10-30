@@ -75,15 +75,6 @@ public class ZAO022Tests
 
         public sealed record Row(System.Guid Id, string Name);
 
-        public sealed class Code
-        {
-            private Code(int value) => Value = value;
-
-            public int Value { get; }
-
-            public static Code From(int value) => new(value);
-        }
-
         """;
 
     private static Diagnostic SingleZao022(string members)
@@ -200,8 +191,8 @@ public class ZAO022Tests
     public void Other_shapes_get_the_list_of_supported_shapes()
     {
         var diagnostic = SingleZao022("""
-                [Query("SELECT code FROM t")]
-                public partial Task<Code> GetCodeAsync(CancellationToken ct);
+                [Query("SELECT v FROM t")]
+                public partial Task<System.ValueTuple<int>> GetOneAsync(CancellationToken ct);
             """);
 
         Assert.EndsWith(
