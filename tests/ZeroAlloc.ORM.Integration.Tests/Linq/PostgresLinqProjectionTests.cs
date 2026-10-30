@@ -92,6 +92,27 @@ public sealed class PostgresLinqProjectionTests
         (await repo.StatusesAsync(ct).ConfigureAwait(false)).Should().Equal(WorkStatus.Open, WorkStatus.Done);
     }
 
+    // #429 — a value-type typed id reads as one column: a LINQ Select of it into a list, and
+    // [Query] Task<ProjectId> and Task<ProjectId?>, the nullable one null for no row.
+    [Fact]
+    public async Task Struct_id_reads_as_one_column()
+    {
+        await using var fx = await CreateAsync().ConfigureAwait(false);
+        var repo = new LinqRepo(fx.Connection);
+        var alpha = ProjectId.From(Guid.NewGuid());
+        var beta = ProjectId.From(Guid.NewGuid());
+        await repo.InsertTaskAsync(Guid.NewGuid(), beta, "b", WorkStatus.Open, "Bug", Created, null, [], 2, CancellationToken.None)
+            .ConfigureAwait(false);
+        await repo.InsertTaskAsync(Guid.NewGuid(), alpha, "a", WorkStatus.Open, "Bug", Created, null, [], 1, CancellationToken.None)
+            .ConfigureAwait(false);
+        var ct = CancellationToken.None;
+
+        (await repo.ProjectIdsAsync(ct).ConfigureAwait(false)).Should().Equal(alpha, beta);
+        (await repo.ProjectIdOfAsync(2, ct).ConfigureAwait(false)).Should().Be(beta);
+        (await repo.MaybeProjectIdOfAsync(1, ct).ConfigureAwait(false)).Should().Be(alpha);
+        (await repo.MaybeProjectIdOfAsync(9, ct).ConfigureAwait(false)).Should().BeNull();
+    }
+
     [Fact]
     public async Task Reserved_and_mixed_case_identifiers_are_quoted()
     {

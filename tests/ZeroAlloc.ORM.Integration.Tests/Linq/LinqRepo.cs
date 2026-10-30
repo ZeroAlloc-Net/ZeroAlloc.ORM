@@ -63,6 +63,16 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
     [LinqQuery(nameof(StatusesQuery))]
     public partial Task<List<WorkStatus>> StatusesAsync(CancellationToken ct);
 
+    [LinqQuery(nameof(ProjectIdsQuery))]
+    public partial Task<List<ProjectId>> ProjectIdsAsync(CancellationToken ct);
+
+    // #429 — a value-type typed id at [Query] scalar position reads through its From factory.
+    [Query("""SELECT "ProjectId" FROM "Tasks" WHERE "Order" = @order""")]
+    public partial Task<ProjectId> ProjectIdOfAsync(int order, CancellationToken ct);
+
+    [Query("""SELECT "ProjectId" FROM "Tasks" WHERE "Order" = @order""")]
+    public partial Task<ProjectId?> MaybeProjectIdOfAsync(int order, CancellationToken ct);
+
     // One value per row, read as a list of it.
     private static IQuery<string> TitlesQuery(int min) =>
         Sql.Table<TaskEntity>().Where(t => t.Order >= min).OrderBy(t => t.Order).Select(t => t.Title);
@@ -73,6 +83,9 @@ internal sealed partial class LinqRepo(IAsyncDbConnection connection)
 
     private static IQuery<DateTimeOffset?> DueDatesQuery() =>
         Sql.Table<TaskEntity>().OrderBy(t => t.Order).Select(t => t.DueAt);
+
+    private static IQuery<ProjectId> ProjectIdsQuery() =>
+        Sql.Table<TaskEntity>().OrderBy(t => t.Order).Select(t => t.ProjectId);
 
     private static IQuery<WorkStatus> StatusesQuery() =>
         Sql.Table<TaskEntity>().GroupBy(t => t.Status).OrderBy(g => g.Key).Select(g => g.Key);

@@ -118,6 +118,40 @@ public class LinqProjectionTests
             """);
     }
 
+    // #429 — Select of a value-type typed id reads a list of it through the id's convention,
+    // here its From factory.
+    [Fact]
+    public void Select_struct_id_column_into_a_list()
+    {
+        VerifyCompiled(Prelude.Replace("public sealed record TaskSummary", """
+            public readonly record struct ProjectId(Guid Value)
+            {
+                public static ProjectId From(Guid value) => new(value);
+            }
+
+            public sealed class ProjectTask
+            {
+                public Guid Id { get; private set; }
+                public ProjectId ProjectId { get; private set; }
+            }
+
+            [TableMap(typeof(ProjectTask), "ProjectTasks")]
+            internal static class ProjectTaskMap;
+
+            public sealed record TaskSummary
+            """, System.StringComparison.Ordinal) + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class TaskStore(IAsyncDbConnection connection)
+            {
+                [LinqQuery(nameof(ProjectIdsQuery))]
+                public partial Task<List<ProjectId>> ProjectIds(CancellationToken ct);
+
+                private static IQuery<ProjectId> ProjectIdsQuery() =>
+                    Sql.Table<ProjectTask>().OrderBy(t => t.Id).Select(t => t.ProjectId);
+            }
+            """);
+    }
+
     [Fact]
     public void Select_into_nullable_single_appends_limit_1()
     {

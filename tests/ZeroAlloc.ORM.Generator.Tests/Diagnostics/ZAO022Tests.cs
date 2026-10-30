@@ -75,7 +75,14 @@ public class ZAO022Tests
 
         public sealed record Row(System.Guid Id, string Name);
 
-        public readonly record struct Code(int Value);
+        public sealed class Code
+        {
+            private Code(int value) => Value = value;
+
+            public int Value { get; }
+
+            public static Code From(int value) => new(value);
+        }
 
         """;
 
@@ -198,7 +205,7 @@ public class ZAO022Tests
             """);
 
         Assert.EndsWith(
-            "supported shapes are a scalar or enum such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
+            "supported shapes are a scalar, enum or value-type id such as Task<Guid> or Task<Guid?>, a nullable row Task<TRow?>, "
                 + "a list of rows or scalars as List<T>, IReadOnlyList<T> or IList<T>, a tuple of result sets, "
                 + "a PostgreSQL array T[], or IAsyncEnumerable<TRow>",
             diagnostic.GetMessage(CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
