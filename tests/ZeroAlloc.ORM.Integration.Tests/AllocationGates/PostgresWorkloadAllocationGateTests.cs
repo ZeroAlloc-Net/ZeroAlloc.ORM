@@ -6,10 +6,13 @@ namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 
 // #351 — the gates of SqliteWorkloadAllocationGateTests on a real PostgreSQL server. Npgsql
 // completes I/O on other threads, so AllocationGate counts bytes process-wide here, and the
-// class runs in a collection of its own with nothing alongside it. Each measurement may then
-// pick up DefaultAsyncToleranceBytesPerCall of another thread's bytes, so a gap may read up to
-// twice that above its budget: still below the 24 B of the smallest object, so one more
-// allocation per call fails the gate.
+// class runs in a collection of its own with nothing alongside it. A call that awaits real I/O
+// allocates a different, exact amount on each path it can take, because every await that
+// yields boxes a state machine. On a loaded machine a single-row read took its usual path at
+// 1392 B, up to 1632 B when more awaits yielded, and 752 B when it completed synchronously, so
+// windows that mixed those paths moved by over 100 B either way (#434). The three ways of a
+// workload are therefore measured side by side, and each reads the bytes most of its calls
+// allocate: exact, with no tolerance, so one more object per call fails the gate.
 //
 // The hand-written baselines bind bare names, which Npgsql resolves without a Substring, and
 // read the multi-result workload through a batch, as the generated code does where the
@@ -104,12 +107,12 @@ public class PostgresWorkloadAllocationGateTests
     private static async Task<WorkloadBytes> MeasureAsync<TAdoNet, TAsyncDb, TGenerated>(
         Func<ValueTask<TAdoNet>> handWrittenAdoNet,
         Func<ValueTask<TAsyncDb>> handWrittenAsyncDb,
-        Func<ValueTask<TGenerated>> generated) =>
-        new(
-            await AllocationGate.MeasureBytesPerCallAsync(Iterations, handWrittenAdoNet).ConfigureAwait(false),
-            await AllocationGate.MeasureBytesPerCallAsync(Iterations, handWrittenAsyncDb).ConfigureAwait(false),
-            await AllocationGate.MeasureBytesPerCallAsync(Iterations, generated).ConfigureAwait(false),
-            AllocationGate.DefaultAsyncToleranceBytesPerCall);
+        Func<ValueTask<TGenerated>> generated)
+    {
+        var (adoNet, asyncDb, generatedBytes) = await AllocationGate.MeasureBytesPerCallInterleavedAsync(
+            Iterations, handWrittenAdoNet, handWrittenAsyncDb, generated).ConfigureAwait(false);
+        return new(adoNet, asyncDb, generatedBytes, ToleranceBytes: 0);
+    }
 
     private static async Task<PostgresFixture> SeededAsync()
     {
