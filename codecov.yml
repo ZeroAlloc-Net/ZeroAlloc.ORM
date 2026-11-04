@@ -4,6 +4,15 @@ coverage:
       default:
         target: auto
         threshold: 1%
+    patch:
+      default:
+        target: 80%
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, files"
+  require_changes: true
+
 ignore:
   - "tests/**"
   - "benchmarks/**"
