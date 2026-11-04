@@ -51,6 +51,14 @@ jobs:
         # One Cobertura file per test app; Codecov merges them.
         run: dotnet test --no-build -c Release --verbosity normal --coverage --coverage-output-format cobertura --coverage-settings coverage.config.xml --results-directory TestResults
 
+      # ci-baseline coverage gate: merges the Cobertura reports and fails below the line-coverage floor, or when
+      # codecov.yml would let a drop in coverage pass quietly. The tests run on Microsoft.Testing.Platform, whose
+      # CodeCoverage extension writes one *.cobertura.xml per test app under TestResults.
+      - name: Coverage gate
+        uses: MarcelRoozekrans/ci-baseline/actions/coverage-gate@v1
+        with:
+          reports: "TestResults/**/*.cobertura.xml"
+
       - name: Upload coverage to Codecov
         if: '!cancelled()'
         uses: codecov/codecov-action@v7

@@ -58,6 +58,10 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- ci-baseline NuGetAudit: a local restore reports the same advisories as CI. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>moderate</NuGetAuditLevel>
     <!--
       Public API surface lock: RS0016 (missing entry) / RS0017 (extra entry) are
       errors even if TreatWarningsAsErrors is locally disabled, so the public API
