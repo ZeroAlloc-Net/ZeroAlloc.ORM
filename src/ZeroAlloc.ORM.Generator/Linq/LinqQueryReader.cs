@@ -31,6 +31,52 @@ internal static partial class LinqQueryReader
     // rows affected or nothing.
     public static LinqTranslation Read(GeneratorAttributeSyntaxContext ctx, bool isCommand, CancellationToken ct)
     {
+        var translation = ReadChain(ctx, isCommand, ct);
+        return translation.Succeeded ? translation : WithCompilerErrors(translation, ctx, isCommand, ct);
+    }
+
+    // The most that one failed companion reports of its C# errors.
+    private const int MaxCompilerErrors = 5;
+
+    // A companion that does not compile cannot be read: its operation tree holds invalid operations
+    // in place of the calls the reader looks for, so the failure it reports names the wrong cause,
+    // ZAO102 for a type mismatch, say. The generator then emits no implementation, CS8795 on the
+    // partial method hides the body's own errors, and the compiler's message never shows. So when a
+    // read fails and the companion has C# errors, those are reported, as ZAO114, in place of the
+    // read's diagnostics. A companion that compiles keeps the diagnostics the reader gave.
+    private static LinqTranslation WithCompilerErrors(
+        LinqTranslation translation,
+        GeneratorAttributeSyntaxContext ctx,
+        bool isCommand,
+        CancellationToken ct)
+    {
+        var method = (IMethodSymbol)ctx.TargetSymbol;
+        var companionName = ctx.Attributes[0].ConstructorArguments.FirstOrDefault().Value as string ?? string.Empty;
+        var companion = ResolveCompanion(ctx, method, companionName, isCommand, ct);
+        if (companion.Error is not null) return translation;
+
+        var syntax = companion.Syntax!;
+        var compilation = ctx.SemanticModel.Compilation;
+        if (!compilation.ContainsSyntaxTree(syntax.SyntaxTree)) return translation;
+
+        var errors = new List<DiagnosticInfo>();
+        foreach (var diagnostic in compilation.GetSemanticModel(syntax.SyntaxTree).GetDiagnostics(syntax.Span, ct))
+        {
+            if (diagnostic.Severity != DiagnosticSeverity.Error) continue;
+            errors.Add(LinqDiagnostics.CompanionDoesNotCompile(
+                companionName,
+                diagnostic.Id,
+                diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture),
+                LocationInfo.From(diagnostic.Location)));
+            if (errors.Count == MaxCompilerErrors) break;
+        }
+        return errors.Count == 0
+            ? translation
+            : LinqTranslation.Failed(translation.SourceComment, new EquatableArray<DiagnosticInfo>(errors.ToImmutableArray()));
+    }
+
+    private static LinqTranslation ReadChain(GeneratorAttributeSyntaxContext ctx, bool isCommand, CancellationToken ct)
+    {
         var method = (IMethodSymbol)ctx.TargetSymbol;
         var methodSyntax = (MethodDeclarationSyntax)ctx.TargetNode;
         var companionName = ctx.Attributes[0].ConstructorArguments.FirstOrDefault().Value as string ?? string.Empty;

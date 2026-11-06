@@ -862,4 +862,23 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO113"));
+
+    // ZAO114 — the companion of a [LinqQuery] or [LinqCommand] has a C# compile error, so the
+    // chain cannot be read and no SQL is generated. The generator then emits no implementation,
+    // CS8795 hides the body's own errors, and without this diagnostic the compiler's message
+    // would never show. Reported at the error, with the compiler's id and text.
+    //
+    // MessageArgs:
+    //   {0} = the companion method's name
+    //   {1} = the compiler diagnostic's id, for example CS1503
+    //   {2} = the compiler diagnostic's message
+    //   {3} = the attribute, [LinqQuery] or [LinqCommand]
+    public static readonly DiagnosticDescriptor ZAO114_LinqCompanionDoesNotCompile = new(
+        id: "ZAO114",
+        title: "LINQ companion does not compile",
+        messageFormat: "The companion '{0}' does not compile, so no SQL is generated for the {3} method: {1}: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO114"));
 }

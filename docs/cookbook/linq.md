@@ -1208,6 +1208,7 @@ the row, in a projection, before it.
 | [ZAO111](../diagnostics/ZAO111.md) | Error | An enum parameter is compared with, or set into, columns that store the enum differently. |
 | [ZAO112](../diagnostics/ZAO112.md) | Error | The method's return type, or one of its tuple elements, does not fit the companion's `IQuery<T>`, or a `[LinqCommand]`'s `int`. |
 | [ZAO113](../diagnostics/ZAO113.md) | Warning | A row lock in a method without an `IAsyncDbTransaction` parameter, so the lock ends with its statement. |
+| [ZAO114](../diagnostics/ZAO114.md) | Error | The companion has a C# compile error, so nothing is translated. The message carries the compiler's own error. |
 
 ## Not supported yet
 

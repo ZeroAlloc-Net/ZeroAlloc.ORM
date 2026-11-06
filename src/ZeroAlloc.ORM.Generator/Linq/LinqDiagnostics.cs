@@ -4,7 +4,7 @@ using ZeroAlloc.ORM.Generator.Model;
 
 namespace ZeroAlloc.ORM.Generator.Linq;
 
-// The LINQ front end's diagnostics, ZAO100 to ZAO113 but ZAO109, built as cache-safe
+// The LINQ front end's diagnostics, ZAO100 to ZAO114 but ZAO109, built as cache-safe
 // DiagnosticInfo. ZAO109 is reported by LinqCompanionCallAnalyzer.
 // The descriptors live in DiagnosticDescriptors; their message arguments are documented there.
 // The messages that name the method's attribute take it as their last argument, which the
@@ -19,7 +19,7 @@ internal static class LinqDiagnostics
     // The diagnostic with `attribute`, [LinqQuery] or [LinqCommand], added as the last message
     // argument of the descriptors that name it; any other diagnostic as it is.
     public static DiagnosticInfo ForAttribute(DiagnosticInfo diagnostic, string attribute)
-        => diagnostic.DescriptorId is "ZAO100" or "ZAO102" or "ZAO103" or "ZAO107" or "ZAO108" or "ZAO112"
+        => diagnostic.DescriptorId is "ZAO100" or "ZAO102" or "ZAO103" or "ZAO107" or "ZAO108" or "ZAO112" or "ZAO114"
             ? diagnostic with { MessageArgs = new EquatableArray<string>(diagnostic.MessageArgs.Values.Add(attribute)) }
             : diagnostic;
 
@@ -70,6 +70,10 @@ internal static class LinqDiagnostics
     // ZAO113, at the method's name.
     public static DiagnosticInfo LockWithoutTransaction(string method, LocationInfo? location)
         => new("ZAO113", location, Args(method));
+
+    // ZAO114, at the compiler's error in the companion.
+    public static DiagnosticInfo CompanionDoesNotCompile(string companion, string compilerId, string compilerMessage, LocationInfo? location)
+        => new("ZAO114", location, Args(companion, compilerId, compilerMessage));
 
     private const string SingleShapes =
         "return Task or ValueTask of List<T>, IReadOnlyList<T>, IList<T> or T?, or IAsyncEnumerable<T>, with T its row type; "
