@@ -5308,6 +5308,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO111" => DiagnosticDescriptors.ZAO111_LinqEnumParameterStorageConflict,
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         "ZAO113" => DiagnosticDescriptors.ZAO113_LinqLockWithoutTransaction,
+        "ZAO114" => DiagnosticDescriptors.ZAO114_LinqCompanionDoesNotCompile,
         _ => null,
     };
 
