@@ -167,6 +167,31 @@ public class LinqUpdateTests
             NpgsqlStub.Source);
     }
 
+    [Fact]
+    public void Update_keeps_the_column_for_a_null_parameter()
+    {
+        VerifyCompiled(
+            Repo + """
+                [LinqCommand(nameof(EditQuery))]
+                public partial ValueTask<int> Edit(
+                    Guid id, string? note, string? reason, int? turns, bool clear, DateTimeOffset now, CancellationToken ct);
+
+                private static int EditQuery(Guid id, string? note, string? reason, int? turns, bool clear, DateTimeOffset now) =>
+                    Sql.Table<AgentSessionEntity>()
+                        .Where(s => s.Id == id)
+                        .ExecuteUpdate(set => set
+                            .SetProperty(s => s.Note, s => note ?? s.Note)
+                            .SetProperty(s => s.TurnCount, s => turns ?? s.TurnCount)
+                            .SetProperty(s => s.FailureReason, s => clear ? null : reason ?? s.FailureReason)
+                            .SetProperty(s => s.LastActivityAt, now));
+            }
+            """,
+            "UPDATE \"AgentSessions\" SET \"Note\" = COALESCE(@note, \"Note\"), \"TurnCount\" = COALESCE(@turns, \"TurnCount\"), "
+                + "\"FailureReason\" = CASE WHEN @clear THEN NULL ELSE COALESCE(@reason, \"FailureReason\") END, "
+                + "\"LastActivityAt\" = @now WHERE \"Id\" = @id",
+            "public partial async global::System.Threading.Tasks.ValueTask<int> Edit(");
+    }
+
     // PostgresAgentSessionStore: a turn adds its usage to the session's counters in one statement,
     // so concurrent turns lose no increment. An int parameter added to a long column is widened by
     // C#; the SQL adds it as it is, as PostgreSQL promotes it the same way.

@@ -259,6 +259,77 @@ public class LinqWhereTests
             NpgsqlStub.Source);
     }
 
+    private const string RunItem = """
+        public sealed class RunItem
+        {
+            public Guid Id { get; private set; }
+            public Guid? RunId { get; private set; }
+            public string Response { get; private set; } = "";
+            public string? Note { get; private set; }
+            public IReadOnlyList<string> Tags { get; private set; } = [];
+        }
+
+        [TableMap(typeof(RunItem), "RunItems")]
+        internal static class RunItemMap;
+
+        public sealed record RunItemRow(Guid Id, int ResponseLength);
+
+        """;
+
+    [Fact]
+    public void Contains_over_a_nullable_column()
+    {
+        VerifyCompiled(
+            RunItem + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<RunItemRow>> Find(List<Guid> ids, CancellationToken ct);
+
+                private static IQuery<RunItemRow> FindQuery(List<Guid> ids) =>
+                    Sql.Table<RunItem>()
+                        .Where(t => t.RunId != null && ids.Contains(t.RunId.Value))
+                        .Where(t => ids.Contains((Guid)t.RunId!))
+                        .Select(t => new RunItemRow(t.Id, 0));
+            }
+            """,
+            NpgsqlStub.Source);
+    }
+
+    [Fact]
+    public void Contains_on_an_array_column()
+    {
+        VerifyCompiled(
+            RunItem + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<RunItemRow>> Find(string? tag, List<string> tags, CancellationToken ct);
+
+                private static IQuery<RunItemRow> FindQuery(string? tag, List<string> tags) =>
+                    Sql.Table<RunItem>()
+                        .Where(t => tag == null || t.Tags.Contains(tag))
+                        .Where(t => tags.All(v => t.Tags.Contains(v)))
+                        .Select(t => new RunItemRow(t.Id, 0));
+            }
+            """,
+            NpgsqlStub.Source);
+    }
+
+    [Fact]
+    public void String_Length_in_Where_OrderBy_and_Select()
+    {
+        VerifyCompiled(
+            RunItem + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<RunItemRow>> Find(int min, CancellationToken ct);
+
+                private static IQuery<RunItemRow> FindQuery(int min) =>
+                    Sql.Table<RunItem>()
+                        .Where(t => t.Response.Length > min && t.Note!.Length < 10)
+                        .OrderBy(t => t.Response.Length)
+                        .Select(t => new RunItemRow(t.Id, t.Response.Length));
+            }
+            """,
+            NpgsqlStub.Source);
+    }
+
     [Fact]
     public void String_Contains_escapes_like_wildcards()
     {

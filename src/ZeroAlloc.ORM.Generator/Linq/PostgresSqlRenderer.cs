@@ -416,6 +416,16 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
             case SqlInSubqueryExpression subquery:
                 RenderInSubquery(sb, subquery, names);
                 break;
+            case SqlContainsAllExpression containsAll:
+                RenderExpression(sb, containsAll.Column, names);
+                sb.Append(" @> ");
+                RenderExpression(sb, containsAll.Values, names);
+                break;
+            case SqlLengthExpression length:
+                sb.Append("length(");
+                RenderExpression(sb, length.Operand, names);
+                sb.Append(')');
+                break;
             case SqlDateTruncExpression dateTrunc:
                 sb.Append("date_trunc('day', ");
                 RenderExpression(sb, dateTrunc.Operand, names);
@@ -425,6 +435,22 @@ internal sealed class PostgresSqlRenderer : ISqlRenderer
                     sb.Append(", 'UTC')");
                 else
                     sb.Append(')');
+                break;
+            case SqlCoalesceExpression coalesce:
+                sb.Append("COALESCE(");
+                RenderExpression(sb, coalesce.Left, names);
+                sb.Append(", ");
+                RenderExpression(sb, coalesce.Right, names);
+                sb.Append(')');
+                break;
+            case SqlCaseExpression caseExpression:
+                sb.Append("CASE WHEN ");
+                RenderExpression(sb, caseExpression.Condition, names);
+                sb.Append(" THEN ");
+                RenderExpression(sb, caseExpression.WhenTrue, names);
+                sb.Append(" ELSE ");
+                RenderExpression(sb, caseExpression.WhenFalse, names);
+                sb.Append(" END");
                 break;
             case SqlArithmeticExpression arithmetic:
                 sb.Append('(');

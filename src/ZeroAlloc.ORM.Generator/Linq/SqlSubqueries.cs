@@ -102,6 +102,15 @@ internal static class SqlSubqueries
                 Add(any.Operand, subqueries);
                 Add(any.Array, subqueries);
                 break;
+            case SqlCoalesceExpression coalesce:
+                Add(coalesce.Left, subqueries);
+                Add(coalesce.Right, subqueries);
+                break;
+            case SqlCaseExpression caseExpression:
+                Add(caseExpression.Condition, subqueries);
+                Add(caseExpression.WhenTrue, subqueries);
+                Add(caseExpression.WhenFalse, subqueries);
+                break;
             case SqlArithmeticExpression arithmetic:
                 Add(arithmetic.Left, subqueries);
                 Add(arithmetic.Right, subqueries);
@@ -115,6 +124,13 @@ internal static class SqlSubqueries
                 break;
             case SqlAggregateCallExpression call:
                 if (call.Argument is { } argument) Add(argument, subqueries);
+                break;
+            case SqlContainsAllExpression containsAll:
+                Add(containsAll.Column, subqueries);
+                Add(containsAll.Values, subqueries);
+                break;
+            case SqlLengthExpression length:
+                Add(length.Operand, subqueries);
                 break;
             case SqlDateTruncExpression dateTrunc:
                 Add(dateTrunc.Operand, subqueries);

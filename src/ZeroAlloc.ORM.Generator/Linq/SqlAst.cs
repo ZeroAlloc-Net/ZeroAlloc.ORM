@@ -467,6 +467,31 @@ internal sealed record SqlAggregateCallExpression(
 /// </param>
 internal sealed record SqlDateTruncExpression(SqlExpression Operand, bool AtUtc) : SqlExpression;
 
+/// <summary>
+/// A setter value <c>param ?? column</c>: <c>COALESCE(left, right)</c>, the first operand that is
+/// not NULL.
+/// </summary>
+internal sealed record SqlCoalesceExpression(SqlExpression Left, SqlExpression Right) : SqlExpression;
+
+/// <summary>
+/// A setter value <c>flag ? a : b</c>: <c>CASE WHEN condition THEN whenTrue ELSE whenFalse END</c>,
+/// with a bool companion parameter as the condition. A NULL condition is not true, as in C#.
+/// </summary>
+internal sealed record SqlCaseExpression(SqlExpression Condition, SqlExpression WhenTrue, SqlExpression WhenFalse) : SqlExpression;
+
+/// <summary>
+/// <c>values.All(v =&gt; column.Contains(v))</c> over an array column and an array parameter:
+/// <c>"Column" @&gt; @values</c>, true when the column holds every value, and for no values.
+/// </summary>
+internal sealed record SqlContainsAllExpression(SqlExpression Column, SqlExpression Values) : SqlExpression;
+
+/// <summary>
+/// A string column's <c>.Length</c>: <c>length("Col")</c>, the number of characters. NULL for a NULL
+/// column, where C# would throw.
+/// </summary>
+/// <param name="Operand">The string column.</param>
+internal sealed record SqlLengthExpression(SqlExpression Operand) : SqlExpression;
+
 internal enum SqlAggregateFunction
 {
     /// <summary><c>count</c>.</summary>

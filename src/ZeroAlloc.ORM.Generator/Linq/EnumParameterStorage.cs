@@ -141,6 +141,15 @@ internal static class EnumParameterStorage
                     Visit(conditional.Condition);
                     Visit(conditional.Predicate);
                     break;
+                case SqlCoalesceExpression coalesce:
+                    Visit(coalesce.Left);
+                    Visit(coalesce.Right);
+                    break;
+                case SqlCaseExpression caseExpression:
+                    Visit(caseExpression.Condition);
+                    Visit(caseExpression.WhenTrue);
+                    Visit(caseExpression.WhenFalse);
+                    break;
                 case SqlArithmeticExpression arithmetic:
                     Visit(arithmetic.Left);
                     Visit(arithmetic.Right);
@@ -150,7 +159,7 @@ internal static class EnumParameterStorage
                 case SqlMemberExpression or SqlParameterExpression or SqlLiteralExpression or SqlEnumLiteralExpression
                     or SqlIsNullExpression or SqlCastExpression or SqlLikeExpression or SqlILikeExpression
                     or SqlAnyExpression or SqlPagingCountExpression or SqlAggregateCallExpression
-                    or SqlDateTruncExpression or SqlObjectIsNullExpression or SqlSystemColumnExpression:
+                    or SqlDateTruncExpression or SqlLengthExpression or SqlContainsAllExpression or SqlObjectIsNullExpression or SqlSystemColumnExpression:
                     break;
                 default:
                     throw new InvalidOperationException("No enum storage walk for " + expression.GetType().Name + ".");

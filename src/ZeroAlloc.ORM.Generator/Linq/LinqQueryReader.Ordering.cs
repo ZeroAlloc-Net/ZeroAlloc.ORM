@@ -34,7 +34,7 @@ internal static partial class LinqQueryReader
 
         var key = ReadComparand(returned, row, context);
         if (key is null) return false;
-        if (key is not SqlMemberExpression)
+        if (key is not (SqlMemberExpression or SqlLengthExpression))
         {
             // Ordering by a parameter or a constant orders nothing, and an integer constant in
             // ORDER BY names an output column in PostgreSQL.
