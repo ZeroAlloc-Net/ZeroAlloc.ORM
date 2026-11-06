@@ -103,9 +103,6 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     uses: ZeroAlloc-Net/.github/.github/workflows/publish.yml@main
-    permissions:
-      contents: write
-      id-token: write
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
       version: ${{ needs.release-please.outputs.version }}
@@ -113,18 +110,35 @@ jobs:
       # the GitHub release; the migration keeps its destinations as they are.
       github-packages: false
       release-assets: false
-      # Trusted publishing: set the NUGET_USER variable and add a trusted publisher policy on
-      # nuget.org for this repository and workflow to stop using the NUGET_API_KEY secret below.
-      nuget-user: ${{ vars.NUGET_USER }}
-    secrets:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      # nuget.org checks a trusted publisher against the workflow that runs the job, so the push is the
+      # push job below, not this reusable workflow.
+      push: false
+
+  push:
+    needs: [release-please, publish]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      # Runs as steps of this job, so nuget.org sees this workflow file in the OIDC claim, which is
+      # what the trusted publisher policy names. The policy is created by the account in NUGET_USER.
+      - uses: ZeroAlloc-Net/.github/.github/actions/nuget-push@main
+        with:
+          tag: ${{ needs.release-please.outputs.tag_name }}
+          version: ${{ needs.release-please.outputs.version }}
+          nuget-user: ${{ vars.NUGET_USER }}
+          nuget-api-key: ${{ secrets.NUGET_API_KEY }}
+          github-packages: false
+          release-assets: false
 
   # A CycloneDX SBOM of the released solution, attached to the GitHub release that release-please
   # created in the job above. It runs in its own job because publish is a shared reusable workflow,
   # which takes no extra steps. It builds the release tag, not main, so the SBOM describes exactly
   # the released code, and it waits for publish so the release build has passed first.
   sbom:
-    needs: [release-please, publish]
+    needs: [release-please, publish, push]
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     permissions:
