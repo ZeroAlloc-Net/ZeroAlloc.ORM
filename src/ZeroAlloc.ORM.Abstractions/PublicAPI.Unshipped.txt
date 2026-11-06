@@ -1,1 +1,3 @@
 #nullable enable
+ZeroAlloc.ORM.QueryAttribute.ExpectedRows.get -> int
+ZeroAlloc.ORM.QueryAttribute.ExpectedRows.init -> void
