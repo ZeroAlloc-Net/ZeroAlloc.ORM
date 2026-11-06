@@ -107,6 +107,15 @@ internal static class SqlParameterReferences
                 Add(any.Operand, names);
                 Add(any.Array, names);
                 break;
+            case SqlCoalesceExpression coalesce:
+                Add(coalesce.Left, names);
+                Add(coalesce.Right, names);
+                break;
+            case SqlCaseExpression caseExpression:
+                Add(caseExpression.Condition, names);
+                Add(caseExpression.WhenTrue, names);
+                Add(caseExpression.WhenFalse, names);
+                break;
             case SqlArithmeticExpression arithmetic:
                 Add(arithmetic.Left, names);
                 Add(arithmetic.Right, names);
@@ -120,6 +129,13 @@ internal static class SqlParameterReferences
                 break;
             case SqlAggregateCallExpression call:
                 if (call.Argument is { } argument) Add(argument, names);
+                break;
+            case SqlContainsAllExpression containsAll:
+                Add(containsAll.Column, names);
+                Add(containsAll.Values, names);
+                break;
+            case SqlLengthExpression length:
+                Add(length.Operand, names);
                 break;
             case SqlDateTruncExpression dateTrunc:
                 Add(dateTrunc.Operand, names);

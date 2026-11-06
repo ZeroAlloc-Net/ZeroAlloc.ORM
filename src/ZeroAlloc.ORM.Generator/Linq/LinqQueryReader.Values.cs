@@ -78,6 +78,9 @@ internal static partial class LinqQueryReader
             return OperandRead.Reported;
         }
 
+        if (IsStringLength(op))
+            return ReadStringLength((IPropertyReferenceOperation)op, row, context, out expression);
+
         expression = op.ConstantValue.HasValue ? ReadConstant(op) : ReadReference(op, row, context);
         if (expression is not null) return OperandRead.Read;
         if (!op.ConstantValue.HasValue && ReadsOuterRow(op, context))
@@ -93,6 +96,26 @@ internal static partial class LinqQueryReader
         return OperandRead.Reported;
     }
 
+    private static bool IsStringLength(IOperation op)
+        => op is IPropertyReferenceOperation { Property: { Name: "Length", IsStatic: false, ContainingType.SpecialType: SpecialType.System_String }, Instance: not null }
+            && !op.ConstantValue.HasValue;
+
+    // `column.Length` is `length("Column")`. Only a mapped column has one: the length of a
+    // parameter or an expression is not read in SQL.
+    private static OperandRead ReadStringLength(
+        IPropertyReferenceOperation length,
+        IParameterSymbol? row,
+        ReaderContext context,
+        out SqlExpression? expression)
+    {
+        expression = null;
+        var read = ReadOperand(length.Instance!, row, context, out var inner);
+        if (read == OperandRead.Reported) return OperandRead.Reported;
+        if (read != OperandRead.Read || inner is not SqlMemberExpression column) return OperandRead.Unsupported;
+        expression = new SqlLengthExpression(column);
+        return OperandRead.Read;
+    }
+
     // A setter's value: the forms every clause reads, a column of the row, a companion parameter
     // or a constant, plus null, and +, - and * over those on numbers. Arithmetic is read here
     // only; a predicate keeps rejecting it. Without a row parameter, as for SetProperty's plain
@@ -102,6 +125,8 @@ internal static partial class LinqQueryReader
         var op = Unwrap(value);
         if (IsNullValue(op)) return SqlLiteralExpression.Null;
         if (!op.ConstantValue.HasValue && op is IBinaryOperation binary) return ReadArithmetic(binary, row, context);
+        if (!op.ConstantValue.HasValue && op is ICoalesceOperation coalesce) return ReadCoalesce(coalesce, row, context);
+        if (!op.ConstantValue.HasValue && op is IConditionalOperation conditional) return ReadSetterConditional(conditional, row, context);
 
         switch (ReadOperand(value, row, context, out var expression))
         {
@@ -116,6 +141,47 @@ internal static partial class LinqQueryReader
             default:
                 return null;
         }
+    }
+
+    // `param ?? column`: COALESCE, so a null parameter keeps the column's value. Both sides are
+    // setter values; a coalesce that ends in a null literal, or has a value-object conversion
+    // between its sides, is not read.
+    private static SqlCoalesceExpression? ReadCoalesce(ICoalesceOperation coalesce, IParameterSymbol? row, ReaderContext context)
+    {
+        if (!coalesce.ValueConversion.IsIdentity && !coalesce.ValueConversion.IsImplicit)
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + coalesce.Syntax + "' in a setter value, where ?? needs both sides of one type,",
+                coalesce.Syntax.GetLocation()));
+            return null;
+        }
+
+        var left = ReadSetterValue(coalesce.Value, row, context);
+        if (left is null) return null;
+        var right = ReadSetterValue(coalesce.WhenNull, row, context);
+        return right is null ? null : new SqlCoalesceExpression(left, right);
+    }
+
+    // `flag ? a : b` where flag is a bool companion parameter: CASE WHEN. Any other condition is
+    // a predicate, which a setter value does not read.
+    private static SqlCaseExpression? ReadSetterConditional(IConditionalOperation conditional, IParameterSymbol? row, ReaderContext context)
+    {
+        if (Unwrap(conditional.Condition) is not IParameterReferenceOperation { Parameter: var flag }
+            || !context.SqlNames.ContainsKey(flag)
+            || flag.Type.SpecialType != SpecialType.System_Boolean)
+        {
+            context.Report(LinqDiagnostics.Unsupported(
+                "'" + conditional.Syntax + "' in a setter value, where the condition is a bool companion parameter only,",
+                conditional.Syntax.GetLocation()));
+            return null;
+        }
+
+        var condition = ReadSetterValue(conditional.Condition, row, context);
+        if (condition is null || conditional.WhenFalse is null) return null;
+        var whenTrue = ReadSetterValue(conditional.WhenTrue, row, context);
+        if (whenTrue is null) return null;
+        var whenFalse = ReadSetterValue(conditional.WhenFalse, row, context);
+        return whenFalse is null ? null : new SqlCaseExpression(condition, whenTrue, whenFalse);
     }
 
     // `null`, written bare or cast, as `(DateTimeOffset?)null`, or `default` of a type that can be

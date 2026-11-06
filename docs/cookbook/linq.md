@@ -531,6 +531,10 @@ no bound the generator knows, and its list starts empty and grows as usual.
 | `t.Title.StartsWith(text)`, `EndsWith(text)` | the same `LIKE`, with `%` on one side |
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
+| `ids.Contains(t.RunId.Value)` or `ids.Contains((Guid)t.RunId)`, for a nullable `t.RunId` | `"RunId" = ANY(@ids)`. A NULL never matches. `List<Guid?>` and `Guid?[]` are no array parameters; take the `.Value` |
+| `t.Tags.Contains(tag)`, for an array column | `@tag = ANY("Tags")` |
+| `values.All(v => t.Tags.Contains(v))`, for an array column and an array parameter | `"Tags" @> @values`, true for no values as in C# |
+| `t.Response.Length` | `length("Response")`, in `Where`, `OrderBy` and `Select`; NULL for a NULL column, where C# throws |
 | `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent set](#children-of-a-paged-parent-set) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
 
@@ -666,7 +670,9 @@ The result follows LINQ to Objects, with these rules:
   fraction. A `decimal` average agrees with LINQ only to about 16 significant digits, because
   PostgreSQL's `avg(numeric)` has its own scale. This is a known difference.
 - `Average`, `Min` and `Max` over no rows return `null` for a nullable result: `Task<double?>`,
-  `Task<DateTime?>`. For a non-null result such as `Task<double>` or `Task<DateTime>` they throw
+  `Task<DateTime?>`. The result type follows the selector: `Average(e => e.Cost)` over a non-nullable
+  `double Cost` is an `IQuery<double>`, so a `Task<double?>` method reports ZAO112. Cast the selector,
+  `Average(e => (double?)e.Cost)`, to get the nullable result. For a non-null result such as `Task<double>` or `Task<DateTime>` they throw
   `InvalidOperationException` with LINQ's message, "Sequence contains no elements", when no row
   matches, as LINQ does. Ask for the nullable result, or check with `Any()`, when the set can be empty.
 - `Min` and `Max` over a `bool`, a `Guid` or an enum stored by name report ZAO102, because
@@ -906,6 +912,10 @@ the row:
 - The value is a companion parameter, a constant, `null`, a column of the row, or `+`, `-` and `*` over
   those. Arithmetic takes `int`, `long`, `decimal`, `double` and `float` operands. Anything else,
   such as `/`, a method call or a cast, reports ZAO102.
+- `param ?? column` is `COALESCE(@param, "Column")`: a partial update keeps the column when an
+  optional parameter is null, in one statement. `flag ? param : column` is
+  `CASE WHEN @flag THEN @param ELSE "Column" END`, for a column the caller wants to set to NULL
+  on purpose. The condition is a `bool` companion parameter; any other condition reports ZAO102.
 - The value has the column's own type. A conversion, such as `(int?)null` or an `int?` or `long`
   parameter into an `int` column, reports ZAO102 at the target, so a cast cannot put a NULL into a
   non-nullable column.

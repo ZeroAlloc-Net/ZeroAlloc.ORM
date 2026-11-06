@@ -88,10 +88,18 @@ internal static partial class LinqQueryReader
                 return MayBeNull(subquery.Operand, nullableValues);
             case SqlCastExpression cast:
                 return MayBeNull(cast.Operand, nullableValues);
+            case SqlContainsAllExpression containsAll:
+                return MayBeNull(containsAll.Column, nullableValues) || MayBeNull(containsAll.Values, nullableValues);
+            case SqlLengthExpression length:
+                return MayBeNull(length.Operand, nullableValues);
             case SqlDateTruncExpression dateTrunc:
                 return MayBeNull(dateTrunc.Operand, nullableValues);
             case SqlBinaryExpression binary:
                 return MayBeNull(binary.Left, nullableValues) || MayBeNull(binary.Right, nullableValues);
+            case SqlCoalesceExpression coalesce:
+                return MayBeNull(coalesce.Left, nullableValues) && MayBeNull(coalesce.Right, nullableValues);
+            case SqlCaseExpression caseExpression:
+                return MayBeNull(caseExpression.WhenTrue, nullableValues) || MayBeNull(caseExpression.WhenFalse, nullableValues);
             case SqlArithmeticExpression arithmetic:
                 return MayBeNull(arithmetic.Left, nullableValues) || MayBeNull(arithmetic.Right, nullableValues);
             case SqlRowComparisonExpression rows:

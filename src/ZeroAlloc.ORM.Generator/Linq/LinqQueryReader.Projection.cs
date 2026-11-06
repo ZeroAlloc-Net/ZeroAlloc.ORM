@@ -155,6 +155,7 @@ internal static partial class LinqQueryReader
         SqlAggregateCallExpression { Function: not (SqlAggregateFunction.Count or SqlAggregateFunction.LongCount or SqlAggregateFunction.Sum), Argument: { } argument }
             => LiftedMember(argument, lifted),
         SqlCastExpression cast => LiftedMember(cast.Operand, lifted),
+        SqlLengthExpression length => LiftedMember(length.Operand, lifted),
         SqlDateTruncExpression dateTrunc => LiftedMember(dateTrunc.Operand, lifted),
         SqlMemberExpression member when lifted.Contains(member) => member,
         _ => null,

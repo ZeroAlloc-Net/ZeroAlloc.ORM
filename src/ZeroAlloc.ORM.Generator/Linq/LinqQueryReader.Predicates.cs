@@ -308,6 +308,9 @@ internal static partial class LinqQueryReader
         if (IsLinqMember(method, QueryOperatorsTypeName, "Contains") && invocation.Arguments.Length == 2)
             return ReadSubqueryContains(invocation, row, context);
 
+        if (IsEnumerableAll(method) && invocation.Arguments.Length == 2)
+            return ReadContainsAll(invocation, row, context);
+
         if (string.Equals(method.Name, "Contains", StringComparison.Ordinal) && CollectionContains(invocation) is { } membership)
             return ReadArrayContains(invocation, membership.Collection, membership.Item, row, context);
 
@@ -393,6 +396,12 @@ internal static partial class LinqQueryReader
         ReaderContext context)
     {
         var source = Unwrap(collection);
+        if (ArrayColumn(source, row, context) is { } arrayColumn)
+        {
+            var value = ReadComparand(UnwrapNullableItem(item), row, context);
+            return value is null ? null : new SqlAnyExpression(value, arrayColumn);
+        }
+
         if (source is not IParameterReferenceOperation reference
             || !context.SqlNames.ContainsKey(reference.Parameter)
             || ConventionDiscovery.Resolve(reference.Parameter.Type, context.Conventions).Kind != ConventionKind.PrimitiveArray)
@@ -406,8 +415,64 @@ internal static partial class LinqQueryReader
         }
 
         if (ReadOperand(source, row, context, out var array) != OperandRead.Read) return ReportUnsupported(invocation, context);
-        var operand = ReadComparand(item, row, context);
+        var operand = ReadComparand(UnwrapNullableItem(item), row, context);
         return operand is null ? null : new SqlAnyExpression(operand, array!);
+    }
+
+    // A row member that maps to an array column: `s.Tags`, a T[], List<T> or IReadOnlyList<T> of
+    // a type PostgreSQL has an array of. Null for any other operation.
+    private static SqlMemberExpression? ArrayColumn(IOperation op, IParameterSymbol? row, ReaderContext context)
+        => op is IMemberReferenceOperation
+            && TryReadRowMember(op, row, context, out _, out var type, out _)
+            && ConventionDiscovery.Resolve(type, context.Conventions).Kind == ConventionKind.PrimitiveArray
+            && ReadReference(op, row, context) is SqlMemberExpression column
+                ? column
+                : null;
+
+    private static bool IsEnumerableAll(IMethodSymbol method)
+        => string.Equals(method.Name, "All", StringComparison.Ordinal)
+            && string.Equals(method.ContainingType?.Name, "Enumerable", StringComparison.Ordinal)
+            && string.Equals(method.ContainingType?.ContainingNamespace?.ToDisplayString(), "System.Linq", StringComparison.Ordinal);
+
+    // `values.All(v => column.Contains(v))`: the column holds every value of an array parameter,
+    // `"Column" @> @values`. The only lambda body it reads is that Contains of its own parameter.
+    private static SqlExpression? ReadContainsAll(IInvocationOperation invocation, IParameterSymbol? row, ReaderContext context)
+    {
+        var source = Unwrap(ArgumentFor(invocation, 0));
+        if (source is not IParameterReferenceOperation reference
+            || !context.SqlNames.ContainsKey(reference.Parameter)
+            || ConventionDiscovery.Resolve(reference.Parameter.Type, context.Conventions).Kind != ConventionKind.PrimitiveArray
+            || !TryReadLambda(ArgumentFor(invocation, 1), out var element, out var returned)
+            || Unwrap(returned) is not IInvocationOperation contains
+            || !string.Equals(contains.TargetMethod.Name, "Contains", StringComparison.Ordinal)
+            || CollectionContains(contains) is not { } membership
+            || Unwrap(membership.Item) is not IParameterReferenceOperation item
+            || !SymbolEqualityComparer.Default.Equals(item.Parameter, element)
+            || ArrayColumn(Unwrap(membership.Collection), row, context) is not { } column
+            || ReadOperand(source, row, context, out var values) != OperandRead.Read)
+        {
+            return ReportUnsupported(invocation, context);
+        }
+
+        return new SqlContainsAllExpression(column, values!);
+    }
+
+    // The column of `t.RunId.Value` or `(Guid)t.RunId`, for a Nullable<T> column. `= ANY` is
+    // never true for a NULL column, which is what both forms mean for the rows that have a value.
+    private static IOperation UnwrapNullableItem(IOperation item)
+    {
+        var op = Unwrap(item);
+        return op switch
+        {
+            IPropertyReferenceOperation { Property: { Name: "Value", IsStatic: false } property, Instance: { } instance, Arguments.Length: 0 }
+                when property.ContainingType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+                => Unwrap(instance),
+            IConversionOperation { Conversion: { IsUserDefined: false, IsNullable: true }, Operand: { } operand } conversion
+                when operand.Type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }
+                    && conversion.Type?.OriginalDefinition.SpecialType != SpecialType.System_Nullable_T
+                => Unwrap(operand),
+            _ => op,
+        };
     }
 
     // The value an argument passes, by parameter position, whatever order named arguments take.
