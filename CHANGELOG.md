@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.14.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.13.0...v2.14.0) (2026-11-06)
+
+
+### Features
+
+* size a list result with Query ExpectedRows ([#458](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/458)) ([50f06ea](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/50f06ea6848c45733520b2af7f880be73eb1ac0a)), closes [#427](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/427)
+* translate array column Contains, nullable Contains, Length and setter coalesce ([#457](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/457)) ([c196545](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/c1965451e8c6a986456ff46be4eb44b6a2a77eac)), closes [#450](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/450) [#451](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/451) [#452](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/452) [#453](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/453) [#454](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/454)
+
+
+### Bug Fixes
+
+* report the compiler error of a [LinqQuery] companion that does not compile ([#455](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/455)) ([d849090](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/d849090fe6c5d9f767a0e35168bcc08d300db51b)), closes [#449](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/449)
+
 ## [2.13.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.12.0...v2.13.0) (2026-10-30)
 
 
