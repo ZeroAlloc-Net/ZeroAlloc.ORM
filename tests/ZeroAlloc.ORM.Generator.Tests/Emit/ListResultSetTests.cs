@@ -44,6 +44,36 @@ public class ListResultSetTests
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
+    // #427 item 2 — ExpectedRows sizes the generated list, capped, for a row list and a scalar list.
+    [Fact]
+    public void ExpectedRows_sizes_the_generated_list()
+    {
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed record OrderListRow(int Id, int CustomerId, decimal Total);
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT Id, CustomerId, Total FROM Orders ORDER BY Id LIMIT 10", ExpectedRows = 10)]
+                public partial Task<IReadOnlyList<OrderListRow>> Page(CancellationToken ct);
+
+                [Query("SELECT Id FROM Orders", ExpectedRows = 100000)]
+                public partial Task<List<int>> Ids(CancellationToken ct);
+
+                [Query("SELECT Id FROM Orders")]
+                public partial Task<List<int>> Unsized(CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
     [Fact]
     public void ListResultSet_with_DomainEntity_class_element_emits_named_column_reads()
     {

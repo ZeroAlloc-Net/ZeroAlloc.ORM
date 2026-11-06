@@ -220,7 +220,7 @@ public sealed partial class OrmGenerator
             {
                 Materialization = ReadEnumsAsStrings(method.Materialization, bound.EnumAsStringOrdinals[0]),
                 LinqThrowsOnNoElements = HasNoValueForNoRows(statements[0]),
-                LinqListCapacity = ListCapacity(statements[0]),
+                ListCapacity = ListCapacity(statements[0]),
             }
             : method with
             {
@@ -275,12 +275,12 @@ public sealed partial class OrmGenerator
     // and a full page never grows it. The cap keeps a large Take that reads a few rows from
     // allocating a large empty array up front; past it the list grows as usual. A parameter
     // Take has no bound known here, and gives zero, the unsized list.
-    private const int MaxLinqListCapacity = 1024;
+    private const int MaxListCapacity = 1024;
 
     private static int ListCapacity(SqlStatement statement)
         => statement is SqlSelectStatement { Paging.Limit: SqlLiteralExpression { Kind: SqlLiteralKind.Number } limit }
             && int.TryParse(limit.Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count)
-            ? System.Math.Min(count, MaxLinqListCapacity)
+            ? System.Math.Min(count, MaxListCapacity)
             : 0;
 
     // An int-convention enum parameter compared with EnumAsString columns binds the way a

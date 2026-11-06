@@ -754,6 +754,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         // second scan over the attribute's NamedArguments.
         var batchMode = 0; // BatchMode.Auto default
         var batchExplicitlySet = false;
+        var expectedRows = 0; // #427 — [Query(ExpectedRows = n)], the capacity of a list result
         if (triggeringAttribute is not null)
         {
             foreach (var named in triggeringAttribute.NamedArguments)
@@ -785,6 +786,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 {
                     batchMode = batchValue;
                     batchExplicitlySet = true;
+                }
+                else if (string.Equals(named.Key, "ExpectedRows", StringComparison.Ordinal)
+                    && named.Value.Value is int rows
+                    && rows > 0)
+                {
+                    expectedRows = System.Math.Min(rows, MaxListCapacity);
                 }
             }
         }
@@ -1501,7 +1508,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             HasNpgsql: hasNpgsql,
             PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
             LinqSourceComment: linq?.SourceComment,
-            LinqNoRowsMessage: linq?.NoRowsMessage);
+            LinqNoRowsMessage: linq?.NoRowsMessage,
+            ListCapacity: expectedRows);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -7250,7 +7258,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.LinqListCapacity)});");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.ListCapacity)});");
         sb.AppendLine($"            while (await __reader.ReadAsync({ct}).ConfigureAwait(false))");
         sb.AppendLine("            {");
         if (col.IsNullable)
@@ -8367,7 +8375,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         BuildCommandTextAssignment(sb, m, "__cmd", "            ");
         EmitParameterBindingWithIndent(sb, m, "            ");
         sb.AppendLine($"            await using var __reader = await __cmd.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
-        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.LinqListCapacity)});");
+        sb.AppendLine($"            var __list = new global::System.Collections.Generic.List<{mat.TargetTypeFullName}>({ListCapacityArgument(m.ListCapacity)});");
         var cols = mat.Columns;
         var useColumnNames = mat.Kind == MaterializationKind.DomainEntity;
         // Same ordinal-hoisting pattern as Streaming/FlatRow paths: column-name

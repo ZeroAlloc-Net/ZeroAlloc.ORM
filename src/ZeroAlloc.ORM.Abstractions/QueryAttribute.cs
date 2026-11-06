@@ -23,4 +23,16 @@ public sealed class QueryAttribute(string sql) : Attribute
     /// a single command with <c>NextResultAsync</c>.
     /// </summary>
     public BatchMode Batch { get; init; } = BatchMode.Auto;
+
+    /// <summary>
+    /// How many rows the method usually returns, for a method that returns a list. The generated list is
+    /// created with this capacity, so a result of up to that many rows never grows it. Zero, the default,
+    /// leaves the list unsized, which grows as rows arrive.
+    /// </summary>
+    /// <remarks>
+    /// The hint is capped at 1024, so a large value that is usually left unfilled does not allocate a large
+    /// empty array up front. It sizes the one list of a list-returning method; a tuple result reads each of its
+    /// lists unsized.
+    /// </remarks>
+    public int ExpectedRows { get; init; }
 }

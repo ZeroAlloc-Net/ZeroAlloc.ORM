@@ -59,7 +59,7 @@ internal sealed record MultiResultElement(
     public bool ThrowsOnNoElements { get; init; }
 
     // #427 — [LinqQuery] — a List or ScalarList element's capacity from its statement's
-    // literal Take, as QueryMethodModel.LinqListCapacity. Zero off the LINQ path.
+    // literal Take, as QueryMethodModel.ListCapacity. Zero off the LINQ path.
     public int ListCapacity { get; init; }
 }
 
