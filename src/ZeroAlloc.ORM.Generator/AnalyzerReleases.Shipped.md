@@ -176,3 +176,11 @@ ZAO113  | ZeroAlloc.ORM | Warning  | LINQ row lock without a transaction
 Rule ID | New Category  | New Severity | Old Category  | Old Severity | Notes
 --------|---------------|--------------|---------------|--------------|-------
 ZAO022  | ZeroAlloc.ORM | Error        | ZeroAlloc.ORM | Info         | Return type shape not supported
+
+## Release 2.14.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO114  | ZeroAlloc.ORM | Error    | LINQ companion does not compile
