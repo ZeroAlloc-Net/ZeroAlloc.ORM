@@ -72,6 +72,8 @@ ZeroAlloc.ORM.ParamAttribute.Size.init -> void
 ZeroAlloc.ORM.QueryAttribute
 ZeroAlloc.ORM.QueryAttribute.Batch.get -> ZeroAlloc.ORM.BatchMode
 ZeroAlloc.ORM.QueryAttribute.Batch.init -> void
+ZeroAlloc.ORM.QueryAttribute.ExpectedRows.get -> int
+ZeroAlloc.ORM.QueryAttribute.ExpectedRows.init -> void
 ZeroAlloc.ORM.QueryAttribute.FromResource.get -> bool
 ZeroAlloc.ORM.QueryAttribute.FromResource.init -> void
 ZeroAlloc.ORM.QueryAttribute.QueryAttribute(string! sql) -> void
