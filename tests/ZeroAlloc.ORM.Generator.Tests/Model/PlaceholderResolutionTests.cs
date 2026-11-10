@@ -152,6 +152,24 @@ public class PlaceholderResolutionTests
     }
 
     [Fact]
+    public void StoredProcedure_KeepsNoSpansNorTemplate_AndReportsZAO117()
+    {
+        var repo = RunRepository(Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, string table)
+            {
+                [StoredProcedure("{table}_proc")]
+                public partial Task<int> RunAsync(CancellationToken ct);
+            }
+            """);
+
+        var method = Assert.Single(repo.Methods);
+        Assert.Empty(method.SqlPlaceholders);
+        Assert.Null(method.SqlTemplate);
+        Assert.Equal("ZAO117", Assert.Single(method.Diagnostics).DescriptorId);
+        Assert.Empty(repo.PlaceholderMembers);
+    }
+
+    [Fact]
     public void ExistingSqlWithQuotedBraces_UnchangedModel()
     {
         var repo = RunRepository(Repo("(IAsyncDbConnection connection)", "", "SELECT COUNT(*) FROM T WHERE a = '{1,2}'"));

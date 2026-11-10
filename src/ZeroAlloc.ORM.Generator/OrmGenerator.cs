@@ -5789,7 +5789,12 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (nameStyle != m.ParameterNameStyle) m = m with { ParameterNameStyle = nameStyle };
             var strategy = BatchStrategyFor(m, dialect);
             if (strategy != m.Strategy) m = m with { Strategy = strategy };
+            // {name} placeholders — the accessor's name carries the method index, so overloads
+            // get distinct caches.
+            if (m.SqlPlaceholders.Length > 0 && m.SqlTemplate is not null)
+                m = m with { PlaceholderSqlAccessorName = PlaceholderSqlName("__Sql", m, methodIndex) };
             EmitLinqSqlConstant(sb, m);
+            EmitPlaceholderSqlCache(sb, m, methodIndex, repo.PlaceholderMembers);
             switch (m.Shape)
             {
                 case EmitShape.ScalarInt:
@@ -5997,6 +6002,145 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static string LinqSqlConstantName(QueryMethodModel m, int methodIndex) =>
         "__sql" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
 
+    // {name} placeholders — the per-method names, index-plus-name like LinqSqlConstantName.
+    // A [LinqQuery] method is never scanned for placeholders, so __sql<i>_<M> cannot be both.
+    private static string PlaceholderSqlName(string prefix, QueryMethodModel m, int methodIndex) =>
+        prefix + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
+
+    // {name} placeholders — the cache a method whose SQL holds placeholders reads its SQL from.
+    // A no-op for every other method, which keeps their output byte-identical. Per method:
+    //
+    //   private string? __sql<i>_<M>;            the resolved full SQL, filled on first use
+    //   private string[]? __sqlParts<i>_<M>;     its statements, for the batch-split emit
+    //   private static readonly ConcurrentDictionary<key, (string Full, string[] Parts)> __sqlCache<i>_<M>
+    //   private (string Full, string[] Parts) __Sql<i>_<M>()
+    //
+    // The key is the method's distinct member values in order of first appearance: a string
+    // for one, a value tuple for more. Lookups on it allocate nothing, so after warm-up an
+    // instance costs one dictionary lookup per method and then a field read; a fresh instance
+    // per call pays the lookup and shares the cached strings.
+    //
+    // The parts field is written before the full-text field, which is published with a
+    // volatile write and read with a volatile read, so a reader that sees the full text also
+    // sees the parts. Two threads filling the fields at once write the same references, taken
+    // from the cache, so the race is benign.
+    private static void EmitPlaceholderSqlCache(
+        StringBuilder sb, QueryMethodModel m, int methodIndex, EquatableArray<PlaceholderMember> members)
+    {
+        if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is not { } template) return;
+
+        var field = PlaceholderSqlName("__sql", m, methodIndex);
+        var partsField = PlaceholderSqlName("__sqlParts", m, methodIndex);
+        var cache = PlaceholderSqlName("__sqlCache", m, methodIndex);
+
+        // The distinct member accesses, in order of first appearance.
+        var accesses = new List<string>();
+        foreach (var span in m.SqlPlaceholders)
+        {
+            if (span.Kind != SqlPlaceholderKind.Member) continue;
+            var access = PlaceholderAccess(members, span.Name);
+            if (!accesses.Contains(access, StringComparer.Ordinal)) accesses.Add(access);
+        }
+
+        var keyType = accesses.Count == 1
+            ? "string"
+            : "(" + string.Join(", ", accesses.Select(_ => "string")) + ")";
+        string KeyPart(string placeholderName)
+        {
+            var index = accesses.IndexOf(PlaceholderAccess(members, placeholderName));
+            return accesses.Count == 1
+                ? "__k"
+                : "__k.Item" + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        var full = ResolvedSqlExpression(template, SqlPlaceholderScanner.Scan(template).Spans, KeyPart);
+        var parts = SqlStatementSplitter.Split(template)
+            .Select(statement => ResolvedSqlExpression(statement, SqlPlaceholderScanner.Scan(statement).Spans, KeyPart));
+
+        // Only {col:Name} placeholders: the SQL does not depend on the instance, so one static
+        // entry serves every call.
+        if (accesses.Count == 0)
+        {
+            sb.Append("    private static readonly (string Full, string[] Parts) ").Append(cache).AppendLine(" = (");
+            sb.Append("        ").Append(full).AppendLine(",");
+            sb.Append("        new string[] { ").Append(string.Join(", ", parts)).AppendLine(" });");
+            sb.AppendLine();
+            sb.Append("    private (string Full, string[] Parts) ").Append(accessor).Append("() => ").Append(cache).AppendLine(";");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.Append("    private string? ").Append(field).AppendLine(";");
+        sb.Append("    private string[]? ").Append(partsField).AppendLine(";");
+        sb.Append("    private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<")
+            .Append(keyType).Append(", (string Full, string[] Parts)> ").Append(cache).AppendLine(" = new();");
+        sb.AppendLine();
+        sb.Append("    private (string Full, string[] Parts) ").Append(accessor).AppendLine("()");
+        sb.AppendLine("    {");
+        sb.Append("        var __full = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");
+        sb.Append("        if (__full is not null) return (__full, ").Append(partsField).AppendLine("!);");
+        for (var i = 0; i < accesses.Count; i++)
+        {
+            var local = "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.Append("        var ").Append(local).Append(" = @").Append(accesses[i]).AppendLine(";");
+            sb.Append("        global::System.ArgumentException.ThrowIfNullOrWhiteSpace(").Append(local).Append(", ")
+                .Append(SymbolDisplay.FormatLiteral(accesses[i], quote: true)).AppendLine(");");
+        }
+        var key = accesses.Count == 1
+            ? "__v0"
+            : "(" + string.Join(", ", accesses.Select((_, i) => "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture))) + ")";
+        sb.Append("        var __entry = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k => (");
+        sb.Append("            ").Append(full).AppendLine(",");
+        sb.Append("            new string[] { ").Append(string.Join(", ", parts)).AppendLine(" }));");
+        sb.Append("        ").Append(partsField).AppendLine(" = __entry.Parts;");
+        sb.Append("        global::System.Threading.Volatile.Write(ref ").Append(field).AppendLine(", __entry.Full);");
+        sb.AppendLine("        return __entry;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    // The member expression a {name} placeholder reads. The transform resolved every name before
+    // emit, or reported ZAO115 and the repository is not emitted; the name itself is the fallback.
+    private static string PlaceholderAccess(EquatableArray<PlaceholderMember> members, string name)
+    {
+        foreach (var member in members)
+        {
+            if (string.Equals(member.Name, name, StringComparison.Ordinal)) return member.Access;
+        }
+        return name;
+    }
+
+    // A C# expression for `text` with each placeholder replaced: the literal pieces as string
+    // literals, each {name} as its key part, joined with +.
+    private static string ResolvedSqlExpression(
+        string text, ImmutableArray<SqlPlaceholderSpan> spans, Func<string, string> keyPart)
+    {
+        var pieces = new List<string>();
+        var literal = new StringBuilder();
+        var position = 0;
+        foreach (var span in spans)
+        {
+            literal.Append(text, position, span.Start - position);
+            position = span.Start + span.Length;
+            if (span.Kind == SqlPlaceholderKind.Column)
+            {
+                // {col:Name} emits the bare name; Task 5 adds dialect quoting.
+                literal.Append(span.Name);
+                continue;
+            }
+            if (literal.Length > 0)
+            {
+                pieces.Add(SymbolDisplay.FormatLiteral(literal.ToString(), quote: true));
+                literal.Clear();
+            }
+            pieces.Add(keyPart(span.Name));
+        }
+        literal.Append(text, position, text.Length - position);
+        if (literal.Length > 0 || pieces.Count == 0)
+            pieces.Add(SymbolDisplay.FormatLiteral(literal.ToString(), quote: true));
+        return string.Join(" + ", pieces);
+    }
+
     // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
     // Eight emit sites used to hand-write the identical open/try and finally/close blocks
     // — the helpers below collapse the duplication while keeping the byte-identical
@@ -6059,7 +6203,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
         // [LinqQuery] — EmitLinqSqlConstant already wrote the SQL as a constant.
-        var textLiteral = m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
+        // {name} placeholders — EmitPlaceholderSqlCache wrote an accessor for the resolved SQL.
+        var textLiteral = m.PlaceholderSqlAccessorName is { } accessor
+            ? accessor + "().Full"
+            : m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
         sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
         if (m.IsStoredProcedure)
         {

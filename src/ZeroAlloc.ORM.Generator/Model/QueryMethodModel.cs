@@ -366,7 +366,12 @@ internal sealed record QueryMethodModel(
     // splits SqlTemplate and rescans each statement.
     EquatableArray<SqlPlaceholderSpan> SqlPlaceholders = default,
     // The original attribute SQL, set only when SqlPlaceholders is not empty.
-    string? SqlTemplate = null);
+    string? SqlTemplate = null,
+    // The name of the generated accessor that returns this method's resolved SQL, such as
+    // __Sql0_CountAsync. Emit-only, like LinqSqlConstantName: RenderRepository sets it from the
+    // method's index for a method with placeholders, and BuildCommandTextAssignment then reads
+    // CommandText from it. Null for every other method, whose emit is unchanged.
+    string? PlaceholderSqlAccessorName = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
