@@ -216,7 +216,7 @@ not once per row.
 
 A library that ships repositories cannot know the table its adopters use, so the SQL of a `[Query]` or
 `[Command]` can name it with a `{table}` placeholder. The generator binds it to a `string` member of the
-repository: a captured primary-constructor parameter, a field or a property with a getter.
+repository: a primary-constructor parameter, a field or a property with a getter.
 
 ```csharp
 [Dialect(SqlDialect.Sqlite)]
@@ -249,6 +249,9 @@ The rules:
 
 The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input.
 
+The SQL for each distinct value is cached for the life of the process and never evicted, so keep the
+set of values small and fixed, such as one per deployment or pipeline, not one per request or per tenant.
+
 | ID | Severity | Fires when |
 | --- | --- | --- |
 | [ZAO115](../diagnostics/ZAO115.md) | Error | A placeholder finds no `string` member, finds several, or `QuoteColumns` is not a `bool`. |
@@ -256,9 +259,13 @@ The table value is configuration, not input: it is spliced into the SQL verbatim
 | [ZAO117](../diagnostics/ZAO117.md) | Error | A placeholder is in `BulkInsert` or stored-procedure SQL. |
 | [ZAO118](../diagnostics/ZAO118.md) | Error | `{col:Name}` is used on a repository with no declared dialect. |
 
-**Upgrading.** This is a behaviour change: a `{identifier}` in existing `[Query]` or `[Command]` SQL
-outside quotes is now a placeholder. It binds to a `string` member of the same name or fails the build
-with ZAO115. Move such brace text inside a string literal, or remove it.
+**Upgrading.** This is a behaviour change: a `{identifier}` or `{col:identifier}` in existing `[Query]` or
+`[Command]` SQL outside quotes and comments is now a placeholder. A `{identifier}` binds silently when the
+repository has a `string` member of the same name, and fails the build with ZAO115 otherwise. A
+`{col:identifier}` becomes a column name, and fails the build with ZAO118 when no dialect is declared. The
+scanner does not honour backslash escapes: in MySQL, or a PostgreSQL `E'...'` string, a `\'` inside a literal
+ends the literal for the scanner, so brace text after it can become a placeholder. Move such brace text
+inside a string literal that escapes quotes by doubling them, or remove it.
 
 ## Provider quirks
 

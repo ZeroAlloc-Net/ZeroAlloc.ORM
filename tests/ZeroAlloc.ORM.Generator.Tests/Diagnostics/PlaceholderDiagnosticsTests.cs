@@ -200,6 +200,29 @@ public class PlaceholderDiagnosticsTests
 
         var d = Assert.Single(GeneratorHarness.RunGenerator(source).Results[0].Diagnostics, x => string.Equals(x.Id, "ZAO115", System.StringComparison.Ordinal));
         Assert.Contains("more than one", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
+        Assert.Contains("primary-constructor parameter", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
+    }
+
+    // The common cause of two candidates: a primary-constructor parameter and a property that
+    // differ only in case. The message names the cause and the fix.
+    [Fact]
+    public void Table_ParameterAndPropertyNamedAlike_ReportsZAO115WithHint()
+    {
+        var source = ColumnUsings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, string table)
+            {
+                public string Table => table;
+
+                [Query("SELECT COUNT(*) FROM {table}")]
+                public partial Task<int> CountAsync(CancellationToken ct);
+            }
+            """;
+
+        var d = Assert.Single(GeneratorHarness.RunGenerator(source).Results[0].Diagnostics, x => string.Equals(x.Id, "ZAO115", System.StringComparison.Ordinal));
+        var message = d.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains("'table', 'Table'", message, System.StringComparison.Ordinal);
+        Assert.Contains("primary-constructor parameter and a property or field", message, System.StringComparison.Ordinal);
+        Assert.Contains("remove or rename", message, System.StringComparison.Ordinal);
     }
 
     private static string ValueRepo(string sql, string extraParams = "")

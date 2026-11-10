@@ -1701,7 +1701,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             return (null, "more than one bool member matches QuoteColumns ("
                 + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
-                + "); keep one of them");
+                + "); keep one of them. The usual cause is a primary-constructor parameter and a property"
+                + " or field whose names differ only in case or a leading underscore, such as 'quoteColumns' and 'QuoteColumns':"
+                + " remove or rename one");
         }
         var wrongType = matches.FirstOrDefault();
         if (wrongType.Access is not null)
@@ -1770,7 +1772,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             return (null, "more than one string member matches ("
                 + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
-                + "); keep one of them");
+                + "); keep one of them. The usual cause is a primary-constructor parameter and a property"
+                + " or field whose names differ only in case or a leading underscore, such as 'table' and 'Table':"
+                + " remove or rename one");
         }
         var wrongType = matches.FirstOrDefault(m => !m.IsString);
         if (wrongType.Access is not null)

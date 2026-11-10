@@ -26,8 +26,9 @@ runtime, binding and materialisation stay generated, and Outbox.Orm deletes `Out
 
 **Non-goals**
 
-- Placeholders in `[Command(Kind = BulkInsert)]`, `[LinqQuery]`, `[LinqCommand]` or stored
-  procedures. These are rejected with a diagnostic (section 5).
+- Placeholders in `[Command(Kind = BulkInsert)]` or stored procedures. These are rejected with a
+  diagnostic (section 5). `[LinqQuery]` and `[LinqCommand]` SQL is written by the translator, not the
+  user, so it is never scanned for placeholders.
 - Validating or quoting the table value. It is trusted configuration (decision 2).
 - A general string-substitution feature. Only the two forms below exist.
 
@@ -98,8 +99,9 @@ store is scoped and `OutboxSql` already needed a static cache for the same reaso
 may be racy but benign: two threads can both fill it, with an identical reference from the cache.
 
 Multi-statement SQL and tuple results resolve every statement. The batch-split emit already writes each
-statement's `CommandText`; each statement goes through the same cache. The `FromResource = true` path
-substitutes after the resource is read at generator time, so it needs no separate work.
+statement's `CommandText`; each statement goes through the same cache. `FromResource = true` is not
+implemented: ZAO020 reports it, and the `Sql` value is used as inline SQL, so placeholders in it work as
+in any other inline SQL. A future resource path would have to scan the SQL after reading the resource.
 
 Parameter detection (`FindPlaceholderSigil`, the parameter-name scan) must run on SQL with placeholders
 masked, so `{col:Id}` never counts as a parameter name or breaks the `@` and `:` sigil scan (`{col:Id}`
@@ -118,7 +120,7 @@ IDs are claimed here so a parallel PR cannot collide: **ZAO115 to ZAO118**.
 |---|---|---|
 | ZAO115 | Error | A `{name}` finds no `string` member, or finds more than one candidate. The message names the members it looked at. |
 | ZAO116 | Error | A placeholder sits where a value belongs: right after `=`, `<`, `>`, `LIKE` or `IN (`, inside a `VALUES (...)` tuple, or its name equals a method parameter that the SQL also uses as `@name`. The fix text says to use `@name` and a parameter. |
-| ZAO117 | Error | A placeholder appears in `BulkInsert`, `[LinqQuery]`, `[LinqCommand]` or stored-procedure SQL. |
+| ZAO117 | Error | A placeholder appears in `BulkInsert` or stored-procedure SQL. `[LinqQuery]` and `[LinqCommand]` SQL is translator-generated and never scanned. |
 | ZAO118 | Error | `{col:...}` is used on a repository with no declared dialect. |
 
 ZAO116 is a heuristic, not a parser. It is deliberately narrow: it flags the positions listed, not
