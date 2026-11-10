@@ -184,3 +184,14 @@ ZAO022  | ZeroAlloc.ORM | Error        | ZeroAlloc.ORM | Info         | Return t
 Rule ID | Category      | Severity | Notes
 --------|---------------|----------|-------
 ZAO114  | ZeroAlloc.ORM | Error    | LINQ companion does not compile
+
+## Release 2.16.0
+
+### New Rules
+
+Rule ID | Category      | Severity | Notes
+--------|---------------|----------|-------
+ZAO115  | ZeroAlloc.ORM | Error    | SQL placeholder finds no string member
+ZAO116  | ZeroAlloc.ORM | Error    | SQL placeholder where a value belongs
+ZAO117  | ZeroAlloc.ORM | Error    | SQL placeholder not supported here
+ZAO118  | ZeroAlloc.ORM | Error    | Column placeholder needs a declared dialect
