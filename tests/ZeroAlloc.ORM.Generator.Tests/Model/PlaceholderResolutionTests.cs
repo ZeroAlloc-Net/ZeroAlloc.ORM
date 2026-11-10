@@ -151,6 +151,29 @@ public class PlaceholderResolutionTests
         Assert.Equal(SqlPlaceholderKind.Column, Assert.Single(repo.Methods[0].SqlPlaceholders).Kind);
     }
 
+    [Theory]
+    [InlineData("(IAsyncDbConnection connection, bool quoteColumns)", "", "quoteColumns")]
+    [InlineData("(IAsyncDbConnection connection)", "    private readonly bool _QuoteColumns = true;", "_QuoteColumns")]
+    [InlineData("(IAsyncDbConnection connection)", "    public static bool QuoteColumns { get; } = true;", "QuoteColumns")]
+    public void QuoteColumns_BindsToABoolMember(string header, string members, string access)
+    {
+        var repo = RunRepository(Repo(header, members, "SELECT {col:Id} FROM T"));
+
+        Assert.Equal(access, repo.QuoteColumnsAccess);
+        Assert.Empty(repo.Methods[0].Diagnostics);
+        Assert.Equal("ZAO118", Assert.Single(repo.Methods[0].DialectRequiredDiagnostics).DescriptorId);
+    }
+
+    [Fact]
+    public void QuoteColumns_Absent_IsNull_AndMemberOnlyMethodHasNoZAO118()
+    {
+        Assert.Null(RunRepository(Repo("(IAsyncDbConnection connection)", "", "SELECT {col:Id} FROM T")).QuoteColumnsAccess);
+
+        var memberOnly = RunRepository(Repo("(IAsyncDbConnection connection, string table, bool quoteColumns)", ""));
+        Assert.Null(memberOnly.QuoteColumnsAccess);
+        Assert.Empty(memberOnly.Methods[0].DialectRequiredDiagnostics);
+    }
+
     [Fact]
     public void StoredProcedure_KeepsNoSpansNorTemplate_AndReportsZAO117()
     {

@@ -210,6 +210,57 @@ public class TablePlaceholderTests
         }
     }
 
+    [Fact]
+    public async Task QuotedColumns_RoundTrip()
+    {
+        var fx = new SqliteFixture();
+        await fx.InitializeAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            // Mixed-case names, one of them a reserved word: only a quoted reference parses.
+            await fx.ExecuteDdlAsync("CREATE TABLE \"Orders\" (\"Id\" INTEGER PRIMARY KEY, \"Order\" TEXT, \"Name\" TEXT)").ConfigureAwait(false);
+            var repo = new ColumnPlaceholderRepo(fx.Connection, "\"Orders\"", quoteColumns: true);
+
+            (await repo.InsertOrderAsync(1, "first", CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await repo.InsertNameAsync(2, "bolt", CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+            (await repo.GetOrderAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be("first");
+            (await repo.GetNameAsync(2, CancellationToken.None).ConfigureAwait(false)).Should().Be("bolt");
+        }
+    }
+
+    [Fact]
+    public async Task BareColumns_RoundTrip()
+    {
+        var fx = await SeededAsync("Widgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var repo = new ColumnPlaceholderRepo(fx.Connection, "Widgets", quoteColumns: false);
+
+            (await repo.InsertNameAsync(1, "bolt", CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+            (await repo.GetNameAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be("bolt");
+        }
+    }
+
+    [Fact]
+    public async Task ReservedWordColumn_BareFails_WhereQuotedWorks()
+    {
+        var fx = new SqliteFixture();
+        await fx.InitializeAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.ExecuteDdlAsync("CREATE TABLE Orders (Id INTEGER PRIMARY KEY, \"Order\" TEXT NOT NULL)").ConfigureAwait(false);
+            var bare = new ColumnPlaceholderRepo(fx.Connection, "Orders", quoteColumns: false);
+            var quoted = new ColumnPlaceholderRepo(fx.Connection, "Orders", quoteColumns: true);
+
+            var act = async () => await bare.InsertOrderAsync(1, "x", CancellationToken.None).ConfigureAwait(false);
+            await act.Should().ThrowAsync<SqliteException>().ConfigureAwait(false);
+
+            (await quoted.InsertOrderAsync(1, "x", CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+        }
+    }
+
     private static async Task<SqliteFixture> SeededAsync(params string[] tables)
     {
         var fx = new SqliteFixture();

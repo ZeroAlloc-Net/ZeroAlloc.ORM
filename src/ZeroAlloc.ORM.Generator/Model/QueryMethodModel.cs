@@ -371,7 +371,10 @@ internal sealed record QueryMethodModel(
     // __Sql0_CountAsync. Emit-only, like LinqSqlConstantName: RenderRepository sets it from the
     // method's index for a method with placeholders, and BuildCommandTextAssignment then reads
     // CommandText from it. Null for every other method, whose emit is unchanged.
-    string? PlaceholderSqlAccessorName = null);
+    string? PlaceholderSqlAccessorName = null,
+    // ZAO118, one per method that uses {col:Name}. Reported only when the repository declares no
+    // dialect, which is resolved after this model is built, like SqlServerOnlyDiagnostics.
+    EquatableArray<DiagnosticInfo> DialectRequiredDiagnostics = default);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
@@ -393,7 +396,7 @@ internal sealed record QueryRepositoryModel(
     // The string members the methods' {name} placeholders bind to, one per distinct name.
     EquatableArray<PlaceholderMember> PlaceholderMembers = default,
     // The bool member that switches {col:Name} quoting on, or null when the repository has none.
-    // Declared for the emit; nothing sets it yet.
+    // Set from the methods that use {col:Name}; the emit reads it together with the dialect.
     string? QuoteColumnsAccess = null);
 
 // A {name} placeholder bound to a member of the repository. Name is the placeholder name as the
@@ -455,4 +458,6 @@ internal sealed record QueryMethodWithTypeContext(
     string MethodSignature,
     // The members this method's {name} placeholders resolved to. The grouping step unions them
     // per repository.
-    EquatableArray<PlaceholderMember> PlaceholderMembers = default);
+    EquatableArray<PlaceholderMember> PlaceholderMembers = default,
+    // The bool member that switches {col:Name} quoting on, or null when the type has none.
+    string? QuoteColumnsAccess = null);

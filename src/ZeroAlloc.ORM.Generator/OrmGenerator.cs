@@ -213,7 +213,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                                Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()),
                                ContainingTypeChain: first.ContainingTypeChain,
                                HintName: first.HintName,
-                               PlaceholderMembers: UnionPlaceholderMembers(g.Select(x => x!.PlaceholderMembers)));
+                               PlaceholderMembers: UnionPlaceholderMembers(g.Select(x => x!.PlaceholderMembers)),
+                               QuoteColumnsAccess: g.Select(x => x!.QuoteColumnsAccess).FirstOrDefault(a => a is not null));
                        }))
             .WithTrackingName("Repositories");
 
@@ -548,6 +549,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var placeholderMembers = ImmutableArray<PlaceholderMember>.Empty;
         var placeholderSpans = ImmutableArray<SqlPlaceholderSpan>.Empty;
         string? sqlTemplate = null;
+        string? quoteColumnsAccess = null;
+        var dialectRequiredDiagnostics = ImmutableArray<DiagnosticInfo>.Empty;
         if (linq is null)
         {
             var scan = SqlPlaceholderScanner.Scan(isStoredProcedureAttribute ? procedureName : methodSql);
@@ -592,6 +595,28 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                         }
                     }
                     placeholderMembers = resolved.ToImmutable();
+
+                    // {col:Name} quotes by the QuoteColumns member and the declared dialect. The
+                    // dialect is known only after this model is built, so ZAO118 waits in the model.
+                    var firstColumn = scan.Spans.FirstOrDefault(sp => sp.Kind == SqlPlaceholderKind.Column);
+                    if (firstColumn is not null)
+                    {
+                        var columnText = "{col:" + firstColumn.Name + "}";
+                        var (quoteAccess, quoteProblem) = ResolveQuoteColumnsMember(containing);
+                        quoteColumnsAccess = quoteAccess;
+                        if (quoteProblem is not null)
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO115",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                    method.Name, columnText, quoteProblem))));
+                        }
+                        dialectRequiredDiagnostics = ImmutableArray.Create(new DiagnosticInfo(
+                            DescriptorId: "ZAO118",
+                            Location: nameLocation,
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, columnText))));
+                    }
                 }
 
                 if (!isStoredProcedureAttribute)
@@ -1575,7 +1600,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             LinqNoRowsMessage: linq?.NoRowsMessage,
             ListCapacity: expectedRows,
             SqlPlaceholders: new EquatableArray<SqlPlaceholderSpan>(placeholderSpans),
-            SqlTemplate: sqlTemplate);
+            SqlTemplate: sqlTemplate,
+            DialectRequiredDiagnostics: new EquatableArray<DiagnosticInfo>(dialectRequiredDiagnostics));
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1590,7 +1616,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             ContainingTypeChain: containingTypeChain,
             HintName: HintNames.ForRepository(containing),
             MethodSignature: method.ToDisplayString(MethodSignatureFormat),
-            PlaceholderMembers: new EquatableArray<PlaceholderMember>(placeholderMembers));
+            PlaceholderMembers: new EquatableArray<PlaceholderMember>(placeholderMembers),
+            QuoteColumnsAccess: quoteColumnsAccess);
     }
 
     // Each distinct placeholder in the order it first appears, as the SQL writes it.
@@ -1618,6 +1645,56 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
         return new EquatableArray<PlaceholderMember>(union.ToImmutable());
     }
+
+    // Binds the QuoteColumns switch of {col:Name} to a bool member of the containing type, found
+    // as ResolvePlaceholderMember finds a string one. No member is not a problem: columns are
+    // then never quoted. A member of another type, or two candidates, are reported as ZAO115.
+    private static (string? Access, string? Problem) ResolveQuoteColumnsMember(INamedTypeSymbol containing)
+    {
+        var matches = new List<(string Access, string TypeDisplay, bool IsBool)>();
+        void Consider(string access, ITypeSymbol type)
+        {
+            if (PlaceholderNameMatches(access, QuoteColumnsName)
+                && !matches.Any(m => string.Equals(m.Access, access, StringComparison.Ordinal)))
+                matches.Add((access, type.ToDisplayString(), type.SpecialType == SpecialType.System_Boolean));
+        }
+
+        foreach (var ctor in containing.InstanceConstructors)
+        {
+            foreach (var p in ctor.Parameters)
+            {
+                if (IsPrimaryConstructorParameter(p))
+                    Consider(p.Name, p.Type);
+            }
+        }
+        foreach (var member in containing.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+            if (member is IFieldSymbol f)
+                Consider(f.Name, f.Type);
+            else if (member is IPropertySymbol { IsIndexer: false, GetMethod: not null } pr)
+                Consider(pr.Name, pr.Type);
+        }
+
+        var candidates = matches.Where(m => m.IsBool).ToList();
+        if (candidates.Count == 1)
+            return (candidates[0].Access, null);
+        if (candidates.Count > 1)
+        {
+            return (null, "more than one bool member matches QuoteColumns ("
+                + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
+                + "); keep one of them");
+        }
+        var wrongType = matches.FirstOrDefault();
+        if (wrongType.Access is not null)
+        {
+            return (null, "the member '" + wrongType.Access + "' that switches column quoting is "
+                + wrongType.TypeDisplay + ", not bool");
+        }
+        return (null, null);
+    }
+
+    private const string QuoteColumnsName = "QuoteColumns";
 
     // A name matches a member when they are equal ignoring case and one leading underscore.
     private static bool PlaceholderNameMatches(string memberName, string placeholderName)
@@ -5483,6 +5560,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO114" => DiagnosticDescriptors.ZAO114_LinqCompanionDoesNotCompile,
         "ZAO115" => DiagnosticDescriptors.ZAO115_PlaceholderMemberNotFound,
         "ZAO117" => DiagnosticDescriptors.ZAO117_PlaceholderNotSupported,
+        "ZAO118" => DiagnosticDescriptors.ZAO118_ColumnPlaceholderWithoutDialect,
         _ => null,
     };
 
@@ -5522,6 +5600,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (!otherThanSqlServer)
             {
                 foreach (var diag in method.SqlServerOnlyDiagnostics)
+                    Report(diag);
+            }
+
+            // ZAO118. {col:Name} quotes in the style of the declared dialect, so without one there
+            // is no style. An unknown dialect value counts as none.
+            if (knownDialect is null)
+            {
+                foreach (var diag in method.DialectRequiredDiagnostics)
                     Report(diag);
             }
 
@@ -5798,7 +5884,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 anyPlaceholderSql = true;
             }
             EmitLinqSqlConstant(sb, m);
-            EmitPlaceholderSqlCache(sb, m, methodIndex, repo.PlaceholderMembers);
+            EmitPlaceholderSqlCache(sb, m, methodIndex, repo.PlaceholderMembers, repo.QuoteColumnsAccess, dialect);
             switch (m.Shape)
             {
                 case EmitShape.ScalarInt:
@@ -6050,8 +6136,15 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // The field holds one reference to an immutable holder, published with a volatile write and
     // read with a volatile read, so a reader never sees Full without its Parts. Two threads
     // filling the field at once write the same reference, taken from the cache.
+    //
+    // A method with {col:Name} placeholders on a repository that has a QuoteColumns member and a
+    // declared dialect adds the member's bool to the key, after the string values: a bare bool
+    // when the method has no {name} placeholder, else a value tuple. Each column then resolves to
+    // `flag ? <quoted constant> : <bare constant>`, with the quoted form chosen here from the
+    // dialect, so the generated code only picks between two string constants.
     private static void EmitPlaceholderSqlCache(
-        StringBuilder sb, QueryMethodModel m, int methodIndex, EquatableArray<PlaceholderMember> members)
+        StringBuilder sb, QueryMethodModel m, int methodIndex, EquatableArray<PlaceholderMember> members,
+        string? quoteColumnsAccess, int? dialect)
     {
         if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is not { } template) return;
 
@@ -6067,28 +6160,40 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (!accesses.Contains(access, StringComparer.Ordinal)) accesses.Add(access);
         }
 
-        var keyType = accesses.Count == 1
-            ? "string"
-            : "(" + string.Join(", ", accesses.Select(_ => "string")) + ")";
-        string KeyPart(string placeholderName)
-        {
-            var index = accesses.IndexOf(PlaceholderAccess(members, placeholderName));
-            return accesses.Count == 1
+        // The quote pair of the declared dialect, and the flag's place in the key. Without a
+        // declared dialect (the build already failed with ZAO118) columns stay bare.
+        var quote = quoteColumnsAccess is not null
+            && m.SqlPlaceholders.Any(sp => sp.Kind == SqlPlaceholderKind.Column)
+            && dialect is { } declaredDialect && Enum.IsDefined(typeof(SqlDialectModel), declaredDialect)
+                ? ColumnQuotes((SqlDialectModel)declaredDialect)
+                : ((string Open, string Close)?)null;
+
+        var keyTypes = accesses.Select(_ => "string").ToList();
+        if (quote is not null) keyTypes.Add("bool");
+        var keyType = keyTypes.Count == 1 ? keyTypes[0] : "(" + string.Join(", ", keyTypes) + ")";
+        string KeyItem(int index)
+            => keyTypes.Count == 1
                 ? "__k"
                 : "__k.Item" + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
+        string KeyPart(string placeholderName) => KeyItem(accesses.IndexOf(PlaceholderAccess(members, placeholderName)));
+        string? ColumnPart(string columnName)
+            => quote is { } q
+                ? "(" + KeyItem(accesses.Count) + " ? "
+                    + SymbolDisplay.FormatLiteral(q.Open + columnName + q.Close, quote: true)
+                    + " : " + SymbolDisplay.FormatLiteral(columnName, quote: true) + ")"
+                : null;
 
-        var full = ResolvedSqlExpression(template, SqlPlaceholderScanner.Scan(template).Spans, KeyPart);
+        var full = ResolvedSqlExpression(template, SqlPlaceholderScanner.Scan(template).Spans, KeyPart, ColumnPart);
         // Each statement is trimmed before it is resolved, as the batch emit trims a literal
         // statement, so a batch can assign a part with no Trim at runtime.
         var parts = SqlStatementSplitter.Split(template)
             .Select(statement => statement.Trim())
-            .Select(statement => ResolvedSqlExpression(statement, SqlPlaceholderScanner.Scan(statement).Spans, KeyPart));
+            .Select(statement => ResolvedSqlExpression(statement, SqlPlaceholderScanner.Scan(statement).Spans, KeyPart, ColumnPart));
         var holder = "new " + PlaceholderSqlHolder + "(" + full + ", new string[] { " + string.Join(", ", parts) + " })";
 
-        // Only {col:Name} placeholders: the SQL does not depend on the instance, so one static
-        // holder serves every call.
-        if (accesses.Count == 0)
+        // Only {col:Name} placeholders and no quote flag: the SQL does not depend on the instance,
+        // so one static holder serves every call.
+        if (keyTypes.Count == 0)
         {
             sb.Append("    private static readonly ").Append(PlaceholderSqlHolder).Append(' ').Append(cache)
                 .Append(" = ").Append(holder).AppendLine(";");
@@ -6113,9 +6218,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.Append("        global::System.ArgumentException.ThrowIfNullOrWhiteSpace(").Append(local).Append(", ")
                 .Append(SymbolDisplay.FormatLiteral(accesses[i], quote: true)).AppendLine(");");
         }
-        var key = accesses.Count == 1
+        if (quote is not null)
+        {
+            sb.Append("        var __v").Append(accesses.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" = @").Append(quoteColumnsAccess).AppendLine(";");
+        }
+        var key = keyTypes.Count == 1
             ? "__v0"
-            : "(" + string.Join(", ", accesses.Select((_, i) => "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture))) + ")";
+            : "(" + string.Join(", ", keyTypes.Select((_, i) => "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture))) + ")";
         sb.Append("        __sql = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k =>");
         sb.Append("            ").Append(holder).AppendLine(");");
         sb.Append("        global::System.Threading.Volatile.Write(ref ").Append(field).AppendLine(", __sql);");
@@ -6123,6 +6233,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
         sb.AppendLine();
     }
+
+    // The characters that quote an identifier in a dialect.
+    private static (string Open, string Close) ColumnQuotes(SqlDialectModel dialect) => dialect switch
+    {
+        SqlDialectModel.SqlServer => ("[", "]"),
+        SqlDialectModel.MySql => ("`", "`"),
+        _ => ("\"", "\""),
+    };
 
     // The member expression a {name} placeholder reads. The transform resolved every name before
     // emit, or reported ZAO115 and the repository is not emitted; the name itself is the fallback.
@@ -6137,8 +6255,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
     // A C# expression for `text` with each placeholder replaced: the literal pieces as string
     // literals, each {name} as its key part, joined with +.
+    // columnPart returns the expression of a {col:Name}, or null to write the bare name.
     private static string ResolvedSqlExpression(
-        string text, ImmutableArray<SqlPlaceholderSpan> spans, Func<string, string> keyPart)
+        string text, ImmutableArray<SqlPlaceholderSpan> spans, Func<string, string> keyPart,
+        Func<string, string?> columnPart)
     {
         var pieces = new List<string>();
         var literal = new StringBuilder();
@@ -6147,9 +6267,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             literal.Append(text, position, span.Start - position);
             position = span.Start + span.Length;
-            if (span.Kind == SqlPlaceholderKind.Column)
+            var piece = span.Kind == SqlPlaceholderKind.Column ? columnPart(span.Name) : keyPart(span.Name);
+            if (piece is null)
             {
-                // {col:Name} emits the bare name; Task 5 adds dialect quoting.
+                // A {col:Name} that is never quoted is its bare name.
                 literal.Append(span.Name);
                 continue;
             }
@@ -6158,7 +6279,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 pieces.Add(SymbolDisplay.FormatLiteral(literal.ToString(), quote: true));
                 literal.Clear();
             }
-            pieces.Add(keyPart(span.Name));
+            pieces.Add(piece);
         }
         literal.Append(text, position, text.Length - position);
         if (literal.Length > 0 || pieces.Count == 0)

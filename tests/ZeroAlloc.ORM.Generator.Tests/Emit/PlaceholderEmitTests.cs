@@ -128,6 +128,7 @@ public class PlaceholderEmitTests
     public void ColumnPlaceholder_EmitsBareName()
     {
         var source = Usings + """
+            [Dialect(SqlDialect.Sqlite)]
             public sealed partial class Repo(IAsyncDbConnection connection, string table)
             {
                 [Query("SELECT COUNT({col:Id}) FROM {table}")]
@@ -139,10 +140,79 @@ public class PlaceholderEmitTests
         Assert.Contains("\"SELECT COUNT(Id) FROM \" + __k", GeneratedSource(source), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("Sqlite", "\"Id\"")]
+    [InlineData("PostgreSql", "\"Id\"")]
+    [InlineData("SqlServer", "[Id]")]
+    [InlineData("MySql", "`Id`")]
+    public void Column_QuotedPerDialect(string dialect, string quoted)
+    {
+        var source = Usings + $$"""
+            [Dialect(SqlDialect.{{dialect}})]
+            public sealed partial class Repo(IAsyncDbConnection connection, string table, bool quoteColumns)
+            {
+                [Query("SELECT {col:Id} FROM {table}")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains("ConcurrentDictionary<(string, bool), __ZaoPlaceholderSql> __sqlCache0_GetAsync", generated, StringComparison.Ordinal);
+        Assert.Contains("var __v1 = @quoteColumns;", generated, StringComparison.Ordinal);
+        Assert.Contains("GetOrAdd((__v0, __v1), static __k =>", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "\"SELECT \" + (__k.Item2 ? " + Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(quoted, quote: true) + " : \"Id\") + \" FROM \" + __k.Item1",
+            generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Column_QuoteFlagOnly_KeysOnABool()
+    {
+        var source = Usings + """
+            [Dialect(SqlDialect.SqlServer)]
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                private readonly bool _quoteColumns = true;
+
+                [Query("SELECT {col:Id}, {col:Name} FROM T; SELECT {col:Id} FROM T")]
+                public partial Task<(IReadOnlyList<int> A, IReadOnlyList<int> B)> GetAsync(CancellationToken ct);
+            }
+            """;
+        var (runResult, _) = GeneratorHarness.RunGeneratorAndGetCompilation(source);
+        var generated = Assert.Single(runResult.Results[0].GeneratedSources).SourceText.ToString();
+
+        Assert.Contains("ConcurrentDictionary<bool, __ZaoPlaceholderSql> __sqlCache0_GetAsync", generated, StringComparison.Ordinal);
+        Assert.Contains("var __v0 = @_quoteColumns;", generated, StringComparison.Ordinal);
+        Assert.Contains("GetOrAdd(__v0, static __k =>", generated, StringComparison.Ordinal);
+        Assert.Contains("(__k ? \"[Id]\" : \"Id\")", generated, StringComparison.Ordinal);
+        Assert.Contains("(__k ? \"[Name]\" : \"Name\")", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("ThrowIfNullOrWhiteSpace(__v0", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Column_NoQuoteColumnsMember_EmitsBare()
+    {
+        var source = Usings + """
+            [Dialect(SqlDialect.SqlServer)]
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [Query("SELECT {col:Id} FROM T")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains("private static readonly __ZaoPlaceholderSql __sqlCache0_GetAsync = new __ZaoPlaceholderSql(\"SELECT Id FROM T\"", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Id]", generated, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ColumnPlaceholderOnly_UsesOneStaticEntry()
     {
         var source = Usings + """
+            [Dialect(SqlDialect.Sqlite)]
             public sealed partial class Repo(IAsyncDbConnection connection)
             {
                 [Query("SELECT COUNT({col:Id}) FROM T")]

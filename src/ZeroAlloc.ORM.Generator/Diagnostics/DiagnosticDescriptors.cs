@@ -914,4 +914,20 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO117"));
+
+    // ZAO118 -- a {col:Name} placeholder on a repository with no declared dialect, neither
+    // [Dialect] on the type nor on the assembly. The quote style comes from the dialect. Reported
+    // at the method's name, once per method.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the first column placeholder of the method, for example {col:Id}
+    public static readonly DiagnosticDescriptor ZAO118_ColumnPlaceholderWithoutDialect = new(
+        id: "ZAO118",
+        title: "Column placeholder needs a declared dialect",
+        messageFormat: "'{0}': the SQL placeholder {1} quotes in the style of the declared dialect, and none is declared; add [Dialect] to the repository or the assembly",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO118"));
 }
