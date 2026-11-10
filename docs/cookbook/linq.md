@@ -532,8 +532,8 @@ no bound the generator knows, and its list starts empty and grows as usual.
 | `Sql.ILike(t.Title, pattern)` | `"Title" ILIKE @pattern` |
 | `ids.Contains(t.Id)` | `"Id" = ANY(@ids)` |
 | `ids.Contains(t.RunId.Value)` or `ids.Contains((Guid)t.RunId)`, for a nullable `t.RunId` | `"RunId" = ANY(@ids)`. A NULL never matches. `List<Guid?>` and `Guid?[]` are no array parameters; take the `.Value` |
-| `t.Tags.Contains(tag)`, for an array column | `@tag = ANY("Tags")` |
-| `values.All(v => t.Tags.Contains(v))`, for an array column and an array parameter | `"Tags" @> @values`, true for no values as in C# |
+| `t.Tags.Contains(tag)`, or `t.Tags.Contains(tag, StringComparer.Ordinal)`, for an array column | `@tag = ANY("Tags")` |
+| `values.All(v => t.Tags.Contains(v))`, with or without `StringComparer.Ordinal`, for an array column and an array parameter | `"Tags" @> @values`, true for no values as in C# |
 | `t.Response.Length` | `length("Response")`, in `Where`, `OrderBy` and `Select`; NULL for a NULL column, where C# throws |
 | `Sql.Table<P>().Select(p => p.Id).Contains(t.PId)`, or `Select(p => (Guid?)p.Id)` for a nullable `t.PId` | `"PId" IN (SELECT "Id" FROM "P")`; see [children of a paged parent set](#children-of-a-paged-parent-set) |
 | `Sql.Row(t.CreatedAt, t.Id) > Sql.Row(at, id)` | `("created_at", "Id") > (@at, @id)` |
@@ -544,6 +544,9 @@ no bound the generator knows, and its list starts empty and grows as usual.
 - `==` on strings works too. `string.Equals` and the `StringComparison.Ordinal` overloads exist for
   codebases whose analyzers reject `==` or a comparison without a `StringComparison`. Any other
   `StringComparison` reports ZAO102.
+- `Contains` on a `string` array also accepts `StringComparer.Ordinal`, the overload that Meziantou.Analyzer's
+  MA0002 asks for. PostgreSQL compares array elements exactly, which is what Ordinal means. Any other comparer
+  reports ZAO102.
 - `= ANY` takes an array parameter: `T[]`, `List<T>` or `IReadOnlyList<T>` of `string`, `int`, `long`,
   `float`, `double` or `Guid`. Array parameters need Npgsql, and a slim data source needs `EnableArrays()`.
 - An enum parameter compared with a column stored by name binds by its member name. Compared with

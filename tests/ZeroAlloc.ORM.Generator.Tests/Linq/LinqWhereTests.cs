@@ -312,6 +312,53 @@ public class LinqWhereTests
             NpgsqlStub.Source);
     }
 
+    // The form MA0002 asks for on a string array column translates like the plain one, so a
+    // companion in a project that runs the analyzer as an error needs no suppression.
+    [Fact]
+    public void Contains_with_StringComparer_Ordinal_on_an_array_column_translates_like_the_plain_form()
+    {
+        const string Query = """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<RunItemRow>> Find(string tag, List<string> tags, CancellationToken ct);
+
+                private static IQuery<RunItemRow> FindQuery(string tag, List<string> tags) =>
+                    Sql.Table<RunItem>()
+                        .Where(t => t.Tags.Contains(tag/*C*/))
+                        .Where(t => tags.All(v => t.Tags.Contains(v/*C*/)))
+                        .Select(t => new RunItemRow(t.Id, 0));
+            }
+            """;
+
+        var plain = BindOnly(RunItem + Repo + Query.Replace("/*C*/", "", StringComparison.Ordinal), NpgsqlStub.Source);
+        var ordinal = BindOnly(RunItem + Repo + Query.Replace("/*C*/", ", StringComparer.Ordinal", StringComparison.Ordinal), NpgsqlStub.Source);
+
+        Assert.Contains("= ANY(\"Tags\")", plain.Sql, StringComparison.Ordinal);
+        Assert.Contains("\"Tags\" @>", plain.Sql, StringComparison.Ordinal);
+        Assert.Equal(plain.Sql, ordinal.Sql);
+    }
+
+    [Theory]
+    [InlineData("t => t.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)", "t.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)")]
+    [InlineData("t => tags.All(v => t.Tags.Contains(v, StringComparer.CurrentCulture))", "tags.All(v => t.Tags.Contains(v, StringComparer.CurrentCulture))")]
+    public void Contains_on_an_array_column_with_another_comparer_reports_ZAO102(string predicate, string located)
+    {
+        var (result, tree) = GeneratorHarness.RunGeneratorOnFile(Prelude + RunItem + Repo + """
+                [LinqQuery(nameof(FindQuery))]
+                public partial Task<List<RunItemRow>> Find(string tag, List<string> tags, CancellationToken ct);
+
+                private static IQuery<RunItemRow> FindQuery(string tag, List<string> tags) =>
+                    Sql.Table<RunItem>().Where(
+            """ + predicate + """
+            ).Select(t => new RunItemRow(t.Id, 0));
+            }
+            """);
+
+        var diagnostic = Assert.Single(result.Results[0].Diagnostics);
+        Assert.Equal("ZAO102", diagnostic.Id);
+        var span = diagnostic.Location.SourceSpan;
+        Assert.Equal(located, tree.ToString().Substring(span.Start, span.Length));
+    }
+
     [Fact]
     public void String_Length_in_Where_OrderBy_and_Select()
     {
@@ -991,9 +1038,11 @@ public class LinqWhereTests
     }
 
     // Runs the generator with step tracking and returns the bound [LinqQuery] method's model.
-    private static ZeroAlloc.ORM.Generator.Model.QueryMethodModel BindOnly(string body)
+    private static ZeroAlloc.ORM.Generator.Model.QueryMethodModel BindOnly(string body, string? additionalSource = null)
     {
-        var compilation = GeneratorHarness.CreateCompilation([CSharpSyntaxTree.ParseText(Prelude + body, path: "/src/Store.cs")]);
+        var trees = new List<SyntaxTree> { CSharpSyntaxTree.ParseText(Prelude + body, path: "/src/Store.cs") };
+        if (additionalSource is not null) trees.Add(CSharpSyntaxTree.ParseText(additionalSource, path: "/src/Extra.cs"));
+        var compilation = GeneratorHarness.CreateCompilation(trees);
         var driver = CSharpGeneratorDriver.Create(
             new[] { new OrmGenerator().AsSourceGenerator() },
             driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
