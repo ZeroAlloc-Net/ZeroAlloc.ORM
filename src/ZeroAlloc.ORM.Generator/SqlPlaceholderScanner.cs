@@ -31,6 +31,9 @@ internal static class SqlPlaceholderScanner
         while (i < sql.Length)
         {
             var c = sql[i];
+            // Dialect choices: backslash-escaped quotes (MySQL, Postgres E strings) are not honoured,
+            // and '[' opens a bracket identifier in every dialect, so a placeholder inside an array
+            // subscript is not found.
             switch (c)
             {
                 case '\'':
@@ -46,7 +49,10 @@ internal static class SqlPlaceholderScanner
                     i = SkipQuoted(sql, i, ']', doubling: false);
                     break;
                 case '$':
-                    i = SkipDollarQuote(sql, i);
+                    // Not an opener in the middle of an identifier such as a$b$.
+                    i = i > 0 && (IsIdentifierChar(sql[i - 1]) || sql[i - 1] == '$')
+                        ? i + 1
+                        : SkipDollarQuote(sql, i);
                     break;
                 case '-' when i + 1 < sql.Length && sql[i + 1] == '-':
                     i = SkipLineComment(sql, i);
@@ -69,24 +75,28 @@ internal static class SqlPlaceholderScanner
     private static int TryReadPlaceholder(
         string sql, int start, ImmutableArray<SqlPlaceholderSpan>.Builder spans, ref char[]? masked)
     {
-        var close = sql.IndexOf('}', start + 1);
-        if (close < 0)
-        {
-            return start + 1;
-        }
-
-        var inner = sql.AsSpan(start + 1, close - start - 1);
+        // Bounded scan: the name is at most an optional "col:" prefix plus identifier characters,
+        // so an unclosed brace never searches to the end of the SQL.
+        var nameStart = start + 1;
         var kind = SqlPlaceholderKind.Member;
-        if (inner.StartsWith(ColumnPrefix.AsSpan(), StringComparison.Ordinal))
+        if (string.CompareOrdinal(sql, nameStart, ColumnPrefix, 0, ColumnPrefix.Length) == 0)
         {
             kind = SqlPlaceholderKind.Column;
-            inner = inner.Slice(ColumnPrefix.Length);
+            nameStart += ColumnPrefix.Length;
         }
 
-        if (!IsIdentifier(inner))
+        var close = nameStart;
+        while (close < sql.Length && IsIdentifierChar(sql[close]))
+        {
+            close++;
+        }
+
+        if (close >= sql.Length || sql[close] != '}' || close == nameStart || !IsAsciiLetterOrUnderscore(sql[nameStart]))
         {
             return start + 1;
         }
+
+        var inner = sql.AsSpan(nameStart, close - nameStart);
 
         var length = close - start + 1;
         spans.Add(new SqlPlaceholderSpan(start, length, kind, inner.ToString()));
@@ -100,23 +110,8 @@ internal static class SqlPlaceholderScanner
         return close + 1;
     }
 
-    private static bool IsIdentifier(ReadOnlySpan<char> text)
-    {
-        if (text.IsEmpty || !IsAsciiLetterOrUnderscore(text[0]))
-        {
-            return false;
-        }
-
-        foreach (var ch in text)
-        {
-            if (!IsAsciiLetterOrUnderscore(ch) && (ch < '0' || ch > '9'))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    private static bool IsIdentifierChar(char c) =>
+        IsAsciiLetterOrUnderscore(c) || (c >= '0' && c <= '9');
 
     private static bool IsAsciiLetterOrUnderscore(char c) =>
         c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');

@@ -36,6 +36,14 @@ public class SqlPlaceholderScannerTests
             Assert.True(char.IsLetter(masked[0]) || masked[0] == '_');
             Assert.All(masked, c => Assert.True(char.IsLetterOrDigit(c) || c == '_'));
         }
+
+        for (var i = 0; i < sql.Length; i++)
+        {
+            if (!scan.Spans.Any(sp => i >= sp.Start && i < sp.Start + sp.Length))
+            {
+                Assert.Equal(sql[i], scan.MaskedSql[i]);
+            }
+        }
     }
 
     [Fact]
@@ -88,5 +96,39 @@ public class SqlPlaceholderScannerTests
         Assert.Single(scan.Spans);
         Assert.Equal("table", scan.Spans.Single().Name);
         Assert.Equal("SELECT '{table}' /* {table} */ FROM ".Length, scan.Spans[0].Start);
+    }
+
+    [Theory]
+    [InlineData("'abc {table}")]
+    [InlineData("/* {table}")]
+    [InlineData("$$ {table}")]
+    [InlineData("{table")]
+    [InlineData("{col:")]
+    public void Scan_UnterminatedRegions_GiveNoSpans(string sql)
+    {
+        var scan = SqlPlaceholderScanner.Scan(sql);
+
+        Assert.Empty(scan.Spans);
+        Assert.Equal(sql, scan.MaskedSql);
+    }
+
+    [Fact]
+    public void Scan_EmptyString_GivesNoSpans()
+    {
+        var scan = SqlPlaceholderScanner.Scan("");
+
+        Assert.Empty(scan.Spans);
+        Assert.Equal("", scan.MaskedSql);
+    }
+
+    [Theory]
+    [InlineData("$1 {table}")]
+    [InlineData("a$b$ {table}")]
+    public void Scan_DollarThatIsNotAQuote_StillFindsPlaceholder(string sql)
+    {
+        var scan = SqlPlaceholderScanner.Scan(sql);
+
+        Assert.Single(scan.Spans);
+        Assert.Equal("table", scan.Spans[0].Name);
     }
 }
