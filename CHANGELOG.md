@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.14.0...v2.15.0) (2026-11-10)
+
+
+### Features
+
+* accept StringComparer.Ordinal in Contains on an array column ([#467](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/467)) ([8f5da2b](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/8f5da2bfa1f9176aa0651cf84ea7a7661af2502f)), closes [#466](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/466)
+
 ## [2.14.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.13.0...v2.14.0) (2026-11-06)
 
 
