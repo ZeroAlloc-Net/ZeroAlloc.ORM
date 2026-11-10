@@ -113,7 +113,8 @@ internal static class SqlPlaceholderScanner
     // The spans that sit where a value belongs, for ZAO116. A narrow heuristic on the masked SQL:
     // a span right after (ignoring whitespace) =, <, >, <=, >=, <> or !=, the keyword LIKE, or
     // "IN (", or at nesting depth one of a VALUES (...) tuple. Identifier positions (FROM, JOIN,
-    // UPDATE, INTO, TABLE, after a dot, a column list, SELECT, ORDER BY) are never flagged.
+    // UPDATE, INTO, TABLE, after a dot, a column list, SELECT, ORDER BY) are never flagged, nor is
+    // a span followed by a dot, which qualifies a name, nor a VALUES( call right after =.
     internal static ImmutableArray<SqlPlaceholderSpan> FindValuePositionSpans(SqlPlaceholderScan scan)
     {
         var sql = BlankComments(scan.MaskedSql);
@@ -121,6 +122,7 @@ internal static class SqlPlaceholderScanner
         var result = ImmutableArray.CreateBuilder<SqlPlaceholderSpan>();
         foreach (var span in scan.Spans)
         {
+            if (IsQualifier(sql, span)) continue;
             if (inTuple.Contains(span.Start) || FollowsValueOperator(sql, span.Start))
                 result.Add(span);
         }
@@ -150,6 +152,15 @@ internal static class SqlPlaceholderScanner
         return blanked is null ? sql : new string(blanked);
     }
 
+    // A placeholder followed by a dot, as in {table}.OrderId, qualifies a name and is never a
+    // value. SQL allows whitespace before the dot, so that counts too.
+    private static bool IsQualifier(string sql, SqlPlaceholderSpan span)
+    {
+        var p = span.Start + span.Length;
+        while (p < sql.Length && char.IsWhiteSpace(sql[p])) p++;
+        return p < sql.Length && sql[p] == '.';
+    }
+
     private static bool FollowsValueOperator(string sql, int start)
     {
         var p = start - 1;
@@ -165,6 +176,13 @@ internal static class SqlPlaceholderScanner
         }
 
         return WordEndsAt(sql, p, "LIKE");
+    }
+
+    private static bool FollowsEquals(string sql, int start)
+    {
+        var p = start - 1;
+        while (p >= 0 && char.IsWhiteSpace(sql[p])) p--;
+        return p >= 0 && sql[p] == '=';
     }
 
     // True when `word` ends at index `end` as a whole word, ignoring case.
@@ -192,8 +210,11 @@ internal static class SqlPlaceholderScanner
             {
                 var wordStart = i;
                 while (i < sql.Length && IsIdentifierChar(sql[i])) i++;
+                // VALUES right after =, as in MySQL's UPDATE {col:X} = VALUES({col:X}), is a function
+                // call, not a tuple.
                 if (i - wordStart == 6
-                    && string.Compare(sql, wordStart, "VALUES", 0, 6, StringComparison.OrdinalIgnoreCase) == 0)
+                    && string.Compare(sql, wordStart, "VALUES", 0, 6, StringComparison.OrdinalIgnoreCase) == 0
+                    && !FollowsEquals(sql, wordStart))
                 {
                     i = ReadValuesTuples(sql, i, starts, hits);
                 }

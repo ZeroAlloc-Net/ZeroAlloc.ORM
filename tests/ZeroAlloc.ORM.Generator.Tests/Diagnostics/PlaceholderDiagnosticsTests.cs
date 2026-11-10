@@ -248,6 +248,8 @@ public class PlaceholderDiagnosticsTests
     [InlineData("INSERT INTO T VALUES (@a, {table})")]
     [InlineData("INSERT INTO T(a, b) VALUES (@a, @b), (@c, {table})")]
     [InlineData("INSERT INTO T VALUES(@a, {table})")]
+    // A dot after the placeholder exempts it only when the dot follows it.
+    [InlineData("INSERT INTO T VALUES (@a, {table}) ON CONFLICT DO NOTHING")]
     public void Placeholder_InsideValuesTuple_ReportsZAO116(string sql)
         => Assert.Equal(1, Count(ValueRepo(sql, "int a, int b, int c, "), "ZAO116"));
 
@@ -276,6 +278,15 @@ public class PlaceholderDiagnosticsTests
     [InlineData("SELECT COUNT(*) FROM T JOIN ({table}) x ON 1 = 1")]
     [InlineData("SELECT COUNT(*) FROM T WHERE a = @a -- x =\n AND b IN (SELECT 1 FROM {table})")]
     [InlineData("INSERT INTO T VALUES (@a, COALESCE({table}, 1))")]
+    // A placeholder followed by a dot qualifies a name, so it is never a value; whitespace
+    // before the dot does not change that, as SQL allows it there.
+    [InlineData("SELECT COUNT(*) FROM Orders o JOIN {table} ON o.Id = {table}.OrderId")]
+    [InlineData("SELECT COUNT(*) FROM Orders o JOIN {table} ON o.Id = {table} .OrderId")]
+    [InlineData("SELECT COUNT(*) FROM Orders o JOIN T ON o.Id = {col:Id}.OrderId")]
+    [InlineData("SELECT COUNT(*) FROM Orders o WHERE o.Id IN ({table}.OrderId)")]
+    // MySQL upsert: VALUES(...) right after = is a function call, not a VALUES tuple.
+    [InlineData("INSERT INTO {table} ({col:Id}) VALUES (@a) ON DUPLICATE KEY UPDATE {col:Id} = VALUES({col:Id})")]
+    [InlineData("INSERT INTO {table} ({col:Id}) VALUES (@a) ON DUPLICATE KEY UPDATE {col:Id} = VALUES ({col:Id})")]
     public void Placeholder_InIdentifierPosition_NoZAO116(string sql)
         => Assert.Equal(0, Count(ValueRepo(sql, "int a, int b, "), "ZAO116"));
 
