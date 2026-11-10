@@ -121,8 +121,6 @@ A library that ships repositories cannot know the table its adopters use, so the
 `[Command]` can name it with a `{table}` placeholder. The generator binds it to a `string` member of the
 repository: a captured primary-constructor parameter, a field or a property with a getter.
 
-> The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input.
-
 ```csharp
 [Dialect(SqlDialect.Sqlite)]
 public sealed partial class OrderRepository(IAsyncDbConnection connection, string table, bool quoteColumns)

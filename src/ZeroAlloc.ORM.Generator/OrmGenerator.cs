@@ -602,7 +602,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     foreach (var span in scan.Spans)
                     {
                         var text = span.Kind == SqlPlaceholderKind.Column ? "{col:" + span.Name + "}" : "{" + span.Name + "}";
-                        if ((valueSpans.Contains(span) || FindPlaceholderSigil(scan.MaskedSql, span.Name) is not null)
+                        if ((valueSpans.Contains(span)
+                             || (span.Kind == SqlPlaceholderKind.Member
+                                 && FindPlaceholderSigil(scan.MaskedSql, span.Name) is not null))
                             && seenValueTexts.Add(text))
                         {
                             diagnostics.Add(new DiagnosticInfo(

@@ -116,7 +116,7 @@ internal static class SqlPlaceholderScanner
     // UPDATE, INTO, TABLE, after a dot, a column list, SELECT, ORDER BY) are never flagged.
     internal static ImmutableArray<SqlPlaceholderSpan> FindValuePositionSpans(SqlPlaceholderScan scan)
     {
-        var sql = scan.MaskedSql;
+        var sql = BlankComments(scan.MaskedSql);
         var inTuple = TupleDepthOneStarts(sql, scan.Spans);
         var result = ImmutableArray.CreateBuilder<SqlPlaceholderSpan>();
         foreach (var span in scan.Spans)
@@ -126,6 +126,28 @@ internal static class SqlPlaceholderScanner
         }
 
         return result.ToImmutable();
+    }
+
+    // The SQL with every comment replaced by spaces, same length, so a comment between two tokens
+    // neither hides nor fakes an operator.
+    private static string BlankComments(string sql)
+    {
+        char[]? blanked = null;
+        var i = 0;
+        while (i < sql.Length)
+        {
+            var next = SkipOpaque(sql, i);
+            var c = sql[i];
+            if ((c == '-' || c == '/') && next > i + 1)
+            {
+                blanked ??= sql.ToCharArray();
+                for (var k = i; k < next; k++) blanked[k] = ' ';
+            }
+
+            i = next;
+        }
+
+        return blanked is null ? sql : new string(blanked);
     }
 
     private static bool FollowsValueOperator(string sql, int start)

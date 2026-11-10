@@ -201,12 +201,13 @@ public class PlaceholderDiagnosticsTests
         var d = Assert.Single(GeneratorHarness.RunGenerator(source).Results[0].Diagnostics, x => string.Equals(x.Id, "ZAO115", System.StringComparison.Ordinal));
         Assert.Contains("more than one", d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), System.StringComparison.Ordinal);
     }
+
     private static string ValueRepo(string sql, string extraParams = "")
         => ColumnUsings + $$"""
             [Dialect(SqlDialect.Sqlite)]
             public sealed partial class Repo(IAsyncDbConnection connection, string table)
             {
-                [Query("{{sql}}")]
+                [Query("{{sql.Replace("\n", "\\n", System.StringComparison.Ordinal)}}")]
                 public partial Task<int> GetAsync({{extraParams}}CancellationToken ct);
             }
             """;
@@ -228,6 +229,10 @@ public class PlaceholderDiagnosticsTests
     [InlineData("SELECT COUNT(*) FROM T WHERE a IN ({table}")]
     [InlineData("SELECT COUNT(*) FROM T WHERE a IN ( {table}, 1)")]
     [InlineData("SELECT COUNT(*) FROM T WHERE a = {col:Id}")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a IN({table}")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a NOT IN\n({table}, 1)")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a = /* c */ {table}")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a = -- c\n{table}")]
     public void Placeholder_AfterComparisonOperator_ReportsZAO116(string sql)
     {
         var source = ValueRepo(sql);
@@ -242,6 +247,7 @@ public class PlaceholderDiagnosticsTests
     [InlineData("INSERT INTO T VALUES ({table}, @b)")]
     [InlineData("INSERT INTO T VALUES (@a, {table})")]
     [InlineData("INSERT INTO T(a, b) VALUES (@a, @b), (@c, {table})")]
+    [InlineData("INSERT INTO T VALUES(@a, {table})")]
     public void Placeholder_InsideValuesTuple_ReportsZAO116(string sql)
         => Assert.Equal(1, Count(ValueRepo(sql, "int a, int b, int c, "), "ZAO116"));
 
@@ -266,6 +272,10 @@ public class PlaceholderDiagnosticsTests
     [InlineData("SELECT a FROM T WHERE {col:Id} = @a")]
     [InlineData("SELECT a FROM T WHERE a = @a AND b = 'x = {table}'")]
     [InlineData("INSERT INTO {table} ({col:Id}, {col:Name}) VALUES (@a, @b)")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a ALIKE {table}")]
+    [InlineData("SELECT COUNT(*) FROM T JOIN ({table}) x ON 1 = 1")]
+    [InlineData("SELECT COUNT(*) FROM T WHERE a = @a -- x =\n AND b IN (SELECT 1 FROM {table})")]
+    [InlineData("INSERT INTO T VALUES (@a, COALESCE({table}, 1))")]
     public void Placeholder_InIdentifierPosition_NoZAO116(string sql)
         => Assert.Equal(0, Count(ValueRepo(sql, "int a, int b, "), "ZAO116"));
 
@@ -294,4 +304,50 @@ public class PlaceholderDiagnosticsTests
     [Fact]
     public void Placeholder_InValuePosition_PreventsEmit()
         => Assert.Empty(GeneratorHarness.RunGenerator(ValueRepo("SELECT 1 FROM T WHERE a = {table}")).Results[0].GeneratedSources);
+
+    [Fact]
+    public void ColumnPlaceholder_NamedLikeUsedParameter_NoZAO116()
+    {
+        var insert = "INSERT INTO {table} ({col:Id}, {col:Name}) VALUES (@id, @name)";
+        Assert.Equal(0, Count(ValueRepo(insert, "int id, string name, "), "ZAO116"));
+        Assert.Equal(0, Count(ValueRepo("SELECT {col:Id} FROM {table} WHERE {col:Id} = @id", "int id, "), "ZAO116"));
+    }
+
+    [Fact]
+    public void MemberPlaceholder_NamedLikeUsedParameter_StillReportsZAO116()
+        => Assert.Equal(1, Count(ValueRepo("SELECT 1 FROM {table} WHERE x = @table", "string table, "), "ZAO116"));
+
+    [Fact]
+    public void Placeholder_AfterNestedCallInValuesTuple_IsAKnownFalseNegative()
+        => Assert.Equal(0, Count(ValueRepo("INSERT INTO T VALUES (@a, COALESCE({table}, 1))", "int a, "), "ZAO116"));
+
+    private static string RepoRoot()
+    {
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (dir is not null && !System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "docs", "diagnostics", "ZAO116.md")))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new System.InvalidOperationException("repo root not found");
+    }
+
+    // The first csharp block after the placeholder heading must generate without a diagnostic, so
+    // the documented example cannot drift into a build failure.
+    [Theory]
+    [InlineData("README.md")]
+    [InlineData("docs/cookbook/commands.md")]
+    [InlineData("docs/cookbook/flat-row.md")]
+    public void DocsPlaceholderExample_GeneratesWithoutDiagnostics(string file)
+    {
+        var text = System.IO.File.ReadAllText(System.IO.Path.Combine(RepoRoot(), file));
+        var heading = text.IndexOf("## Table and column placeholders", System.StringComparison.Ordinal);
+        Assert.True(heading >= 0);
+        var open = text.IndexOf("```csharp\n", heading, System.StringComparison.Ordinal);
+        Assert.True(open >= 0);
+        var start = open + "```csharp\n".Length;
+        var block = text.Substring(start, text.IndexOf("```", start, System.StringComparison.Ordinal) - start);
+
+        var result = GeneratorHarness.RunGenerator(ColumnUsings + "public sealed record OrderRow(int Id, string Name);\n\n" + block);
+
+        Assert.Empty(result.Results[0].Diagnostics);
+        Assert.NotEmpty(result.Results[0].GeneratedSources);
+    }
 }
