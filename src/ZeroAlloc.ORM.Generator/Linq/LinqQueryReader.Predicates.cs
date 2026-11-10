@@ -381,10 +381,20 @@ internal static partial class LinqQueryReader
         var typeName = method.ContainingType?.Name;
         var known = (string.Equals(ns, "System.Linq", StringComparison.Ordinal) && string.Equals(typeName, "Enumerable", StringComparison.Ordinal))
             || (string.Equals(ns, "System", StringComparison.Ordinal) && string.Equals(typeName, "MemoryExtensions", StringComparison.Ordinal));
-        return known && invocation.Arguments.Length == 2
+        return known && (invocation.Arguments.Length == 2 || (invocation.Arguments.Length == 3 && IsOrdinalComparer(invocation, 2)))
             ? (ArgumentFor(invocation, 0), ArgumentFor(invocation, 1))
             : null;
     }
+
+    // Whether the argument at `ordinal` is StringComparer.Ordinal, the comparer analyzers such as
+    // MA0002 ask for on a string membership test. PostgreSQL compares array elements as it
+    // compares text, exactly, which is what Ordinal means. Any other comparer is ZAO102.
+    private static bool IsOrdinalComparer(IInvocationOperation invocation, int ordinal)
+        => Unwrap(ArgumentFor(invocation, ordinal)) is IPropertyReferenceOperation
+        {
+            Property: { IsStatic: true, Name: "Ordinal", ContainingType: { Name: "StringComparer" } comparer },
+        }
+            && string.Equals(comparer.ContainingNamespace?.ToDisplayString(), "System", StringComparison.Ordinal);
 
     // `ids.Contains(t.Id)` — `"Id" = ANY(@ids)`. The collection must be a companion parameter
     // that binds as a PostgreSQL array: T[], List<T> or IReadOnlyList<T> of string, int, long, float, double or Guid.
