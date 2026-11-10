@@ -121,6 +121,26 @@ public class PlaceholderEmitTests
     }
 
     [Fact]
+    public void Memo_TwoStringMembersAndFlag_ComparesAllAndFillsKeyFromTuple()
+    {
+        var source = Usings + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class Repo(IAsyncDbConnection connection, string schema, string table, bool quoteColumns)
+            {
+                [Query("SELECT {col:Id} FROM {schema}.{table}")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains("ReferenceEquals(__m.Keys[0], __v0)", generated, StringComparison.Ordinal);
+        Assert.Contains("ReferenceEquals(__m.Keys[1], __v1)", generated, StringComparison.Ordinal);
+        Assert.Contains("__m.Quote == __v2", generated, StringComparison.Ordinal);
+        Assert.Contains("new string[] { __k.Item1, __k.Item2 }, __k.Item3)", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Placeholder_Method_Snapshot()
     {
         GeneratorSnapshot.Verify(AssertCompilesWithoutWarnings(CountRepo));

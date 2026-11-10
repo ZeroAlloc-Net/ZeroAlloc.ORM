@@ -6272,15 +6272,15 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine();
         sb.Append("    private ").Append(PlaceholderSqlHolder).Append(' ').Append(accessor).AppendLine("()");
         sb.AppendLine("    {");
-        var nl = System.Globalization.CultureInfo.InvariantCulture;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
         for (var i = 0; i < accesses.Count; i++)
         {
-            var local = "__v" + i.ToString(nl);
+            var local = "__v" + i.ToString(inv);
             sb.Append("        var ").Append(local).Append(" = @").Append(accesses[i]).AppendLine(";");
         }
         if (quote is not null)
         {
-            sb.Append("        var __v").Append(accesses.Count.ToString(nl))
+            sb.Append("        var __v").Append(accesses.Count.ToString(inv))
                 .Append(" = @").Append(quoteColumnsAccess).AppendLine(";");
         }
         // The memo answers while it was built for these very values. Strings compare by reference:
@@ -6289,20 +6289,20 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var hit = new List<string> { "__m is not null" };
         for (var i = 0; i < accesses.Count; i++)
         {
-            var n = i.ToString(nl);
+            var n = i.ToString(inv);
             hit.Add("global::System.Object.ReferenceEquals(__m.Keys[" + n + "], __v" + n + ")");
         }
-        if (quote is not null) hit.Add("__m.Quote == __v" + accesses.Count.ToString(nl));
+        if (quote is not null) hit.Add("__m.Quote == __v" + accesses.Count.ToString(inv));
         sb.Append("        var __m = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");
         sb.Append("        if (").Append(string.Join(" && ", hit)).AppendLine(") return __m;");
         for (var i = 0; i < accesses.Count; i++)
         {
-            sb.Append("        global::System.ArgumentException.ThrowIfNullOrWhiteSpace(__v").Append(i.ToString(nl)).Append(", ")
+            sb.Append("        global::System.ArgumentException.ThrowIfNullOrWhiteSpace(__v").Append(i.ToString(inv)).Append(", ")
                 .Append(SymbolDisplay.FormatLiteral(accesses[i], quote: true)).AppendLine(");");
         }
         var key = keyTypes.Count == 1
             ? "__v0"
-            : "(" + string.Join(", ", keyTypes.Select((_, i) => "__v" + i.ToString(nl))) + ")";
+            : "(" + string.Join(", ", keyTypes.Select((_, i) => "__v" + i.ToString(inv))) + ")";
         sb.Append("        var __sql = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k =>");
         sb.Append("            ").Append(holder).AppendLine(");");
         sb.Append("        global::System.Threading.Interlocked.CompareExchange(ref ").Append(field).AppendLine(", __sql, null);");
