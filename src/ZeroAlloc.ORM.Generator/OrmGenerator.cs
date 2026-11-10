@@ -8901,7 +8901,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -8955,7 +8955,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // (Auto, sharing try/finally) can re-use the same body shape.
     private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
         EmitBatchSetupWithIndent(sb, m, statements, indent);
         sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -8974,6 +8974,24 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         EmitMultiResultElements(sb, mat, ct, indent: indent);
     }
 
+    // {name} placeholders: the resolved statements live in the method's cached holder, already
+    // trimmed. The accessor is read once per batch, and each command takes its part, so the call
+    // allocates no SQL text. The statements are split from the template, as the holder's parts
+    // are, so the indices agree; the masked text only gates the multi-statement shape.
+    private static void EmitBatchPartsLocal(StringBuilder sb, QueryMethodModel m, string indent)
+    {
+        if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is null) return;
+        sb.Append(indent).Append("var __parts = ").Append(accessor).AppendLine("().Parts;");
+    }
+
+    private static ImmutableArray<string> BatchStatements(QueryMethodModel m) =>
+        SqlStatementSplitter.Split(m.PlaceholderSqlAccessorName is not null && m.SqlTemplate is { } template ? template : m.Sql);
+
+    private static string BatchStatementText(QueryMethodModel m, ImmutableArray<string> statements, int index) =>
+        m.PlaceholderSqlAccessorName is not null && m.SqlTemplate is not null
+            ? "__parts[" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]"
+            : SymbolDisplay.FormatLiteral(statements[index].Trim(), quote: true);
+
     // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
     // top-level BatchAlways path still calls the no-indent version through its
     // own try/finally body.
@@ -8981,13 +8999,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         sb.AppendLine($"{indent}await using var __batch = __conn.CreateBatch();");
         EmitTransactionAssignment(sb, m, indent, "__batch");
+        EmitBatchPartsLocal(sb, m, indent);
         for (var i = 0; i < statements.Length; i++)
         {
-            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
             var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             sb.AppendLine();
             sb.AppendLine($"{indent}var {cmdLocal} = __batch.CreateBatchCommand();");
-            sb.AppendLine($"{indent}{cmdLocal}.CommandText = {stmtLiteral};");
+            sb.AppendLine($"{indent}{cmdLocal}.CommandText = {BatchStatementText(m, statements, i)};");
             EmitBatchCommandParameterBindingWithIndent(sb, m, cmdLocal, i, indent);
             sb.AppendLine($"{indent}__batch.BatchCommands.Add({cmdLocal});");
         }
@@ -9220,13 +9238,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         sb.AppendLine("            await using var __batch = __conn.CreateBatch();");
         EmitTransactionAssignment(sb, m, "            ", "__batch");
+        EmitBatchPartsLocal(sb, m, "            ");
         for (var i = 0; i < statements.Length; i++)
         {
-            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
             var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             sb.AppendLine();
             sb.AppendLine($"            var {cmdLocal} = __batch.CreateBatchCommand();");
-            sb.AppendLine($"            {cmdLocal}.CommandText = {stmtLiteral};");
+            sb.AppendLine($"            {cmdLocal}.CommandText = {BatchStatementText(m, statements, i)};");
             EmitBatchCommandParameterBinding(sb, m, cmdLocal, i);
             sb.AppendLine($"            __batch.BatchCommands.Add({cmdLocal});");
         }

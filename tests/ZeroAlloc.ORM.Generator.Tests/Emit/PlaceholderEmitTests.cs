@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using ZeroAlloc.TypeConversions;
 using Microsoft.CodeAnalysis;
 using Xunit;
 using ZeroAlloc.TestHelpers;
@@ -241,6 +242,60 @@ public class PlaceholderEmitTests
         AssertCompilesWithoutWarnings(source);
 
         Assert.Contains("new __ZaoPlaceholderSql(__k, new string[] { __k })", GeneratedSource(source), StringComparison.Ordinal);
+    }
+
+    private const string TupleRepo = Usings + """
+        public sealed record Row(int Id, string Name);
+
+        public sealed partial class Repo(IAsyncDbConnection connection, string table)
+        {
+            [Query("SELECT Id, Name FROM {table} WHERE Id < @max; SELECT Id, Name FROM {table} WHERE Id >= @max;", Batch = BatchMode.Always)]
+            public partial Task<(List<Row> Low, List<Row> High)> SplitAsync(int max, CancellationToken ct);
+
+            [Query("SELECT Id, Name FROM {table} WHERE Id < @max; SELECT Id, Name FROM {table} WHERE Id >= @max;")]
+            public partial Task<(List<Row> Low, List<Row> High)> SplitAutoAsync(int max, CancellationToken ct);
+        }
+        """;
+
+    [Fact]
+    public void MultiStatement_UsesPartsPerStatement()
+    {
+        var source = TupleRepo;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        // BatchMode.Always: the accessor is read once, each statement takes its part.
+        Assert.Contains("var __parts = __Sql0_SplitAsync().Parts;", generated, StringComparison.Ordinal);
+        Assert.Contains("__cmd0.CommandText = __parts[0];", generated, StringComparison.Ordinal);
+        Assert.Contains("__cmd1.CommandText = __parts[1];", generated, StringComparison.Ordinal);
+        // BatchMode.Auto: the same inside the CanCreateBatch branch.
+        Assert.Contains("var __parts = __Sql1_SplitAutoAsync().Parts;", generated, StringComparison.Ordinal);
+        Assert.Contains("__cmd0.CommandText = __parts[0];", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("{table}", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Trim()", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MultiStatement_JoinedFallback_UsesFull()
+    {
+        var generated = GeneratedSource(TupleRepo);
+
+        // The fallback branch of BatchMode.Auto runs the joined text.
+        Assert.Contains("__cmd.CommandText = __Sql1_SplitAutoAsync().Full;", generated, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SELECT 1 FROM {table}; SELECT 2 FROM {table}")]
+    [InlineData("SELECT ';' FROM {table}; SELECT 2 FROM {table};")]
+    [InlineData("SELECT 1 FROM {table} -- a; b\n; SELECT 2")]
+    [InlineData("SELECT '{table}' FROM {table}; SELECT /* ; */ 2")]
+    public void MultiStatement_MaskedAndTemplateAgreeOnStatementCount(string template)
+    {
+        var masked = ZeroAlloc.ORM.Generator.SqlPlaceholderScanner.Scan(template).MaskedSql;
+
+        Assert.Equal(
+            SqlStatementSplitter.CountStatements(masked),
+            SqlStatementSplitter.Split(template).Length);
     }
 
     private static string GeneratedSource(string source)

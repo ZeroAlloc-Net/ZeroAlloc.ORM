@@ -78,6 +78,59 @@ public class TablePlaceholderTests
     }
 
     [Fact]
+    public async Task MultiStatementQuery_BothStatementsUseTable()
+    {
+        var fx = await SeededAsync("Widgets", "Gadgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var widgets = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            var gadgets = new TablePlaceholderRepo(fx.Connection, "Gadgets");
+            for (var id = 1; id <= 4; id++)
+                await widgets.InsertAsync(id, "w" + id, CancellationToken.None).ConfigureAwait(false);
+            await gadgets.InsertAsync(9, "g9", CancellationToken.None).ConfigureAwait(false);
+
+            var (low, high) = await widgets.SplitAsync(3, CancellationToken.None).ConfigureAwait(false);
+            low.Select(r => r.Name).Should().Equal("w1", "w2");
+            high.Select(r => r.Name).Should().Equal("w3", "w4");
+
+            var (gLow, gHigh) = await gadgets.SplitAsync(3, CancellationToken.None).ConfigureAwait(false);
+            gLow.Should().BeEmpty();
+            gHigh.Select(r => r.Name).Should().Equal("g9");
+        }
+    }
+
+    [Fact]
+    public async Task MultiStatementQuery_JoinedFallback_BothStatementsUseTable()
+    {
+        var fx = await SeededAsync("Widgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var repo = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            for (var id = 1; id <= 4; id++)
+                await repo.InsertAsync(id, "w" + id, CancellationToken.None).ConfigureAwait(false);
+
+            var (low, high) = await repo.SplitJoinedAsync(3, CancellationToken.None).ConfigureAwait(false);
+
+            low.Select(r => r.Name).Should().Equal("w1", "w2");
+            high.Select(r => r.Name).Should().Equal("w3", "w4");
+        }
+    }
+
+    [Fact]
+    public async Task MultiStatementCommand_BothStatementsUseTable()
+    {
+        var fx = await SeededAsync("Widgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var repo = new TablePlaceholderRepo(fx.Connection, "Widgets");
+
+            await repo.InsertTwoAsync(5, CancellationToken.None).ConfigureAwait(false);
+
+            (await repo.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(2);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentFirstUse_AllCallsSucceed()
     {
         const int Callers = 32;

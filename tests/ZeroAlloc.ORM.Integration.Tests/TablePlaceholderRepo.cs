@@ -21,4 +21,17 @@ public sealed partial class TablePlaceholderRepo(IAsyncDbConnection connection, 
 
     [Query("SELECT COUNT(*) FROM {table} WHERE Id = @id")]
     public partial ValueTask<int> CountByIdAsync(int id, CancellationToken ct);
+
+    // Two statements, both on {table}. BatchMode.Auto runs the batch where the provider has one
+    // and the joined text where it has not: Sqlite takes the joined path.
+    [Query("SELECT Id, Name FROM {table} WHERE Id < @max ORDER BY Id; SELECT Id, Name FROM {table} WHERE Id >= @max ORDER BY Id;")]
+    public partial Task<(IReadOnlyList<PlaceholderRow> Low, IReadOnlyList<PlaceholderRow> High)> SplitAsync(int max, CancellationToken ct);
+
+    [Query(
+        "SELECT Id, Name FROM {table} WHERE Id < @max ORDER BY Id; SELECT Id, Name FROM {table} WHERE Id >= @max ORDER BY Id;",
+        Batch = BatchMode.Never)]
+    public partial Task<(IReadOnlyList<PlaceholderRow> Low, IReadOnlyList<PlaceholderRow> High)> SplitJoinedAsync(int max, CancellationToken ct);
+
+    [Command("INSERT INTO {table} (Id, Name) VALUES (@id, 'a'); INSERT INTO {table} (Id, Name) VALUES (@id + 1, 'b')")]
+    public partial Task<int> InsertTwoAsync(int id, CancellationToken ct);
 }
