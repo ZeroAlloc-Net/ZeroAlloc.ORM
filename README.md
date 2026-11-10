@@ -115,6 +115,61 @@ property names, as in EF Core. Filters, ordering, `Skip`/`Take`, `Sql.Row` keyse
 [LINQ recipe](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) for every
 operator, result shape and diagnostic.
 
+## Table and column placeholders
+
+A library that ships repositories cannot know the table its adopters use, so the SQL of a `[Query]` or
+`[Command]` can name it with a `{table}` placeholder. The generator binds it to a `string` member of the
+repository: a primary-constructor parameter, a field or a property with a getter.
+
+```csharp
+[Dialect(SqlDialect.Sqlite)]
+public sealed partial class OrderRepository(IAsyncDbConnection connection, string table, bool quoteColumns)
+{
+    [Query("SELECT COUNT(*) FROM {table} WHERE Status = @status")]
+    public partial Task<int> CountAsync(string status, CancellationToken ct);
+
+    [Query("SELECT {col:Id}, {col:Name} FROM {table} WHERE {col:Id} = @id")]
+    public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
+}
+```
+
+`{table}` binds to `table`, ignoring case and one leading underscore, so `_table` works too. `{col:Id}`
+writes a column name. It is quoted in the style of the declared `[Dialect]` when the repository has a `bool`
+member named `QuoteColumns` that is true, and bare otherwise: `"Id"` for SQLite and PostgreSQL, `[Id]` for
+SQL Server, a backtick on both sides for MySQL. Without a declared dialect `{col:Id}` is a build error.
+Here the member `quoteColumns` carries the flag.
+
+The rules:
+
+- Placeholders work in `[Command]` and `[Query]` SQL, outside quotes and comments. `'{1,2}'` and
+  `-- {x}` are not placeholders. `BulkInsert` and `[StoredProcedure]` names do not take them (ZAO117).
+- The value is read once per repository instance, on first use. A later change on the same instance is not seen.
+- The SQL for each distinct value is built once and cached process-wide, so a call allocates the same as a
+  call with literal SQL.
+- A null or blank table throws `ArgumentException` on first use.
+- A placeholder belongs where a name belongs. Use `@parameter` for values; the build refuses a placeholder
+  after `=`, `LIKE` or `IN (` or in a `VALUES` tuple (ZAO116).
+
+The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input.
+
+The SQL for each distinct value is cached for the life of the process and never evicted, so keep the
+set of values small and fixed, such as one per deployment or pipeline, not one per request or per tenant.
+
+| ID | Severity | Fires when |
+| --- | --- | --- |
+| [ZAO115](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO115.md) | Error | A placeholder finds no `string` member, finds several, or `QuoteColumns` is not a `bool`. |
+| [ZAO116](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO116.md) | Error | A placeholder sits where a value belongs. |
+| [ZAO117](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO117.md) | Error | A placeholder is in `BulkInsert` or stored-procedure SQL. |
+| [ZAO118](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/ZAO118.md) | Error | `{col:Name}` is used on a repository with no declared dialect. |
+
+**Upgrading.** This is a behaviour change: a `{identifier}` or `{col:identifier}` in existing `[Query]` or
+`[Command]` SQL outside quotes and comments is now a placeholder. A `{identifier}` binds silently when the
+repository has a `string` member of the same name, and fails the build with ZAO115 otherwise. A
+`{col:identifier}` becomes a column name, and fails the build with ZAO118 when no dialect is declared. The
+scanner does not honour backslash escapes: in MySQL, or a PostgreSQL `E'...'` string, a `\'` inside a literal
+ends the literal for the scanner, so brace text after it can become a placeholder. Move such brace text
+inside a string literal that escapes quotes by doubling them, or remove it.
+
 ## What you get
 
 - **Every common result shape:** scalars, single rows, lists, `IAsyncEnumerable<T>` streams and

@@ -63,6 +63,10 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 | ZAO112 | Error | LINQ method return type does not fit the query | [ZAO112](ZAO112.md) |
 | ZAO113 | Warning | LINQ row lock without a transaction | [ZAO113](ZAO113.md) |
 | ZAO114 | Error | LINQ companion does not compile | [ZAO114](ZAO114.md) |
+| ZAO115 | Error | SQL placeholder finds no string member | [ZAO115](ZAO115.md) |
+| ZAO116 | Error | SQL placeholder where a value belongs | [ZAO116](ZAO116.md) |
+| ZAO117 | Error | SQL placeholder not supported here | [ZAO117](ZAO117.md) |
+| ZAO118 | Error | Column placeholder needs a declared dialect | [ZAO118](ZAO118.md) |
 
 ## Code-range conventions
 
@@ -73,6 +77,7 @@ This table is the **canonical index**: it lists every `DiagnosticDescriptor` cur
 - `ZAO070`–`ZAO074` — `BulkInsert` shape diagnostics.
 - `ZAO080`–`ZAO081` — transaction-parameter and nested-repository partial-type guardrails.
 - `ZAO082`–`ZAO084` — provider-specific types and their markers: PostgreSQL arrays, `[Json]` strings, `xid` parameters and `[LinqCommand]` parameters set into jsonb columns need Npgsql, `[Json]` needs a string, and all of them only work on a PostgreSQL repository.
+- `ZAO115` to `ZAO118` — `{name}` and `{col:Name}` placeholders in `[Query]` and `[Command]` SQL: `ZAO115` is a placeholder with no single member to bind to, `ZAO116` a placeholder where a value belongs, `ZAO117` a placeholder in `BulkInsert` or stored-procedure SQL, `ZAO118` a `{col:Name}` on a repository with no declared dialect.
 - `ZAO100`–`ZAO199` — `[LinqQuery]` and `[LinqCommand]` translation and their `[TableMap]` / `[ColumnMap]` entity maps. `ZAO106` is an invalid entity map; `ZAO109` is a call to a companion, which never runs; `ZAO110` is a warning about paging without an order; `ZAO113` is a warning about a row lock without a transaction; `ZAO114` is a C# compile error in a companion, reported with the compiler's own message; the others report a companion, chain, projection, parameter, dialect or return type the translator cannot use.
 
 Diagnostic IDs are stable across releases; new diagnostics use the next free slot in the appropriate range. Retired IDs (for example `ZAO021`, removed in v0.3 Phase B.5) are not reused and are dropped from this table once removed from `DiagnosticDescriptors.cs`.

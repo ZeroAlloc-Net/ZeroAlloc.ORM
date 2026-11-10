@@ -881,4 +881,70 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO114"));
+
+    // ZAO115 -- a {name} placeholder in [Query] or [Command] SQL finds no usable string member of
+    // the repository: none, two or more candidates, a member of another type, or a constructor
+    // parameter that is never captured. Reported at the method's name.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    //   {2} = why it did not bind, and the members that were looked at
+    public static readonly DiagnosticDescriptor ZAO115_PlaceholderMemberNotFound = new(
+        id: "ZAO115",
+        title: "SQL placeholder finds no string member",
+        messageFormat: "'{0}': the SQL placeholder {1} does not bind: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO115"));
+
+    // ZAO116 -- a placeholder sits where a value belongs: right after a comparison operator, LIKE or
+    // IN (, inside a VALUES tuple, or named like a parameter the SQL also uses. Placeholders are
+    // spliced into the SQL text verbatim, so a value there is an injection hole. A narrow
+    // heuristic, not a parser. Reported at the method's name, once per distinct placeholder.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    public static readonly DiagnosticDescriptor ZAO116_PlaceholderWhereValueBelongs = new(
+        id: "ZAO116",
+        title: "SQL placeholder where a value belongs",
+        messageFormat: "'{0}': the SQL placeholder {1} sits where a value belongs; placeholders are spliced into the SQL text as written, so use a @parameter for values",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO116"));
+
+    // ZAO117 -- a {name} placeholder in SQL that cannot take one: BulkInsert and stored-procedure
+    // SQL. Reported at the method's name.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    //   {2} = where it was found, for example BulkInsert SQL
+    public static readonly DiagnosticDescriptor ZAO117_PlaceholderNotSupported = new(
+        id: "ZAO117",
+        title: "SQL placeholder not supported here",
+        messageFormat: "'{0}': the SQL placeholder {1} is not supported in {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO117"));
+
+    // ZAO118 -- a {col:Name} placeholder on a repository with no declared dialect, neither
+    // [Dialect] on the type nor on the assembly. The quote style comes from the dialect. Reported
+    // at the method's name, once per method.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the first column placeholder of the method, for example {col:Id}
+    public static readonly DiagnosticDescriptor ZAO118_ColumnPlaceholderWithoutDialect = new(
+        id: "ZAO118",
+        title: "Column placeholder needs a declared dialect",
+        messageFormat: "'{0}': the SQL placeholder {1} quotes in the style of the declared dialect, and none is declared; add [Dialect] to the repository or the assembly",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO118"));
 }

@@ -212,7 +212,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                                ContainingTypeLocation: first.ContainingTypeLocation,
                                Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()),
                                ContainingTypeChain: first.ContainingTypeChain,
-                               HintName: first.HintName);
+                               HintName: first.HintName,
+                               PlaceholderMembers: UnionPlaceholderMembers(g.Select(x => x!.PlaceholderMembers)),
+                               QuoteColumnsAccess: g.Select(x => x!.QuoteColumnsAccess).FirstOrDefault(a => a is not null));
                        }))
             .WithTrackingName("Repositories");
 
@@ -540,6 +542,111 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var containingTypeChain = new EquatableArray<ContainingTypeFrame>(containingTypeChainBuilder.ToImmutable());
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+
+        // {name} and {col:Name} placeholders. The SQL the rest of the transform sees is the masked
+        // text, so no scan below meets a brace. [LinqQuery] and [LinqCommand] SQL is written by the
+        // translator, never by the user, so it is not scanned.
+        var placeholderMembers = ImmutableArray<PlaceholderMember>.Empty;
+        var placeholderSpans = ImmutableArray<SqlPlaceholderSpan>.Empty;
+        string? sqlTemplate = null;
+        string? quoteColumnsAccess = null;
+        var dialectRequiredDiagnostics = ImmutableArray<DiagnosticInfo>.Empty;
+        if (linq is null)
+        {
+            var scan = SqlPlaceholderScanner.Scan(isStoredProcedureAttribute ? procedureName : methodSql);
+            if (!scan.Spans.IsEmpty)
+            {
+                var nameLocation = LocationInfo.From(methodSyntax.Identifier.GetLocation());
+                var unsupportedIn = isStoredProcedureAttribute
+                    ? "stored procedure names"
+                    : commandKind == CommandKindModel.BulkInsert && isCommandAttribute
+                        ? "BulkInsert SQL"
+                        : null;
+                if (unsupportedIn is not null)
+                {
+                    foreach (var name in DistinctPlaceholderTexts(scan.Spans))
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO117",
+                            Location: nameLocation,
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, name, unsupportedIn))));
+                    }
+                }
+                else
+                {
+                    var resolved = ImmutableArray.CreateBuilder<PlaceholderMember>();
+                    var seenNames = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var span in scan.Spans)
+                    {
+                        if (span.Kind != SqlPlaceholderKind.Member || !seenNames.Add(span.Name))
+                            continue;
+                        var (member, problem) = ResolvePlaceholderMember(containing, span.Name);
+                        if (member is not null)
+                        {
+                            resolved.Add(member);
+                        }
+                        else
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO115",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                    method.Name, "{" + span.Name + "}", problem!))));
+                        }
+                    }
+                    placeholderMembers = resolved.ToImmutable();
+
+                    // ZAO116: a placeholder where a value belongs. Narrow on purpose, see the page.
+                    var valueSpans = SqlPlaceholderScanner.FindValuePositionSpans(scan);
+                    var seenValueTexts = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var span in scan.Spans)
+                    {
+                        var text = span.Kind == SqlPlaceholderKind.Column ? "{col:" + span.Name + "}" : "{" + span.Name + "}";
+                        if ((valueSpans.Contains(span)
+                             || (span.Kind == SqlPlaceholderKind.Member
+                                 && FindPlaceholderSigil(scan.MaskedSql, span.Name) is not null))
+                            && seenValueTexts.Add(text))
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO116",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, text))));
+                        }
+                    }
+
+                    // {col:Name} quotes by the QuoteColumns member and the declared dialect. The
+                    // dialect is known only after this model is built, so ZAO118 waits in the model.
+                    var firstColumn = scan.Spans.FirstOrDefault(sp => sp.Kind == SqlPlaceholderKind.Column);
+                    if (firstColumn is not null)
+                    {
+                        var columnText = "{col:" + firstColumn.Name + "}";
+                        var (quoteAccess, quoteProblem) = ResolveQuoteColumnsMember(containing);
+                        quoteColumnsAccess = quoteAccess;
+                        if (quoteProblem is not null)
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO115",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                    method.Name, columnText, quoteProblem))));
+                        }
+                        dialectRequiredDiagnostics = ImmutableArray.Create(new DiagnosticInfo(
+                            DescriptorId: "ZAO118",
+                            Location: nameLocation,
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, columnText))));
+                    }
+                }
+
+                if (!isStoredProcedureAttribute)
+                {
+                    sqlTemplate = methodSql;
+                    methodSql = scan.MaskedSql;
+                }
+                // A stored procedure keeps no spans: its name is not masked and has no template.
+                if (!isStoredProcedureAttribute)
+                    placeholderSpans = scan.Spans;
+            }
+        }
 
         // ZAO061 — [StoredProcedure("")] / [StoredProcedure(null)] / whitespace-only.
         // Originally scheduled for Phase F; brought forward in the Phase D fix-up so
@@ -1509,7 +1616,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
             LinqSourceComment: linq?.SourceComment,
             LinqNoRowsMessage: linq?.NoRowsMessage,
-            ListCapacity: expectedRows);
+            ListCapacity: expectedRows,
+            SqlPlaceholders: new EquatableArray<SqlPlaceholderSpan>(placeholderSpans),
+            SqlTemplate: sqlTemplate,
+            DialectRequiredDiagnostics: new EquatableArray<DiagnosticInfo>(dialectRequiredDiagnostics));
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1523,7 +1633,160 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             ContainingTypeLocation: containingTypeLocation,
             ContainingTypeChain: containingTypeChain,
             HintName: HintNames.ForRepository(containing),
-            MethodSignature: method.ToDisplayString(MethodSignatureFormat));
+            MethodSignature: method.ToDisplayString(MethodSignatureFormat),
+            PlaceholderMembers: new EquatableArray<PlaceholderMember>(placeholderMembers),
+            QuoteColumnsAccess: quoteColumnsAccess);
+    }
+
+    // Each distinct placeholder in the order it first appears, as the SQL writes it.
+    private static IEnumerable<string> DistinctPlaceholderTexts(ImmutableArray<SqlPlaceholderSpan> spans)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var span in spans)
+        {
+            var text = span.Kind == SqlPlaceholderKind.Column ? "{col:" + span.Name + "}" : "{" + span.Name + "}";
+            if (seen.Add(text)) yield return text;
+        }
+    }
+
+    // The placeholder members of every method of a repository, one per distinct name.
+    private static EquatableArray<PlaceholderMember> UnionPlaceholderMembers(IEnumerable<EquatableArray<PlaceholderMember>> perMethod)
+    {
+        var union = ImmutableArray.CreateBuilder<PlaceholderMember>();
+        foreach (var members in perMethod)
+        {
+            foreach (var member in members)
+            {
+                if (!union.Any(u => string.Equals(u.Name, member.Name, StringComparison.Ordinal)))
+                    union.Add(member);
+            }
+        }
+        return new EquatableArray<PlaceholderMember>(union.ToImmutable());
+    }
+
+    // Binds the QuoteColumns switch of {col:Name} to a bool member of the containing type, found
+    // as ResolvePlaceholderMember finds a string one. No member is not a problem: columns are
+    // then never quoted. A member of another type, or two candidates, are reported as ZAO115.
+    private static (string? Access, string? Problem) ResolveQuoteColumnsMember(INamedTypeSymbol containing)
+    {
+        var matches = new List<(string Access, string TypeDisplay, bool IsBool)>();
+        void Consider(string access, ITypeSymbol type)
+        {
+            if (PlaceholderNameMatches(access, QuoteColumnsName)
+                && !matches.Any(m => string.Equals(m.Access, access, StringComparison.Ordinal)))
+                matches.Add((access, type.ToDisplayString(), type.SpecialType == SpecialType.System_Boolean));
+        }
+
+        foreach (var ctor in containing.InstanceConstructors)
+        {
+            foreach (var p in ctor.Parameters)
+            {
+                if (IsPrimaryConstructorParameter(p))
+                    Consider(p.Name, p.Type);
+            }
+        }
+        foreach (var member in containing.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+            if (member is IFieldSymbol f)
+                Consider(f.Name, f.Type);
+            else if (member is IPropertySymbol { IsIndexer: false, GetMethod: not null } pr)
+                Consider(pr.Name, pr.Type);
+        }
+
+        var candidates = matches.Where(m => m.IsBool).ToList();
+        if (candidates.Count == 1)
+            return (candidates[0].Access, null);
+        if (candidates.Count > 1)
+        {
+            return (null, "more than one bool member matches QuoteColumns ("
+                + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
+                + "); keep one of them. The usual cause is a primary-constructor parameter and a property"
+                + " or field whose names differ only in case or a leading underscore, such as 'quoteColumns' and 'QuoteColumns':"
+                + " remove or rename one");
+        }
+        var wrongType = matches.FirstOrDefault();
+        if (wrongType.Access is not null)
+        {
+            return (null, "the member '" + wrongType.Access + "' that switches column quoting is "
+                + wrongType.TypeDisplay + ", not bool");
+        }
+        return (null, null);
+    }
+
+    private const string QuoteColumnsName = "QuoteColumns";
+
+    // A name matches a member when they are equal ignoring case and one leading underscore.
+    private static bool PlaceholderNameMatches(string memberName, string placeholderName)
+        => string.Equals(
+            memberName.StartsWith("_", StringComparison.Ordinal) ? memberName.Substring(1) : memberName,
+            placeholderName.StartsWith("_", StringComparison.Ordinal) ? placeholderName.Substring(1) : placeholderName,
+            StringComparison.OrdinalIgnoreCase);
+
+    // Binds {name} to a string member of the containing type: a primary-constructor parameter,
+    // a field or a property with a getter. Exactly one candidate must remain. Otherwise the
+    // problem says what was looked at, for ZAO115.
+    private static (PlaceholderMember? Member, string? Problem) ResolvePlaceholderMember(
+        INamedTypeSymbol containing,
+        string name)
+    {
+        // Every member whose name matches, by access name; a record's primary-constructor
+        // parameter and its property share one name and count once.
+        var matches = new List<(string Access, string TypeDisplay, bool IsString)>();
+        var stringMembers = new List<string>();
+        void Consider(string access, ITypeSymbol type)
+        {
+            var isString = type.SpecialType == SpecialType.System_String;
+            if (isString && !stringMembers.Contains(access, StringComparer.Ordinal))
+                stringMembers.Add(access);
+            if (PlaceholderNameMatches(access, name)
+                && !matches.Any(m => string.Equals(m.Access, access, StringComparison.Ordinal)))
+                matches.Add((access, type.ToDisplayString(), isString));
+        }
+
+        string? uncaptured = null;
+        foreach (var ctor in containing.InstanceConstructors)
+        {
+            foreach (var p in ctor.Parameters)
+            {
+                if (IsPrimaryConstructorParameter(p))
+                    Consider(p.Name, p.Type);
+                else if (uncaptured is null && p.Type.SpecialType == SpecialType.System_String
+                    && PlaceholderNameMatches(p.Name, name))
+                    uncaptured = p.Name;
+            }
+        }
+        foreach (var member in containing.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+            if (member is IFieldSymbol f)
+                Consider(f.Name, f.Type);
+            else if (member is IPropertySymbol { IsIndexer: false, GetMethod: not null } pr)
+                Consider(pr.Name, pr.Type);
+        }
+
+        var candidates = matches.Where(m => m.IsString).ToList();
+        if (candidates.Count == 1)
+            return (new PlaceholderMember(name, candidates[0].Access), null);
+        if (candidates.Count > 1)
+        {
+            return (null, "more than one string member matches ("
+                + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
+                + "); keep one of them. The usual cause is a primary-constructor parameter and a property"
+                + " or field whose names differ only in case or a leading underscore, such as 'table' and 'Table':"
+                + " remove or rename one");
+        }
+        var wrongType = matches.FirstOrDefault(m => !m.IsString);
+        if (wrongType.Access is not null)
+            return (null, "the member '" + wrongType.Access + "' is " + wrongType.TypeDisplay + ", not string");
+        if (uncaptured is not null)
+        {
+            return (null, "the constructor parameter '" + uncaptured
+                + "' is not captured; declare it in the primary constructor or store it in a field");
+        }
+        return (null, "no string field, get-only property or primary-constructor parameter is named '"
+            + name + "' (ignoring case and one leading underscore); string members looked at: "
+            + (stringMembers.Count == 0 ? "none" : string.Join(", ", stringMembers.Select(m => "'" + m + "'"))));
     }
 
     // [LinqQuery] — set each translated parameter's DbType facet, the way
@@ -5317,6 +5580,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         "ZAO113" => DiagnosticDescriptors.ZAO113_LinqLockWithoutTransaction,
         "ZAO114" => DiagnosticDescriptors.ZAO114_LinqCompanionDoesNotCompile,
+        "ZAO115" => DiagnosticDescriptors.ZAO115_PlaceholderMemberNotFound,
+        "ZAO116" => DiagnosticDescriptors.ZAO116_PlaceholderWhereValueBelongs,
+        "ZAO117" => DiagnosticDescriptors.ZAO117_PlaceholderNotSupported,
+        "ZAO118" => DiagnosticDescriptors.ZAO118_ColumnPlaceholderWithoutDialect,
         _ => null,
     };
 
@@ -5356,6 +5623,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (!otherThanSqlServer)
             {
                 foreach (var diag in method.SqlServerOnlyDiagnostics)
+                    Report(diag);
+            }
+
+            // ZAO118. {col:Name} quotes in the style of the declared dialect, so without one there
+            // is no style. An unknown dialect value counts as none.
+            if (knownDialect is null)
+            {
+                foreach (var diag in method.DialectRequiredDiagnostics)
                     Report(diag);
             }
 
@@ -5608,6 +5883,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("{");
         var first = true;
         var methodIndex = -1;
+        var anyPlaceholderSql = false;
         foreach (var repoMethod in repo.Methods)
         {
             methodIndex++;
@@ -5623,7 +5899,15 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             if (nameStyle != m.ParameterNameStyle) m = m with { ParameterNameStyle = nameStyle };
             var strategy = BatchStrategyFor(m, dialect);
             if (strategy != m.Strategy) m = m with { Strategy = strategy };
+            // {name} placeholders — the accessor's name carries the method index, so overloads
+            // get distinct caches.
+            if (m.SqlPlaceholders.Length > 0 && m.SqlTemplate is not null)
+            {
+                m = m with { PlaceholderSqlAccessorName = PlaceholderSqlName("__Sql", m, methodIndex) };
+                anyPlaceholderSql = true;
+            }
             EmitLinqSqlConstant(sb, m);
+            EmitPlaceholderSqlCache(sb, m, methodIndex, repo.PlaceholderMembers, repo.QuoteColumnsAccess, dialect);
             switch (m.Shape)
             {
                 case EmitShape.ScalarInt:
@@ -5793,6 +6077,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     break;
             }
         }
+        if (anyPlaceholderSql) EmitPlaceholderSqlHolder(sb);
         sb.AppendLine("}");
 
         // Close each OUTER containing-type frame opened above, one `}` per
@@ -5830,6 +6115,221 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // StreamingNullColumnFinderName: overloads share a name, never an index.
     private static string LinqSqlConstantName(QueryMethodModel m, int methodIndex) =>
         "__sql" + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
+
+    // {name} placeholders — the per-method names, index-plus-name like LinqSqlConstantName.
+    // A [LinqQuery] method is never scanned for placeholders, so __sql<i>_<M> cannot be both.
+    private static string PlaceholderSqlName(string prefix, QueryMethodModel m, int methodIndex) =>
+        prefix + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
+
+    // {name} placeholders — the holder type the per-method caches store. Emitted once per
+    // repository, only when a method has placeholders, so other repositories are unchanged.
+    private const string PlaceholderSqlHolder = "__ZaoPlaceholderSql";
+
+    private static void EmitPlaceholderSqlHolder(StringBuilder sb)
+    {
+        sb.AppendLine();
+        sb.AppendLine("    // The resolved SQL of one method for one set of placeholder values: the full text,");
+        sb.AppendLine("    // and each statement trimmed, for a batch. Immutable, so one reference publishes both.");
+        sb.Append("    private sealed class ").AppendLine(PlaceholderSqlHolder);
+        sb.AppendLine("    {");
+        sb.Append("        public ").Append(PlaceholderSqlHolder).AppendLine("(string full, string[] parts)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Full = full;");
+        sb.AppendLine("            Parts = parts;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        public string Full { get; }");
+        sb.AppendLine();
+        sb.AppendLine("        public string[] Parts { get; }");
+        sb.AppendLine("    }");
+    }
+
+    // {name} placeholders — the cache a method whose SQL holds placeholders reads its SQL from.
+    // A no-op for every other method, which keeps their output byte-identical. Per method:
+    //
+    //   private __ZaoPlaceholderSql? __sql<i>_<M>;   the resolved SQL, filled on first use
+    //   private static readonly ConcurrentDictionary<key, __ZaoPlaceholderSql> __sqlCache<i>_<M>
+    //   private __ZaoPlaceholderSql __Sql<i>_<M>()
+    //
+    // The key is the method's distinct member values in order of first appearance: a string
+    // for one, a value tuple for more. Lookups on it allocate nothing, so after warm-up an
+    // instance costs one dictionary lookup per method and then a field read; a fresh instance
+    // per call pays the lookup and shares the cached holder.
+    //
+    // The field holds one reference to an immutable holder, published with a volatile write and
+    // read with a volatile read, so a reader never sees Full without its Parts. Two threads
+    // filling the field at once write the same reference, taken from the cache.
+    //
+    // A method with {col:Name} placeholders on a repository that has a QuoteColumns member and a
+    // declared dialect adds the member's bool to the key, after the string values: a bare bool
+    // when the method has no {name} placeholder, else a value tuple. Each column then resolves to
+    // `flag ? <quoted constant> : <bare constant>`, with the quoted form chosen here from the
+    // dialect, so the generated code only picks between two string constants.
+    private static void EmitPlaceholderSqlCache(
+        StringBuilder sb, QueryMethodModel m, int methodIndex, EquatableArray<PlaceholderMember> members,
+        string? quoteColumnsAccess, int? dialect)
+    {
+        if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is not { } template) return;
+
+        var field = PlaceholderSqlName("__sql", m, methodIndex);
+        var cache = PlaceholderSqlName("__sqlCache", m, methodIndex);
+
+        // The distinct member accesses, in order of first appearance.
+        var accesses = new List<string>();
+        foreach (var span in m.SqlPlaceholders)
+        {
+            if (span.Kind != SqlPlaceholderKind.Member) continue;
+            var access = PlaceholderAccess(members, span.Name);
+            if (!accesses.Contains(access, StringComparer.Ordinal)) accesses.Add(access);
+        }
+
+        // The quote pair of the declared dialect, and the flag's place in the key. Without a
+        // declared dialect columns stay bare, and a dialect value outside SqlDialect quotes with
+        // double quotes, like Sqlite and PostgreSql. Both branches are defensive: a real build
+        // never reaches them, because ZAO118 fires first for a missing or unknown dialect and the
+        // repository is not emitted. RenderRepository, which emit tests call directly, can.
+        var quote = quoteColumnsAccess is not null
+            && m.SqlPlaceholders.Any(sp => sp.Kind == SqlPlaceholderKind.Column)
+            && dialect is not null
+                ? ColumnQuotes(dialect is { } declaredDialect && Enum.IsDefined(typeof(SqlDialectModel), declaredDialect)
+                    ? (SqlDialectModel)declaredDialect
+                    : SqlDialectModel.Sqlite)
+                : ((string Open, string Close)?)null;
+
+        var keyTypes = accesses.Select(_ => "string").ToList();
+        if (quote is not null) keyTypes.Add("bool");
+        var keyType = keyTypes.Count == 1 ? keyTypes[0] : "(" + string.Join(", ", keyTypes) + ")";
+        string KeyItem(int index)
+            => keyTypes.Count == 1
+                ? "__k"
+                : "__k.Item" + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string KeyPart(string placeholderName) => KeyItem(accesses.IndexOf(PlaceholderAccess(members, placeholderName)));
+        string? ColumnPart(string columnName)
+            => quote is { } q
+                ? "(" + KeyItem(accesses.Count) + " ? "
+                    + SymbolDisplay.FormatLiteral(q.Open + columnName + q.Close, quote: true)
+                    + " : " + SymbolDisplay.FormatLiteral(columnName, quote: true) + ")"
+                : null;
+
+        var spans = SqlPlaceholderScanner.Scan(template).Spans;
+        var full = ResolvedSqlExpression(template, spans, KeyPart, ColumnPart);
+        // Each statement is trimmed before it is resolved, as the batch emit trims a literal
+        // statement, so a batch can assign a part with no Trim at runtime. A statement resolves
+        // the spans of the full scan that fall inside it, never a scan of its own: the splitter
+        // does not know comments, so a `;` in a comment can cut one, and a scan of the piece
+        // would read brace text in that comment as a placeholder the full scan skipped.
+        var parts = new List<string>();
+        var statementStart = 0;
+        foreach (var piece in SqlStatementSplitter.Split(template))
+        {
+            var statement = piece.Trim();
+            var start = statementStart + (piece.Length - piece.TrimStart().Length);
+            var end = start + statement.Length;
+            var inside = spans
+                .Where(sp => sp.Start >= start && sp.Start + sp.Length <= end)
+                .Select(sp => sp with { Start = sp.Start - start })
+                .ToImmutableArray();
+            parts.Add(ResolvedSqlExpression(statement, inside, KeyPart, ColumnPart));
+            // Split drops the `;` after each piece, and the pieces follow each other in the template.
+            statementStart += piece.Length + 1;
+        }
+        var holder = "new " + PlaceholderSqlHolder + "(" + full + ", new string[] { " + string.Join(", ", parts) + " })";
+
+        // Only {col:Name} placeholders and no quote flag: the SQL does not depend on the instance,
+        // so one static holder serves every call.
+        if (keyTypes.Count == 0)
+        {
+            sb.Append("    private static readonly ").Append(PlaceholderSqlHolder).Append(' ').Append(cache)
+                .Append(" = ").Append(holder).AppendLine(";");
+            sb.AppendLine();
+            sb.Append("    private ").Append(PlaceholderSqlHolder).Append(' ').Append(accessor).Append("() => ").Append(cache).AppendLine(";");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.Append("    private ").Append(PlaceholderSqlHolder).Append("? ").Append(field).AppendLine(";");
+        sb.Append("    private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<")
+            .Append(keyType).Append(", ").Append(PlaceholderSqlHolder).Append("> ").Append(cache).AppendLine(" = new();");
+        sb.AppendLine();
+        sb.Append("    private ").Append(PlaceholderSqlHolder).Append(' ').Append(accessor).AppendLine("()");
+        sb.AppendLine("    {");
+        sb.Append("        var __sql = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");
+        sb.AppendLine("        if (__sql is not null) return __sql;");
+        for (var i = 0; i < accesses.Count; i++)
+        {
+            var local = "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            sb.Append("        var ").Append(local).Append(" = @").Append(accesses[i]).AppendLine(";");
+            sb.Append("        global::System.ArgumentException.ThrowIfNullOrWhiteSpace(").Append(local).Append(", ")
+                .Append(SymbolDisplay.FormatLiteral(accesses[i], quote: true)).AppendLine(");");
+        }
+        if (quote is not null)
+        {
+            sb.Append("        var __v").Append(accesses.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                .Append(" = @").Append(quoteColumnsAccess).AppendLine(";");
+        }
+        var key = keyTypes.Count == 1
+            ? "__v0"
+            : "(" + string.Join(", ", keyTypes.Select((_, i) => "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture))) + ")";
+        sb.Append("        __sql = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k =>");
+        sb.Append("            ").Append(holder).AppendLine(");");
+        sb.Append("        global::System.Threading.Volatile.Write(ref ").Append(field).AppendLine(", __sql);");
+        sb.AppendLine("        return __sql;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    // The characters that quote an identifier in a dialect.
+    private static (string Open, string Close) ColumnQuotes(SqlDialectModel dialect) => dialect switch
+    {
+        SqlDialectModel.SqlServer => ("[", "]"),
+        SqlDialectModel.MySql => ("`", "`"),
+        _ => ("\"", "\""),
+    };
+
+    // The member expression a {name} placeholder reads. The transform resolved every name before
+    // emit, or reported ZAO115 and the repository is not emitted; the name itself is the fallback.
+    private static string PlaceholderAccess(EquatableArray<PlaceholderMember> members, string name)
+    {
+        foreach (var member in members)
+        {
+            if (string.Equals(member.Name, name, StringComparison.Ordinal)) return member.Access;
+        }
+        return name;
+    }
+
+    // A C# expression for `text` with each placeholder replaced: the literal pieces as string
+    // literals, each {name} as its key part, joined with +.
+    // columnPart returns the expression of a {col:Name}, or null to write the bare name.
+    private static string ResolvedSqlExpression(
+        string text, ImmutableArray<SqlPlaceholderSpan> spans, Func<string, string> keyPart,
+        Func<string, string?> columnPart)
+    {
+        var pieces = new List<string>();
+        var literal = new StringBuilder();
+        var position = 0;
+        foreach (var span in spans)
+        {
+            literal.Append(text, position, span.Start - position);
+            position = span.Start + span.Length;
+            var piece = span.Kind == SqlPlaceholderKind.Column ? columnPart(span.Name) : keyPart(span.Name);
+            if (piece is null)
+            {
+                // A {col:Name} that is never quoted is its bare name.
+                literal.Append(span.Name);
+                continue;
+            }
+            if (literal.Length > 0)
+            {
+                pieces.Add(SymbolDisplay.FormatLiteral(literal.ToString(), quote: true));
+                literal.Clear();
+            }
+            pieces.Add(piece);
+        }
+        literal.Append(text, position, text.Length - position);
+        if (literal.Length > 0 || pieces.Count == 0)
+            pieces.Add(SymbolDisplay.FormatLiteral(literal.ToString(), quote: true));
+        return string.Join(" + ", pieces);
+    }
 
     // Shared connection-lifecycle prologue/epilogue for all single-method emit shapes.
     // Eight emit sites used to hand-write the identical open/try and finally/close blocks
@@ -5893,7 +6393,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         var textValue = m.IsStoredProcedure ? m.ProcedureName : m.Sql;
         // [LinqQuery] — EmitLinqSqlConstant already wrote the SQL as a constant.
-        var textLiteral = m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
+        // {name} placeholders — EmitPlaceholderSqlCache wrote an accessor for the resolved SQL.
+        var textLiteral = m.PlaceholderSqlAccessorName is { } accessor
+            ? accessor + "().Full"
+            : m.LinqSqlConstantName ?? SymbolDisplay.FormatLiteral(textValue, quote: true);
         sb.Append(indent).Append(cmdLocal).Append(".CommandText = ").Append(textLiteral).AppendLine(";");
         if (m.IsStoredProcedure)
         {
@@ -8563,7 +9066,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
 
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
 
         sb.AppendLine($"    {GeneratedCodeAttribute}");
         sb.AppendLine($"    {m.MethodAccessibilityKeyword} partial async {m.ReturnTypeDisplay} {m.MethodName}({paramList})");
@@ -8617,7 +9120,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // (Auto, sharing try/finally) can re-use the same body shape.
     private static void EmitMultiResultSetBatchBody(StringBuilder sb, QueryMethodModel m, MultiResultMaterializationModel mat, string ct, string indent)
     {
-        var statements = SqlStatementSplitter.Split(m.Sql);
+        var statements = BatchStatements(m);
         EmitBatchSetupWithIndent(sb, m, statements, indent);
         sb.AppendLine($"{indent}await using var __reader = await __batch.ExecuteReaderAsync({ct}).ConfigureAwait(false);");
         EmitMultiResultElements(sb, mat, ct, indent: indent);
@@ -8636,6 +9139,24 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         EmitMultiResultElements(sb, mat, ct, indent: indent);
     }
 
+    // {name} placeholders: the resolved statements live in the method's cached holder, already
+    // trimmed. The accessor is read once per batch, and each command takes its part, so the call
+    // allocates no SQL text. The statements are split from the template, as the holder's parts
+    // are, so the indices agree; the masked text only gates the multi-statement shape.
+    private static void EmitBatchPartsLocal(StringBuilder sb, QueryMethodModel m, string indent)
+    {
+        if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is null) return;
+        sb.Append(indent).Append("var __parts = ").Append(accessor).AppendLine("().Parts;");
+    }
+
+    private static ImmutableArray<string> BatchStatements(QueryMethodModel m) =>
+        SqlStatementSplitter.Split(m.PlaceholderSqlAccessorName is not null && m.SqlTemplate is { } template ? template : m.Sql);
+
+    private static string BatchStatementText(QueryMethodModel m, ImmutableArray<string> statements, int index) =>
+        m.PlaceholderSqlAccessorName is not null && m.SqlTemplate is not null
+            ? "__parts[" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]"
+            : SymbolDisplay.FormatLiteral(statements[index].Trim(), quote: true);
+
     // Indented variant of EmitBatchSetup for the BatchWithFallback nesting. The
     // top-level BatchAlways path still calls the no-indent version through its
     // own try/finally body.
@@ -8643,13 +9164,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         sb.AppendLine($"{indent}await using var __batch = __conn.CreateBatch();");
         EmitTransactionAssignment(sb, m, indent, "__batch");
+        EmitBatchPartsLocal(sb, m, indent);
         for (var i = 0; i < statements.Length; i++)
         {
-            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
             var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             sb.AppendLine();
             sb.AppendLine($"{indent}var {cmdLocal} = __batch.CreateBatchCommand();");
-            sb.AppendLine($"{indent}{cmdLocal}.CommandText = {stmtLiteral};");
+            sb.AppendLine($"{indent}{cmdLocal}.CommandText = {BatchStatementText(m, statements, i)};");
             EmitBatchCommandParameterBindingWithIndent(sb, m, cmdLocal, i, indent);
             sb.AppendLine($"{indent}__batch.BatchCommands.Add({cmdLocal});");
         }
@@ -8882,13 +9403,13 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     {
         sb.AppendLine("            await using var __batch = __conn.CreateBatch();");
         EmitTransactionAssignment(sb, m, "            ", "__batch");
+        EmitBatchPartsLocal(sb, m, "            ");
         for (var i = 0; i < statements.Length; i++)
         {
-            var stmtLiteral = SymbolDisplay.FormatLiteral(statements[i].Trim(), quote: true);
             var cmdLocal = "__cmd" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
             sb.AppendLine();
             sb.AppendLine($"            var {cmdLocal} = __batch.CreateBatchCommand();");
-            sb.AppendLine($"            {cmdLocal}.CommandText = {stmtLiteral};");
+            sb.AppendLine($"            {cmdLocal}.CommandText = {BatchStatementText(m, statements, i)};");
             EmitBatchCommandParameterBinding(sb, m, cmdLocal, i);
             sb.AppendLine($"            __batch.BatchCommands.Add({cmdLocal});");
         }

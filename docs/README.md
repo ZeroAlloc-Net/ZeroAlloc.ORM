@@ -122,6 +122,10 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 
 - Result rows, lists and multi-result sets, output and input-output parameters through named tuple fields, and SQL Server `RETURN` values.
 
+**Table and column placeholders**
+
+- `{table}` in `[Query]` and `[Command]` SQL binds to a `string` member of the repository, and `{col:Id}` writes a column quoted in the style of the declared `[Dialect]`. The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input. Diagnostics ZAO115 to ZAO118. See [commands.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/commands.md#table-and-column-placeholders).
+
 **Transactions and dialects**
 
 - An `IAsyncDbTransaction` parameter enlists the command in the caller's transaction (ZAO080 warns on more than one).
