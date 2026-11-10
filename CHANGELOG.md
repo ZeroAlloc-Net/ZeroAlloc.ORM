@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.15.0...v2.16.0) (2026-11-10)
+
+
+### Features
+
+* add table and column placeholders to Command and Query SQL ([774d531](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/774d531afd5989891dfa0591d44fba1dc26052bc))
+
 ## [2.15.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.14.0...v2.15.0) (2026-11-10)
 
 
