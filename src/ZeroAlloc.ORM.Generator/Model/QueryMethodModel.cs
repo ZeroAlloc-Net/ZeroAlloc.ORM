@@ -358,7 +358,15 @@ internal sealed record QueryMethodModel(
     // dialect. Emit-only: RenderRepository sets it once per method, so it plays no part
     // in incremental caching. The default is the rule for a repository without a
     // declared dialect.
-    ParameterNameStyle ParameterNameStyle = ParameterNameStyle.AsWritten);
+    ParameterNameStyle ParameterNameStyle = ParameterNameStyle.AsWritten,
+    // The {name} and {col:Name} placeholders of the attribute SQL, as the scanner found them.
+    // Empty for SQL without any. When not empty, Sql holds the masked text, so the parameter
+    // scan, CountStatements and FindPlaceholderSigil see no braces, and SqlTemplate holds the
+    // original text. Masked offsets do not survive SqlStatementSplitter.Split, so the emit
+    // splits SqlTemplate and rescans each statement.
+    EquatableArray<SqlPlaceholderSpan> SqlPlaceholders = default,
+    // The original attribute SQL, set only when SqlPlaceholders is not empty.
+    string? SqlTemplate = null);
 
 internal sealed record QueryRepositoryModel(
     string ContainingTypeFullName,
@@ -376,7 +384,17 @@ internal sealed record QueryRepositoryModel(
     // repository class so the generated half joins the user's nested type.
     EquatableArray<ContainingTypeFrame> ContainingTypeChain,
     // #303 — the generated file's hint name; see QueryMethodWithTypeContext.HintName.
-    string HintName);
+    string HintName,
+    // The string members the methods' {name} placeholders bind to, one per distinct name.
+    EquatableArray<PlaceholderMember> PlaceholderMembers = default,
+    // The bool member that switches {col:Name} quoting on, or null when the repository has none.
+    // Declared for the emit; nothing sets it yet.
+    string? QuoteColumnsAccess = null);
+
+// A {name} placeholder bound to a member of the repository. Name is the placeholder name as the
+// SQL writes it; Access is the member expression the emit reads, which can differ in case and by
+// a leading underscore.
+internal sealed record PlaceholderMember(string Name, string Access);
 
 // v2.0 — issue #238. One entry per OUTER containing type of a nested repository
 // class (never the repository type itself — ZAO003/ZAO004 already cover that
@@ -429,4 +447,7 @@ internal sealed record QueryMethodWithTypeContext(
     // #328 — the method's containing type, name, type-parameter count and parameter types.
     // The AllMethods union dedupes on it: one method that several attribute pipelines
     // picked up is one entry, while overloads, which share only the name, stay apart.
-    string MethodSignature);
+    string MethodSignature,
+    // The members this method's {name} placeholders resolved to. The grouping step unions them
+    // per repository.
+    EquatableArray<PlaceholderMember> PlaceholderMembers = default);

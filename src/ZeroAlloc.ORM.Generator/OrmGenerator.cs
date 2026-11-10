@@ -212,7 +212,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                                ContainingTypeLocation: first.ContainingTypeLocation,
                                Methods: new EquatableArray<QueryMethodModel>(g.Select(x => x!.Method).ToImmutableArray()),
                                ContainingTypeChain: first.ContainingTypeChain,
-                               HintName: first.HintName);
+                               HintName: first.HintName,
+                               PlaceholderMembers: UnionPlaceholderMembers(g.Select(x => x!.PlaceholderMembers)));
                        }))
             .WithTrackingName("Repositories");
 
@@ -540,6 +541,67 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var containingTypeChain = new EquatableArray<ContainingTypeFrame>(containingTypeChainBuilder.ToImmutable());
 
         var diagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
+
+        // {name} and {col:Name} placeholders. The SQL the rest of the transform sees is the masked
+        // text, so no scan below meets a brace. [LinqQuery] and [LinqCommand] SQL is written by the
+        // translator, never by the user, so it is not scanned.
+        var placeholderMembers = ImmutableArray<PlaceholderMember>.Empty;
+        var placeholderSpans = ImmutableArray<SqlPlaceholderSpan>.Empty;
+        string? sqlTemplate = null;
+        if (linq is null)
+        {
+            var scan = SqlPlaceholderScanner.Scan(isStoredProcedureAttribute ? procedureName : methodSql);
+            if (!scan.Spans.IsEmpty)
+            {
+                var nameLocation = LocationInfo.From(methodSyntax.Identifier.GetLocation());
+                var unsupportedIn = isStoredProcedureAttribute
+                    ? "stored procedure names"
+                    : commandKind == CommandKindModel.BulkInsert && isCommandAttribute
+                        ? "BulkInsert SQL"
+                        : null;
+                if (unsupportedIn is not null)
+                {
+                    foreach (var name in DistinctPlaceholderTexts(scan.Spans))
+                    {
+                        diagnostics.Add(new DiagnosticInfo(
+                            DescriptorId: "ZAO117",
+                            Location: nameLocation,
+                            MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, name, unsupportedIn))));
+                    }
+                }
+                else
+                {
+                    var resolved = ImmutableArray.CreateBuilder<PlaceholderMember>();
+                    foreach (var span in scan.Spans)
+                    {
+                        if (span.Kind != SqlPlaceholderKind.Member
+                            || resolved.Any(r => string.Equals(r.Name, span.Name, StringComparison.Ordinal)))
+                            continue;
+                        var (member, problem) = ResolvePlaceholderMember(containing, span.Name);
+                        if (member is not null)
+                        {
+                            resolved.Add(member);
+                        }
+                        else
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO115",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(
+                                    method.Name, "{" + span.Name + "}", problem!))));
+                        }
+                    }
+                    placeholderMembers = resolved.ToImmutable();
+                }
+
+                if (!isStoredProcedureAttribute)
+                {
+                    sqlTemplate = methodSql;
+                    methodSql = scan.MaskedSql;
+                }
+                placeholderSpans = scan.Spans;
+            }
+        }
 
         // ZAO061 — [StoredProcedure("")] / [StoredProcedure(null)] / whitespace-only.
         // Originally scheduled for Phase F; brought forward in the Phase D fix-up so
@@ -1509,7 +1571,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             PostgresOnlyUsages: new EquatableArray<PostgresOnlyUsage>(providerSplit.Usages),
             LinqSourceComment: linq?.SourceComment,
             LinqNoRowsMessage: linq?.NoRowsMessage,
-            ListCapacity: expectedRows);
+            ListCapacity: expectedRows,
+            SqlPlaceholders: new EquatableArray<SqlPlaceholderSpan>(placeholderSpans),
+            SqlTemplate: sqlTemplate);
 
         return new QueryMethodWithTypeContext(
             Method: methodModel,
@@ -1523,7 +1587,105 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             ContainingTypeLocation: containingTypeLocation,
             ContainingTypeChain: containingTypeChain,
             HintName: HintNames.ForRepository(containing),
-            MethodSignature: method.ToDisplayString(MethodSignatureFormat));
+            MethodSignature: method.ToDisplayString(MethodSignatureFormat),
+            PlaceholderMembers: new EquatableArray<PlaceholderMember>(placeholderMembers));
+    }
+
+    // Each distinct placeholder in the order it first appears, as the SQL writes it.
+    private static IEnumerable<string> DistinctPlaceholderTexts(ImmutableArray<SqlPlaceholderSpan> spans)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var span in spans)
+        {
+            var text = span.Kind == SqlPlaceholderKind.Column ? "{col:" + span.Name + "}" : "{" + span.Name + "}";
+            if (seen.Add(text)) yield return text;
+        }
+    }
+
+    // The placeholder members of every method of a repository, one per distinct name.
+    private static EquatableArray<PlaceholderMember> UnionPlaceholderMembers(IEnumerable<EquatableArray<PlaceholderMember>> perMethod)
+    {
+        var union = ImmutableArray.CreateBuilder<PlaceholderMember>();
+        foreach (var members in perMethod)
+        {
+            foreach (var member in members)
+            {
+                if (!union.Any(u => string.Equals(u.Name, member.Name, StringComparison.Ordinal)))
+                    union.Add(member);
+            }
+        }
+        return new EquatableArray<PlaceholderMember>(union.ToImmutable());
+    }
+
+    // A name matches a member when they are equal ignoring case and one leading underscore.
+    private static bool PlaceholderNameMatches(string memberName, string placeholderName)
+        => string.Equals(
+            memberName.StartsWith("_", StringComparison.Ordinal) ? memberName.Substring(1) : memberName,
+            placeholderName.StartsWith("_", StringComparison.Ordinal) ? placeholderName.Substring(1) : placeholderName,
+            StringComparison.OrdinalIgnoreCase);
+
+    // Binds {name} to a string member of the containing type: a primary-constructor parameter,
+    // a field or a property with a getter. Exactly one candidate must remain. Otherwise the
+    // problem says what was looked at, for ZAO115.
+    private static (PlaceholderMember? Member, string? Problem) ResolvePlaceholderMember(
+        INamedTypeSymbol containing,
+        string name)
+    {
+        // Every member whose name matches, by access name; a record's primary-constructor
+        // parameter and its property share one name and count once.
+        var matches = new List<(string Access, string TypeDisplay, bool IsString)>();
+        var stringMembers = new List<string>();
+        void Consider(string access, ITypeSymbol type)
+        {
+            var isString = type.SpecialType == SpecialType.System_String;
+            if (isString && !stringMembers.Contains(access, StringComparer.Ordinal))
+                stringMembers.Add(access);
+            if (PlaceholderNameMatches(access, name)
+                && !matches.Any(m => string.Equals(m.Access, access, StringComparison.Ordinal)))
+                matches.Add((access, type.ToDisplayString(), isString));
+        }
+
+        string? uncaptured = null;
+        foreach (var ctor in containing.InstanceConstructors)
+        {
+            foreach (var p in ctor.Parameters)
+            {
+                if (IsPrimaryConstructorParameter(p))
+                    Consider(p.Name, p.Type);
+                else if (uncaptured is null && p.Type.SpecialType == SpecialType.System_String
+                    && PlaceholderNameMatches(p.Name, name))
+                    uncaptured = p.Name;
+            }
+        }
+        foreach (var member in containing.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+            if (member is IFieldSymbol f)
+                Consider(f.Name, f.Type);
+            else if (member is IPropertySymbol { IsIndexer: false, GetMethod: not null } pr)
+                Consider(pr.Name, pr.Type);
+        }
+
+        var candidates = matches.Where(m => m.IsString).ToList();
+        if (candidates.Count == 1)
+            return (new PlaceholderMember(name, candidates[0].Access), null);
+        if (candidates.Count > 1)
+        {
+            return (null, "more than one string member matches ("
+                + string.Join(", ", candidates.Select(c => "'" + c.Access + "'"))
+                + "); keep one of them");
+        }
+        var wrongType = matches.FirstOrDefault(m => !m.IsString);
+        if (wrongType.Access is not null)
+            return (null, "the member '" + wrongType.Access + "' is " + wrongType.TypeDisplay + ", not string");
+        if (uncaptured is not null)
+        {
+            return (null, "the constructor parameter '" + uncaptured
+                + "' is not captured; declare it in the primary constructor or store it in a field");
+        }
+        return (null, "no string field, get-only property or primary-constructor parameter is named '"
+            + name + "' (ignoring case and one leading underscore); string members looked at: "
+            + (stringMembers.Count == 0 ? "none" : string.Join(", ", stringMembers.Select(m => "'" + m + "'"))));
     }
 
     // [LinqQuery] — set each translated parameter's DbType facet, the way
@@ -5317,6 +5479,8 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO112" => DiagnosticDescriptors.ZAO112_LinqResultShapeMismatch,
         "ZAO113" => DiagnosticDescriptors.ZAO113_LinqLockWithoutTransaction,
         "ZAO114" => DiagnosticDescriptors.ZAO114_LinqCompanionDoesNotCompile,
+        "ZAO115" => DiagnosticDescriptors.ZAO115_PlaceholderMemberNotFound,
+        "ZAO117" => DiagnosticDescriptors.ZAO117_PlaceholderNotSupported,
         _ => null,
     };
 

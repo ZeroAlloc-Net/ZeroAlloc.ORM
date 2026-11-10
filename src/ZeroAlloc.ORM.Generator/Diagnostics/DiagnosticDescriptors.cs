@@ -881,4 +881,37 @@ internal static class DiagnosticDescriptors
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO114"));
+
+    // ZAO115 -- a {name} placeholder in [Query] or [Command] SQL finds no usable string member of
+    // the repository: none, two or more candidates, a member of another type, or a constructor
+    // parameter that is never captured. Reported at the method's name.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    //   {2} = why it did not bind, and the members that were looked at
+    public static readonly DiagnosticDescriptor ZAO115_PlaceholderMemberNotFound = new(
+        id: "ZAO115",
+        title: "SQL placeholder finds no string member",
+        messageFormat: "'{0}': the SQL placeholder {1} does not bind: {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO115"));
+
+    // ZAO117 -- a {name} placeholder in SQL that cannot take one: BulkInsert and stored-procedure
+    // SQL. Reported at the method's name.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    //   {2} = where it was found, for example BulkInsert SQL
+    public static readonly DiagnosticDescriptor ZAO117_PlaceholderNotSupported = new(
+        id: "ZAO117",
+        title: "SQL placeholder not supported here",
+        messageFormat: "'{0}': the SQL placeholder {1} is not supported in {2}",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO117"));
 }
