@@ -132,6 +132,16 @@ public class PlaceholderResolutionTests
     }
 
     [Fact]
+    public void Table_UsedTwiceWithoutMember_ReportsZAO115Once()
+    {
+        var repo = RunRepository(Repo("(IAsyncDbConnection connection)", "",
+            "SELECT COUNT(*) FROM {table} JOIN {table} ON 1 = 1"));
+
+        var d = Assert.Single(repo.Methods[0].Diagnostics);
+        Assert.Equal("ZAO115", d.DescriptorId);
+    }
+
+    [Fact]
     public void ColumnPlaceholder_NeedsNoMember()
     {
         var repo = RunRepository(Repo("(IAsyncDbConnection connection)", "", "SELECT {col:Id} FROM T"));

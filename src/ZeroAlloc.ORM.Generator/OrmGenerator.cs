@@ -572,10 +572,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                 else
                 {
                     var resolved = ImmutableArray.CreateBuilder<PlaceholderMember>();
+                    var seenNames = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var span in scan.Spans)
                     {
-                        if (span.Kind != SqlPlaceholderKind.Member
-                            || resolved.Any(r => string.Equals(r.Name, span.Name, StringComparison.Ordinal)))
+                        if (span.Kind != SqlPlaceholderKind.Member || !seenNames.Add(span.Name))
                             continue;
                         var (member, problem) = ResolvePlaceholderMember(containing, span.Name);
                         if (member is not null)
@@ -599,7 +599,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     sqlTemplate = methodSql;
                     methodSql = scan.MaskedSql;
                 }
-                placeholderSpans = scan.Spans;
+                // A stored procedure keeps no spans: its name is not masked and has no template.
+                if (!isStoredProcedureAttribute)
+                    placeholderSpans = scan.Spans;
             }
         }
 
