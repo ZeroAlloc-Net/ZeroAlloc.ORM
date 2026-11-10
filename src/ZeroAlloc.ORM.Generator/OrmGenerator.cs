@@ -5774,6 +5774,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         sb.AppendLine("{");
         var first = true;
         var methodIndex = -1;
+        var anyPlaceholderSql = false;
         foreach (var repoMethod in repo.Methods)
         {
             methodIndex++;
@@ -5792,7 +5793,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             // {name} placeholders — the accessor's name carries the method index, so overloads
             // get distinct caches.
             if (m.SqlPlaceholders.Length > 0 && m.SqlTemplate is not null)
+            {
                 m = m with { PlaceholderSqlAccessorName = PlaceholderSqlName("__Sql", m, methodIndex) };
+                anyPlaceholderSql = true;
+            }
             EmitLinqSqlConstant(sb, m);
             EmitPlaceholderSqlCache(sb, m, methodIndex, repo.PlaceholderMembers);
             switch (m.Shape)
@@ -5964,6 +5968,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     break;
             }
         }
+        if (anyPlaceholderSql) EmitPlaceholderSqlHolder(sb);
         sb.AppendLine("}");
 
         // Close each OUTER containing-type frame opened above, one `}` per
@@ -6007,30 +6012,50 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static string PlaceholderSqlName(string prefix, QueryMethodModel m, int methodIndex) =>
         prefix + methodIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + m.MethodName;
 
+    // {name} placeholders — the holder type the per-method caches store. Emitted once per
+    // repository, only when a method has placeholders, so other repositories are unchanged.
+    private const string PlaceholderSqlHolder = "__ZaoPlaceholderSql";
+
+    private static void EmitPlaceholderSqlHolder(StringBuilder sb)
+    {
+        sb.AppendLine();
+        sb.AppendLine("    // The resolved SQL of one method for one set of placeholder values: the full text,");
+        sb.AppendLine("    // and each statement trimmed, for a batch. Immutable, so one reference publishes both.");
+        sb.Append("    private sealed class ").AppendLine(PlaceholderSqlHolder);
+        sb.AppendLine("    {");
+        sb.Append("        public ").Append(PlaceholderSqlHolder).AppendLine("(string full, string[] parts)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Full = full;");
+        sb.AppendLine("            Parts = parts;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        public string Full { get; }");
+        sb.AppendLine();
+        sb.AppendLine("        public string[] Parts { get; }");
+        sb.AppendLine("    }");
+    }
+
     // {name} placeholders — the cache a method whose SQL holds placeholders reads its SQL from.
     // A no-op for every other method, which keeps their output byte-identical. Per method:
     //
-    //   private string? __sql<i>_<M>;            the resolved full SQL, filled on first use
-    //   private string[]? __sqlParts<i>_<M>;     its statements, for the batch-split emit
-    //   private static readonly ConcurrentDictionary<key, (string Full, string[] Parts)> __sqlCache<i>_<M>
-    //   private (string Full, string[] Parts) __Sql<i>_<M>()
+    //   private __ZaoPlaceholderSql? __sql<i>_<M>;   the resolved SQL, filled on first use
+    //   private static readonly ConcurrentDictionary<key, __ZaoPlaceholderSql> __sqlCache<i>_<M>
+    //   private __ZaoPlaceholderSql __Sql<i>_<M>()
     //
     // The key is the method's distinct member values in order of first appearance: a string
     // for one, a value tuple for more. Lookups on it allocate nothing, so after warm-up an
     // instance costs one dictionary lookup per method and then a field read; a fresh instance
-    // per call pays the lookup and shares the cached strings.
+    // per call pays the lookup and shares the cached holder.
     //
-    // The parts field is written before the full-text field, which is published with a
-    // volatile write and read with a volatile read, so a reader that sees the full text also
-    // sees the parts. Two threads filling the fields at once write the same references, taken
-    // from the cache, so the race is benign.
+    // The field holds one reference to an immutable holder, published with a volatile write and
+    // read with a volatile read, so a reader never sees Full without its Parts. Two threads
+    // filling the field at once write the same reference, taken from the cache.
     private static void EmitPlaceholderSqlCache(
         StringBuilder sb, QueryMethodModel m, int methodIndex, EquatableArray<PlaceholderMember> members)
     {
         if (m.PlaceholderSqlAccessorName is not { } accessor || m.SqlTemplate is not { } template) return;
 
         var field = PlaceholderSqlName("__sql", m, methodIndex);
-        var partsField = PlaceholderSqlName("__sqlParts", m, methodIndex);
         var cache = PlaceholderSqlName("__sqlCache", m, methodIndex);
 
         // The distinct member accesses, in order of first appearance.
@@ -6054,31 +6079,33 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
 
         var full = ResolvedSqlExpression(template, SqlPlaceholderScanner.Scan(template).Spans, KeyPart);
+        // Each statement is trimmed before it is resolved, as the batch emit trims a literal
+        // statement, so a batch can assign a part with no Trim at runtime.
         var parts = SqlStatementSplitter.Split(template)
+            .Select(statement => statement.Trim())
             .Select(statement => ResolvedSqlExpression(statement, SqlPlaceholderScanner.Scan(statement).Spans, KeyPart));
+        var holder = "new " + PlaceholderSqlHolder + "(" + full + ", new string[] { " + string.Join(", ", parts) + " })";
 
         // Only {col:Name} placeholders: the SQL does not depend on the instance, so one static
-        // entry serves every call.
+        // holder serves every call.
         if (accesses.Count == 0)
         {
-            sb.Append("    private static readonly (string Full, string[] Parts) ").Append(cache).AppendLine(" = (");
-            sb.Append("        ").Append(full).AppendLine(",");
-            sb.Append("        new string[] { ").Append(string.Join(", ", parts)).AppendLine(" });");
+            sb.Append("    private static readonly ").Append(PlaceholderSqlHolder).Append(' ').Append(cache)
+                .Append(" = ").Append(holder).AppendLine(";");
             sb.AppendLine();
-            sb.Append("    private (string Full, string[] Parts) ").Append(accessor).Append("() => ").Append(cache).AppendLine(";");
+            sb.Append("    private ").Append(PlaceholderSqlHolder).Append(' ').Append(accessor).Append("() => ").Append(cache).AppendLine(";");
             sb.AppendLine();
             return;
         }
 
-        sb.Append("    private string? ").Append(field).AppendLine(";");
-        sb.Append("    private string[]? ").Append(partsField).AppendLine(";");
+        sb.Append("    private ").Append(PlaceholderSqlHolder).Append("? ").Append(field).AppendLine(";");
         sb.Append("    private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<")
-            .Append(keyType).Append(", (string Full, string[] Parts)> ").Append(cache).AppendLine(" = new();");
+            .Append(keyType).Append(", ").Append(PlaceholderSqlHolder).Append("> ").Append(cache).AppendLine(" = new();");
         sb.AppendLine();
-        sb.Append("    private (string Full, string[] Parts) ").Append(accessor).AppendLine("()");
+        sb.Append("    private ").Append(PlaceholderSqlHolder).Append(' ').Append(accessor).AppendLine("()");
         sb.AppendLine("    {");
-        sb.Append("        var __full = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");
-        sb.Append("        if (__full is not null) return (__full, ").Append(partsField).AppendLine("!);");
+        sb.Append("        var __sql = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");
+        sb.AppendLine("        if (__sql is not null) return __sql;");
         for (var i = 0; i < accesses.Count; i++)
         {
             var local = "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -6089,12 +6116,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var key = accesses.Count == 1
             ? "__v0"
             : "(" + string.Join(", ", accesses.Select((_, i) => "__v" + i.ToString(System.Globalization.CultureInfo.InvariantCulture))) + ")";
-        sb.Append("        var __entry = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k => (");
-        sb.Append("            ").Append(full).AppendLine(",");
-        sb.Append("            new string[] { ").Append(string.Join(", ", parts)).AppendLine(" }));");
-        sb.Append("        ").Append(partsField).AppendLine(" = __entry.Parts;");
-        sb.Append("        global::System.Threading.Volatile.Write(ref ").Append(field).AppendLine(", __entry.Full);");
-        sb.AppendLine("        return __entry;");
+        sb.Append("        __sql = ").Append(cache).Append(".GetOrAdd(").Append(key).AppendLine(", static __k =>");
+        sb.Append("            ").Append(holder).AppendLine(");");
+        sb.Append("        global::System.Threading.Volatile.Write(ref ").Append(field).AppendLine(", __sql);");
+        sb.AppendLine("        return __sql;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }

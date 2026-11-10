@@ -96,7 +96,10 @@ public class TablePlaceholderTests
             using var perThread = new ThreadLocalSqliteConnection(connectionString);
             var repo = new TablePlaceholderRepo(perThread.AsAsync(), "Widgets");
 
-            // Every caller waits at the barrier, so the first calls into the fresh instance race.
+            // A smoke test, not proof of memory ordering: every caller waits at the barrier, so the
+            // first calls into the fresh instance are likely to overlap, and each must see the SQL
+            // for its table. Whether a reader can see a half-published entry depends on the hardware
+            // memory model; the emitted code rules that out by publishing one immutable holder.
             using var barrier = new Barrier(Callers);
             var results = new string?[Callers];
             var errors = new Exception?[Callers];

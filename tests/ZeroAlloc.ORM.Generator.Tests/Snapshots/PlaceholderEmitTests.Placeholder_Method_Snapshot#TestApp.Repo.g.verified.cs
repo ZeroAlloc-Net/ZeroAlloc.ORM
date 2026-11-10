@@ -6,22 +6,19 @@ namespace TestApp;
 
 partial class Repo
 {
-    private string? __sql0_CountAsync;
-    private string[]? __sqlParts0_CountAsync;
-    private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, (string Full, string[] Parts)> __sqlCache0_CountAsync = new();
+    private __ZaoPlaceholderSql? __sql0_CountAsync;
+    private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, __ZaoPlaceholderSql> __sqlCache0_CountAsync = new();
 
-    private (string Full, string[] Parts) __Sql0_CountAsync()
+    private __ZaoPlaceholderSql __Sql0_CountAsync()
     {
-        var __full = global::System.Threading.Volatile.Read(ref __sql0_CountAsync);
-        if (__full is not null) return (__full, __sqlParts0_CountAsync!);
+        var __sql = global::System.Threading.Volatile.Read(ref __sql0_CountAsync);
+        if (__sql is not null) return __sql;
         var __v0 = @table;
         global::System.ArgumentException.ThrowIfNullOrWhiteSpace(__v0, "table");
-        var __entry = __sqlCache0_CountAsync.GetOrAdd(__v0, static __k => (
-            "SELECT COUNT(*) FROM " + __k,
-            new string[] { "SELECT COUNT(*) FROM " + __k }));
-        __sqlParts0_CountAsync = __entry.Parts;
-        global::System.Threading.Volatile.Write(ref __sql0_CountAsync, __entry.Full);
-        return __entry;
+        __sql = __sqlCache0_CountAsync.GetOrAdd(__v0, static __k =>
+            new __ZaoPlaceholderSql("SELECT COUNT(*) FROM " + __k, new string[] { "SELECT COUNT(*) FROM " + __k }));
+        global::System.Threading.Volatile.Write(ref __sql0_CountAsync, __sql);
+        return __sql;
     }
 
     [global::System.CodeDom.Compiler.GeneratedCode("ZeroAlloc.ORM.Generator", "0.1.0")]
@@ -41,5 +38,20 @@ partial class Repo
         {
             if (__openedHere) await __conn.CloseAsync().ConfigureAwait(false);
         }
+    }
+
+    // The resolved SQL of one method for one set of placeholder values: the full text,
+    // and each statement trimmed, for a batch. Immutable, so one reference publishes both.
+    private sealed class __ZaoPlaceholderSql
+    {
+        public __ZaoPlaceholderSql(string full, string[] parts)
+        {
+            Full = full;
+            Parts = parts;
+        }
+
+        public string Full { get; }
+
+        public string[] Parts { get; }
     }
 }

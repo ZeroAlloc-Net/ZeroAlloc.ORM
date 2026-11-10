@@ -37,11 +37,15 @@ public class PlaceholderEmitTests
     {
         var source = GeneratedSource(CountRepo);
 
-        Assert.Contains("private string? __sql0_CountAsync;", source, StringComparison.Ordinal);
+        Assert.Contains("private __ZaoPlaceholderSql? __sql0_CountAsync;", source, StringComparison.Ordinal);
         Assert.Contains(
-            "private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, (string Full, string[] Parts)> __sqlCache0_CountAsync",
+            "private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, __ZaoPlaceholderSql> __sqlCache0_CountAsync",
             source, StringComparison.Ordinal);
-        Assert.Contains("private (string Full, string[] Parts) __Sql0_CountAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("private __ZaoPlaceholderSql __Sql0_CountAsync()", source, StringComparison.Ordinal);
+        Assert.Contains("global::System.Threading.Volatile.Write(ref __sql0_CountAsync, __sql);", source, StringComparison.Ordinal);
+        // One immutable holder per repository, holding Full and Parts.
+        Assert.Equal(2, source.Split("private sealed class __ZaoPlaceholderSql").Length);
+        Assert.Contains("public string[] Parts { get; }", source, StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = __Sql0_CountAsync().Full;", source, StringComparison.Ordinal);
         Assert.Contains("global::System.ArgumentException.ThrowIfNullOrWhiteSpace(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("{table}", source, StringComparison.Ordinal);
@@ -111,10 +115,10 @@ public class PlaceholderEmitTests
         AssertCompilesWithoutWarnings(source);
         var generated = GeneratedSource(source);
 
-        Assert.Contains("ConcurrentDictionary<(string, string), (string Full, string[] Parts)> __sqlCache0_DeleteAsync", generated, StringComparison.Ordinal);
+        Assert.Contains("ConcurrentDictionary<(string, string), __ZaoPlaceholderSql> __sqlCache0_DeleteAsync", generated, StringComparison.Ordinal);
         Assert.Contains("var __v0 = @schema;", generated, StringComparison.Ordinal);
         Assert.Contains("var __v1 = @table;", generated, StringComparison.Ordinal);
-        Assert.Contains("GetOrAdd((__v0, __v1), static __k => (", generated, StringComparison.Ordinal);
+        Assert.Contains("GetOrAdd((__v0, __v1), static __k =>", generated, StringComparison.Ordinal);
         Assert.Contains("\"DELETE FROM \" + __k.Item1 + \".\" + __k.Item2 + \" WHERE", generated, StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = __Sql0_DeleteAsync().Full;", generated, StringComparison.Ordinal);
     }
@@ -147,7 +151,7 @@ public class PlaceholderEmitTests
         AssertCompilesWithoutWarnings(source);
         var generated = GeneratedSource(source);
 
-        Assert.Contains("private static readonly (string Full, string[] Parts) __sqlCache0_CountAsync = (", generated, StringComparison.Ordinal);
+        Assert.Contains("private static readonly __ZaoPlaceholderSql __sqlCache0_CountAsync = new __ZaoPlaceholderSql(", generated, StringComparison.Ordinal);
         Assert.Contains("\"SELECT COUNT(Id) FROM T\"", generated, StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = __Sql0_CountAsync().Full;", generated, StringComparison.Ordinal);
     }
@@ -166,7 +170,8 @@ public class PlaceholderEmitTests
         var generated = GeneratedSource(source);
 
         Assert.Contains("\"DELETE FROM \" + __k + \" WHERE Id = @id; SELECT changes()\"", generated, StringComparison.Ordinal);
-        Assert.Contains("new string[] { \"DELETE FROM \" + __k + \" WHERE Id = @id\", \" SELECT changes()\" }", generated, StringComparison.Ordinal);
+        // Each part is trimmed at build time, as the batch emit trims a literal statement.
+        Assert.Contains("new string[] { \"DELETE FROM \" + __k + \" WHERE Id = @id\", \"SELECT changes()\" }", generated, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -187,6 +192,55 @@ public class PlaceholderEmitTests
 
         Assert.Contains("__cmd.CommandText = __Sql0_CountAsync().Full;", generated, StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = __Sql1_CountAsync().Full;", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiteralPieceWithQuoteBackslashAndNewline_IsEscaped()
+    {
+        var source = Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, string table)
+            {
+                [Query("SELECT COUNT(*) FROM {table}\nWHERE 'say \"hi\" \\ ok' <> ''")]
+                public partial Task<int> CountAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+
+        Assert.Contains(
+            "\"SELECT COUNT(*) FROM \" + __k + \"\\nWHERE 'say \\\"hi\\\" \\\\ ok' <> ''\"",
+            GeneratedSource(source), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlaceholdersAtStartAndEnd_HaveNoEmptyLiteral()
+    {
+        var source = Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, string verb, string table)
+            {
+                [Command("{verb} FROM {table}")]
+                public partial Task<int> RunAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains("new __ZaoPlaceholderSql(__k.Item1 + \" FROM \" + __k.Item2, new string[] { __k.Item1 + \" FROM \" + __k.Item2 })", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"\" +", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SqlThatIsOnlyThePlaceholder_IsTheValue()
+    {
+        var source = Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, string table)
+            {
+                [Command("{table}")]
+                public partial Task<int> RunAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+
+        Assert.Contains("new __ZaoPlaceholderSql(__k, new string[] { __k })", GeneratedSource(source), StringComparison.Ordinal);
     }
 
     private static string GeneratedSource(string source)
