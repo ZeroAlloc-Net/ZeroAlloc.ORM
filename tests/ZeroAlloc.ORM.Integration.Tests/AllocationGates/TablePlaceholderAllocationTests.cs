@@ -65,6 +65,63 @@ public class TablePlaceholderAllocationTests
         }
     }
 
+    [Fact]
+    public async Task RepositoryInstance_HasNoExtraSizeOverLiteral()
+    {
+        var fx = await SeededAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var conn = fx.Connection;
+            // One warm call each, so the static memo is filled and cannot count towards the size.
+            (await new TablePlaceholderRepo(conn, "Widgets").CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await new TableLiteralRepo(conn).CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await new TableTenMethodsRepo(conn, "Widgets").CountVariant10Async(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+            var literalBytes = AllocationGate.MeasureBytesPerCall(
+                Iterations, () => s_sink = new TableLiteralRepo(conn));
+            var placeholderBytes = AllocationGate.MeasureBytesPerCall(
+                Iterations, () => s_sink = new TablePlaceholderRepo(conn, "Widgets"));
+            var tenBytes = AllocationGate.MeasureBytesPerCall(
+                Iterations, () => s_sink = new TableTenMethodsRepo(conn, "Widgets"));
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"literal {literalBytes} B, placeholder {placeholderBytes} B, ten methods {tenBytes} B");
+
+            (placeholderBytes - literalBytes).Should().Be(IntPtr.Size, "only the table string is stored");
+            (tenBytes - literalBytes).Should().Be(IntPtr.Size, "ten placeholder methods add no per-instance field");
+        }
+    }
+
+    [Fact]
+    public async Task AlternatingTables_AllocateNothingBeyondLiteral()
+    {
+        var fx = await SeededAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.ExecuteDdlAsync("CREATE TABLE Gadgets (Id INTEGER PRIMARY KEY, Name TEXT NOT NULL); INSERT INTO Gadgets (Id, Name) VALUES (1, 'gear')").ConfigureAwait(false);
+            var widgets = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            var gadgets = new TablePlaceholderRepo(fx.Connection, "Gadgets");
+            var literalWidgets = new TableLiteralRepo(fx.Connection);
+            var literalGadgets = new TableLiteralGadgetsRepo(fx.Connection);
+
+            var literalBytes = AllocationGate.MeasureBytesPerCallValueTask(Iterations, () =>
+            {
+                var first = literalWidgets.CountByIdAsync(1, CancellationToken.None);
+                var second = literalGadgets.CountByIdAsync(1, CancellationToken.None);
+                return new ValueTask<int>(first.Result + second.Result);
+            });
+            var placeholderBytes = AllocationGate.MeasureBytesPerCallValueTask(Iterations, () =>
+            {
+                var first = widgets.CountByIdAsync(1, CancellationToken.None);
+                var second = gadgets.CountByIdAsync(1, CancellationToken.None);
+                return new ValueTask<int>(first.Result + second.Result);
+            });
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"literal pair {literalBytes} B/call, placeholder pair {placeholderBytes} B/call");
+
+            placeholderBytes.Should().Be(literalBytes, "alternating tables never evict or rebuild a cached statement");
+        }
+    }
+
     private static async Task<SqliteFixture> SeededAsync()
     {
         var fx = new SqliteFixture();

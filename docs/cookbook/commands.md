@@ -218,7 +218,8 @@ The rules:
 
 - Placeholders work in `[Command]` and `[Query]` SQL, outside quotes and comments. `'{1,2}'` and
   `-- {x}` are not placeholders. `BulkInsert` and `[StoredProcedure]` names do not take them (ZAO117).
-- The value is read once per repository instance, on first use. A later change on the same instance is not seen.
+- Members are read on every call, so a changed value is honoured on the next call. A repository instance holds
+  no state for placeholders.
 - The SQL for each distinct value is built once and cached process-wide, so a call allocates the same as a
   call with literal SQL.
 - A null or blank table throws `ArgumentException` on first use.
