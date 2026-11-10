@@ -222,7 +222,7 @@ The rules:
   no state for placeholders.
 - The SQL for each distinct value is built once and cached process-wide, so a call allocates the same as a
   call with literal SQL.
-- A null or blank table throws `ArgumentException` on first use.
+- A null or blank table throws `ArgumentException` on each call.
 - A placeholder belongs where a name belongs. Use `@parameter` for values; the build refuses a placeholder
   after `=`, `LIKE` or `IN (` or in a `VALUES` tuple (ZAO116).
 
