@@ -110,6 +110,140 @@ internal static class SqlPlaceholderScanner
         return close + 1;
     }
 
+    // The spans that sit where a value belongs, for ZAO116. A narrow heuristic on the masked SQL:
+    // a span right after (ignoring whitespace) =, <, >, <=, >=, <> or !=, the keyword LIKE, or
+    // "IN (", or at nesting depth one of a VALUES (...) tuple. Identifier positions (FROM, JOIN,
+    // UPDATE, INTO, TABLE, after a dot, a column list, SELECT, ORDER BY) are never flagged.
+    internal static ImmutableArray<SqlPlaceholderSpan> FindValuePositionSpans(SqlPlaceholderScan scan)
+    {
+        var sql = scan.MaskedSql;
+        var inTuple = TupleDepthOneStarts(sql, scan.Spans);
+        var result = ImmutableArray.CreateBuilder<SqlPlaceholderSpan>();
+        foreach (var span in scan.Spans)
+        {
+            if (inTuple.Contains(span.Start) || FollowsValueOperator(sql, span.Start))
+                result.Add(span);
+        }
+
+        return result.ToImmutable();
+    }
+
+    private static bool FollowsValueOperator(string sql, int start)
+    {
+        var p = start - 1;
+        while (p >= 0 && char.IsWhiteSpace(sql[p])) p--;
+        if (p < 0) return false;
+        var c = sql[p];
+        if (c == '=' || c == '<' || c == '>') return true;
+        if (c == '(')
+        {
+            p--;
+            while (p >= 0 && char.IsWhiteSpace(sql[p])) p--;
+            return WordEndsAt(sql, p, "IN");
+        }
+
+        return WordEndsAt(sql, p, "LIKE");
+    }
+
+    // True when `word` ends at index `end` as a whole word, ignoring case.
+    private static bool WordEndsAt(string sql, int end, string word)
+    {
+        var begin = end - word.Length + 1;
+        if (begin < 0) return false;
+        if (string.Compare(sql, begin, word, 0, word.Length, StringComparison.OrdinalIgnoreCase) != 0) return false;
+        return begin == 0 || !IsIdentifierChar(sql[begin - 1]);
+    }
+
+    // The starts of the spans at depth one of a VALUES (...) tuple, also in the later tuples of
+    // a multi-row VALUES (...), (...).
+    private static System.Collections.Generic.HashSet<int> TupleDepthOneStarts(
+        string sql, ImmutableArray<SqlPlaceholderSpan> spans)
+    {
+        var hits = new System.Collections.Generic.HashSet<int>();
+        var starts = new System.Collections.Generic.HashSet<int>();
+        foreach (var span in spans) starts.Add(span.Start);
+        var i = 0;
+        while (i < sql.Length)
+        {
+            var c = sql[i];
+            if (IsAsciiLetterOrUnderscore(c))
+            {
+                var wordStart = i;
+                while (i < sql.Length && IsIdentifierChar(sql[i])) i++;
+                if (i - wordStart == 6
+                    && string.Compare(sql, wordStart, "VALUES", 0, 6, StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    i = ReadValuesTuples(sql, i, starts, hits);
+                }
+
+                continue;
+            }
+
+            i = SkipOpaque(sql, i);
+        }
+
+        return hits;
+    }
+
+    private static int ReadValuesTuples(
+        string sql, int i, System.Collections.Generic.HashSet<int> starts, System.Collections.Generic.HashSet<int> hits)
+    {
+        while (true)
+        {
+            while (i < sql.Length && char.IsWhiteSpace(sql[i])) i++;
+            if (i >= sql.Length || sql[i] != '(') return i;
+            var depth = 0;
+            while (i < sql.Length)
+            {
+                var c = sql[i];
+                if (c == '(')
+                {
+                    depth++;
+                    i++;
+                }
+                else if (c == ')')
+                {
+                    depth--;
+                    i++;
+                    if (depth == 0) break;
+                }
+                else
+                {
+                    if (depth == 1 && starts.Contains(i)) hits.Add(i);
+                    i = IsAsciiLetterOrUnderscore(c) ? SkipWord(sql, i) : SkipOpaque(sql, i);
+                }
+            }
+
+            while (i < sql.Length && char.IsWhiteSpace(sql[i])) i++;
+            if (i >= sql.Length || sql[i] != ',') return i;
+            i++;
+        }
+    }
+
+    private static int SkipWord(string sql, int i)
+    {
+        while (i < sql.Length && IsIdentifierChar(sql[i])) i++;
+        return i;
+    }
+
+    // Steps over one character, or over a whole quoted identifier, string, dollar quote or comment.
+    private static int SkipOpaque(string sql, int i)
+    {
+        var c = sql[i];
+        switch (c)
+        {
+            case '\'': return SkipQuoted(sql, i, '\'', doubling: true);
+            case '"': return SkipQuoted(sql, i, '"', doubling: true);
+            case '`': return SkipQuoted(sql, i, '`', doubling: true);
+            case '[': return SkipQuoted(sql, i, ']', doubling: false);
+            case '$':
+                return i > 0 && (IsIdentifierChar(sql[i - 1]) || sql[i - 1] == '$') ? i + 1 : SkipDollarQuote(sql, i);
+            case '-' when i + 1 < sql.Length && sql[i + 1] == '-': return SkipLineComment(sql, i);
+            case '/' when i + 1 < sql.Length && sql[i + 1] == '*': return SkipBlockComment(sql, i);
+            default: return i + 1;
+        }
+    }
+
     private static bool IsIdentifierChar(char c) =>
         IsAsciiLetterOrUnderscore(c) || (c >= '0' && c <= '9');
 

@@ -899,6 +899,23 @@ internal static class DiagnosticDescriptors
         isEnabledByDefault: true,
         helpLinkUri: HelpLink("ZAO115"));
 
+    // ZAO116 -- a placeholder sits where a value belongs: right after a comparison operator, LIKE or
+    // IN (, inside a VALUES tuple, or named like a parameter the SQL also uses. Placeholders are
+    // spliced into the SQL text verbatim, so a value there is an injection hole. A narrow
+    // heuristic, not a parser. Reported at the method's name, once per distinct placeholder.
+    //
+    // MessageArgs:
+    //   {0} = the method name
+    //   {1} = the placeholder as written, for example {table}
+    public static readonly DiagnosticDescriptor ZAO116_PlaceholderWhereValueBelongs = new(
+        id: "ZAO116",
+        title: "SQL placeholder where a value belongs",
+        messageFormat: "'{0}': the SQL placeholder {1} sits where a value belongs; placeholders are spliced into the SQL text as written, so use a @parameter for values",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        helpLinkUri: HelpLink("ZAO116"));
+
     // ZAO117 -- a {name} placeholder in SQL that cannot take one: BulkInsert and stored-procedure
     // SQL. Reported at the method's name.
     //

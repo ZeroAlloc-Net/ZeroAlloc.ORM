@@ -596,6 +596,22 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     }
                     placeholderMembers = resolved.ToImmutable();
 
+                    // ZAO116: a placeholder where a value belongs. Narrow on purpose, see the page.
+                    var valueSpans = SqlPlaceholderScanner.FindValuePositionSpans(scan);
+                    var seenValueTexts = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var span in scan.Spans)
+                    {
+                        var text = span.Kind == SqlPlaceholderKind.Column ? "{col:" + span.Name + "}" : "{" + span.Name + "}";
+                        if ((valueSpans.Contains(span) || FindPlaceholderSigil(scan.MaskedSql, span.Name) is not null)
+                            && seenValueTexts.Add(text))
+                        {
+                            diagnostics.Add(new DiagnosticInfo(
+                                DescriptorId: "ZAO116",
+                                Location: nameLocation,
+                                MessageArgs: new EquatableArray<string>(ImmutableArray.Create(method.Name, text))));
+                        }
+                    }
+
                     // {col:Name} quotes by the QuoteColumns member and the declared dialect. The
                     // dialect is known only after this model is built, so ZAO118 waits in the model.
                     var firstColumn = scan.Spans.FirstOrDefault(sp => sp.Kind == SqlPlaceholderKind.Column);
@@ -5559,6 +5575,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         "ZAO113" => DiagnosticDescriptors.ZAO113_LinqLockWithoutTransaction,
         "ZAO114" => DiagnosticDescriptors.ZAO114_LinqCompanionDoesNotCompile,
         "ZAO115" => DiagnosticDescriptors.ZAO115_PlaceholderMemberNotFound,
+        "ZAO116" => DiagnosticDescriptors.ZAO116_PlaceholderWhereValueBelongs,
         "ZAO117" => DiagnosticDescriptors.ZAO117_PlaceholderNotSupported,
         "ZAO118" => DiagnosticDescriptors.ZAO118_ColumnPlaceholderWithoutDialect,
         _ => null,
