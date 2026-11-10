@@ -5,8 +5,8 @@ using ZeroAlloc.TestHelpers;
 namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 
 // #464 — once warm, a method whose SQL holds {table} allocates exactly what the same method with
-// the table written into the SQL does: the resolved SQL is a field read. A repository created per
-// call pays one cache lookup and allocates nothing beyond the repository object. Every call
+// the table written into the SQL does: the resolved SQL comes from a static memo or one cache
+// lookup. A repository created per call allocates nothing beyond the repository object. Every call
 // completes synchronously on in-memory Sqlite, so AllocationGate counts the calling thread's bytes.
 public class TablePlaceholderAllocationTests
 {
@@ -33,6 +33,27 @@ public class TablePlaceholderAllocationTests
 
             placeholderBytes.Should().Be(literalBytes, "the resolved SQL is read from a field once warm");
             (await placeholder.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+        }
+    }
+
+    [Fact]
+    public async Task EqualStringAtAnotherAddress_AllocatesSameBytesAsLiteralMethod()
+    {
+        var fx = await SeededAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var literal = new TableLiteralRepo(fx.Connection);
+            // The string at another address fills the memo first, then the literal-address one runs.
+            var distinct = new TablePlaceholderRepo(fx.Connection, new string("Widgets".AsSpan()));
+            var other = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            (await distinct.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+
+            var literalBytes = AllocationGate.MeasureBytesPerCallValueTask(
+                Iterations, () => literal.CountByIdAsync(1, CancellationToken.None));
+            var otherBytes = AllocationGate.MeasureBytesPerCallValueTask(
+                Iterations, () => other.CountByIdAsync(1, CancellationToken.None));
+
+            otherBytes.Should().Be(literalBytes, "an equal string at another address still hits the memo");
         }
     }
 

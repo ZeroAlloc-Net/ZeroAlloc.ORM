@@ -6154,7 +6154,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // {name} placeholders — the cache a method whose SQL holds placeholders reads its SQL from.
     // A no-op for every other method, which keeps their output byte-identical. Per method:
     //
-    //   private static __ZaoPlaceholderSql? __sqlMemo<i>_<M>;   the last resolved SQL, filled on first use
+    //   private static __ZaoPlaceholderSql? __sqlMemo<i>_<M>;   the first resolved SQL, filled once
     //   private static readonly ConcurrentDictionary<key, __ZaoPlaceholderSql> __sqlCache<i>_<M>
     //   private __ZaoPlaceholderSql __Sql<i>_<M>()
     //
@@ -6162,8 +6162,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // for one, a value tuple for more. Lookups on it allocate nothing.
     //
     // The memo is static, so an instance costs no field: the accessor reads its members, and a
-    // hit needs only those members to be the strings, and the flag the value, the memo's holder
-    // was built for. A repository built with other values misses, takes the dictionary and
+    // hit needs only those members to be equal to the strings, and the flag the value, the memo's
+    // holder was built for. The strings compare with string.Equals, which is ordinal and tries the
+    // reference first, so an equal string at another address still hits. A repository built with other values misses, takes the dictionary and
     // leaves the memo alone once it is filled; it is a fast path for the common single
     // configuration, and the dictionary stays the source of truth for the rest. Only a miss
     // validates the values: a hit means the memo was built from values that already passed.
@@ -6290,7 +6291,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         for (var i = 0; i < accesses.Count; i++)
         {
             var n = i.ToString(inv);
-            hit.Add("global::System.Object.ReferenceEquals(__m.Keys[" + n + "], __v" + n + ")");
+            hit.Add("string.Equals(__m.Keys[" + n + "], __v" + n + ")");
         }
         if (quote is not null) hit.Add("__m.Quote == __v" + accesses.Count.ToString(inv));
         sb.Append("        var __m = global::System.Threading.Volatile.Read(ref ").Append(field).AppendLine(");");

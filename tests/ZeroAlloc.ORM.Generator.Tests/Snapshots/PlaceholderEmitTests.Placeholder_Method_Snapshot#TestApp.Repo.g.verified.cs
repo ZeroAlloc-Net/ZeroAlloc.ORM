@@ -13,7 +13,7 @@ partial class Repo
     {
         var __v0 = @table;
         var __m = global::System.Threading.Volatile.Read(ref __sqlMemo0_CountAsync);
-        if (__m is not null && global::System.Object.ReferenceEquals(__m.Keys[0], __v0)) return __m;
+        if (__m is not null && string.Equals(__m.Keys[0], __v0)) return __m;
         global::System.ArgumentException.ThrowIfNullOrWhiteSpace(__v0, "table");
         var __sql = __sqlCache0_CountAsync.GetOrAdd(__v0, static __k =>
             new __ZaoPlaceholderSql("SELECT COUNT(*) FROM " + __k, new string[] { "SELECT COUNT(*) FROM " + __k }, new string[] { __k }, false));

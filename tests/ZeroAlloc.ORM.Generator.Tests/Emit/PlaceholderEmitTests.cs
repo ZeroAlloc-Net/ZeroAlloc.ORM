@@ -10,8 +10,8 @@ using ZeroAlloc.TypeConversions;
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
 // #464: a [Query] or [Command] whose SQL holds a {name} placeholder reads its CommandText from a
-// per-method cache: a static ConcurrentDictionary keyed by the member values, and an instance field
-// filled from it on first use. Every other method's output stays byte-identical.
+// per-method cache: a static ConcurrentDictionary keyed by the member values, and a static memo
+// filled once from it. Every other method's output stays byte-identical.
 public class PlaceholderEmitTests
 {
     private const string Usings = """
@@ -47,7 +47,7 @@ public class PlaceholderEmitTests
         Assert.Contains("Interlocked.CompareExchange(ref __sqlMemo0_CountAsync", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Volatile.Write(ref __sql0_", source, StringComparison.Ordinal);
         Assert.Contains("Volatile.Read(ref __sqlMemo0_CountAsync)", source, StringComparison.Ordinal);
-        // One immutable holder per repository, holding Full and Parts.
+        // One immutable holder per repository, holding Full, Parts, Keys and Quote.
         Assert.Equal(2, source.Split("private sealed class __ZaoPlaceholderSql").Length);
         Assert.Contains("public string[] Parts { get; }", source, StringComparison.Ordinal);
         Assert.Contains("__cmd.CommandText = __Sql0_CountAsync().Full;", source, StringComparison.Ordinal);
@@ -106,7 +106,7 @@ public class PlaceholderEmitTests
         var generated = GeneratedSource(source);
 
         Assert.Contains("__m.Quote == __v0", generated, StringComparison.Ordinal);
-        Assert.DoesNotContain("ReferenceEquals", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("string.Equals(", generated, StringComparison.Ordinal);
 
         var keyed = GeneratedSource(Usings + """
             public sealed partial class Repo(IAsyncDbConnection connection, string schema, string table)
@@ -115,8 +115,8 @@ public class PlaceholderEmitTests
                 public partial Task<int> GetAsync(CancellationToken ct);
             }
             """);
-        Assert.Contains("ReferenceEquals(__m.Keys[0], __v0)", keyed, StringComparison.Ordinal);
-        Assert.Contains("ReferenceEquals(__m.Keys[1], __v1)", keyed, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(__m.Keys[0], __v0)", keyed, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(__m.Keys[1], __v1)", keyed, StringComparison.Ordinal);
         Assert.DoesNotContain("__m.Quote", keyed, StringComparison.Ordinal);
     }
 
@@ -134,8 +134,8 @@ public class PlaceholderEmitTests
         AssertCompilesWithoutWarnings(source);
         var generated = GeneratedSource(source);
 
-        Assert.Contains("ReferenceEquals(__m.Keys[0], __v0)", generated, StringComparison.Ordinal);
-        Assert.Contains("ReferenceEquals(__m.Keys[1], __v1)", generated, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(__m.Keys[0], __v0)", generated, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(__m.Keys[1], __v1)", generated, StringComparison.Ordinal);
         Assert.Contains("__m.Quote == __v2", generated, StringComparison.Ordinal);
         Assert.Contains("new string[] { __k.Item1, __k.Item2 }, __k.Item3)", generated, StringComparison.Ordinal);
     }

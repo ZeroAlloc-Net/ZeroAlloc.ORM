@@ -273,6 +273,9 @@ public class TablePlaceholderTests
 
             (await second.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
             (await first.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            // The distinct-address instance filled the memo first; the original address still resolves.
+            (await first.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await second.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
         }
     }
 
