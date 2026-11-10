@@ -190,6 +190,56 @@ zero-typed identity that didn't come from the database. A row whose identity
 value is NULL throws the same exception type. Earlier releases threw
 `InvalidOperationException` for the no-row case.
 
+## Table and column placeholders
+
+A library that ships repositories cannot know the table its adopters use, so the SQL of a `[Query]` or
+`[Command]` can name it with a `{table}` placeholder. The generator binds it to a `string` member of the
+repository: a captured primary-constructor parameter, a field or a property with a getter.
+
+> The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input.
+
+```csharp
+[Dialect(SqlDialect.Sqlite)]
+public sealed partial class OrderRepository(IAsyncDbConnection connection, string table, bool quoteColumns)
+{
+    [Query("SELECT COUNT(*) FROM {table} WHERE Status = @status")]
+    public partial Task<int> CountAsync(string status, CancellationToken ct);
+
+    [Query("SELECT {col:Id}, {col:Name} FROM {table} WHERE {col:Id} = @id")]
+    public partial Task<OrderRow?> GetAsync(int id, CancellationToken ct);
+}
+```
+
+`{table}` binds to `table`, ignoring case and one leading underscore, so `_table` works too. `{col:Id}`
+writes a column name. It is quoted in the style of the declared `[Dialect]` when the repository has a `bool`
+member named `QuoteColumns` that is true, and bare otherwise: `"Id"` for SQLite and PostgreSQL, `[Id]` for
+SQL Server, a backtick on both sides for MySQL. Without a declared dialect `{col:Id}` is a build error.
+Here the member `quoteColumns` carries the flag.
+
+The rules:
+
+- Placeholders work in `[Command]` and `[Query]` SQL, outside quotes and comments. `'{1,2}'` and
+  `-- {x}` are not placeholders. `BulkInsert` and `[StoredProcedure]` names do not take them (ZAO117).
+- The value is read once per repository instance, on first use. A later change on the same instance is not seen.
+- The SQL for each distinct value is built once and cached process-wide, so a call allocates the same as a
+  call with literal SQL.
+- A null or blank table throws `ArgumentException` on first use.
+- A placeholder belongs where a name belongs. Use `@parameter` for values; the build refuses a placeholder
+  after `=`, `LIKE` or `IN (` or in a `VALUES` tuple (ZAO116).
+
+The table value is configuration, not input: it is spliced into the SQL verbatim and is never escaped or validated, so never pass user input.
+
+| ID | Severity | Fires when |
+| --- | --- | --- |
+| [ZAO115](../diagnostics/ZAO115.md) | Error | A placeholder finds no `string` member, finds several, or `QuoteColumns` is not a `bool`. |
+| [ZAO116](../diagnostics/ZAO116.md) | Error | A placeholder sits where a value belongs. |
+| [ZAO117](../diagnostics/ZAO117.md) | Error | A placeholder is in `BulkInsert` or stored-procedure SQL. |
+| [ZAO118](../diagnostics/ZAO118.md) | Error | `{col:Name}` is used on a repository with no declared dialect. |
+
+**Upgrading.** This is a behaviour change: a `{identifier}` in existing `[Query]` or `[Command]` SQL
+outside quotes is now a placeholder. It binds to a `string` member of the same name or fails the build
+with ZAO115. Move such brace text inside a string literal, or remove it.
+
 ## When NOT to use `[Command]`
 
 - **Full result-set returns** (lists, single rows, tuple-shaped multi-result):

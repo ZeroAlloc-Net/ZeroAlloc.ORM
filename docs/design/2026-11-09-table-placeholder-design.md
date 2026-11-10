@@ -80,7 +80,8 @@ not a promised feature. Section 5.5 gives the rule for naming the member in diag
 `{col:Id}` uses the member named `QuoteColumns` of type `bool`, if present. Absent means never quoted,
 so the placeholder emits `Id`. The quote style comes from the dialect declared with `[Dialect]` on the repository or on the assembly,
 so it is fixed per repository: `"` for SQLite and PostgreSQL, `[` and `]` for SQL Server, a backtick for
-MySQL. Without a declared dialect `{col:...}` is an error (ZAO118), checked once per repository.
+MySQL. Without a declared dialect `{col:...}` is an error (ZAO118), reported per method, as the
+`SqlServerOnlyDiagnostics` precedent does.
 
 ### 5.3 Emission and caching
 
@@ -181,3 +182,7 @@ release is verified on NuGet, and the release itself is the owner's call.
    since the cached string is shared; the test also covers that case.
 8. **Null table.** A null or blank `{table}` value throws `ArgumentException` on first use, as Outbox does
    today, rather than failing inside the cache with a bare `NullReferenceException`.
+9. **Instance field and holder.** Section 5.3 describes the per-instance field as a plain string. The
+   built emit keeps a small internal holder object in that field, so the full SQL and the per-statement
+   parts publish together. That is internal detail; the behaviour in 5.3 is unchanged and nothing in
+   this design needs to change.
