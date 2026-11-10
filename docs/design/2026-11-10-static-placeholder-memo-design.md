@@ -39,7 +39,8 @@ allocates nothing after warm-up.
 
 1. Fix it in the ORM generator, not in Outbox, and do not raise the Outbox budget.
 2. The direction is a static per-method memo that holds the last resolved holder and the key it was
-   built for. The check is reference equality on the member values. A miss falls back to the existing
+   built for. The check is `string.Equals` on the member values, ordinal, with the reference compared first.
+   An equal string at another address must hit too: otherwise it would pin the memo to a miss. A miss falls back to the existing
    dictionary.
 3. The memo is filled once, when empty. A dictionary hit does not rewrite it.
 4. Commit type `perf:` (a patch bump in release-please).
@@ -75,7 +76,7 @@ private __ZaoPlaceholderSql __Sql0_M()
     var __v0 = @Table;                      // read the members every call
     var __v1 = @QuoteColumns;               // only when the method has {col:} and a flag
     var __m = Volatile.Read(ref __sqlMemo0_M);
-    if (__m is not null && ReferenceEquals(__m.Strings[0], __v0) && __m.Quote == __v1) return __m;
+    if (__m is not null && string.Equals(__m.Strings[0], __v0) && __m.Quote == __v1) return __m;
     // miss: validate (ThrowIfNullOrWhiteSpace on each string), dictionary GetOrAdd,
     // then publish to the memo only if it is still empty
 }
@@ -91,15 +92,15 @@ fix.
 
 ### 5.2 Correctness
 
-- `ReferenceEquals` on a string implies equal content, so the memo can never be a false hit. A member
-  that returns a fresh string per call misses the memo and goes through the dictionary, which is still
-  correct and allocates nothing.
+- `string.Equals` is ordinal and compares the reference first, so the memo can never be a false hit.
+  An equal string at another address hits as well: reference equality alone would let such a string
+  pin the memo to a miss, and every call would go through the dictionary.
 - A hit implies the values were non-blank when the holder was built, so validation runs on the miss
   path only. A null member misses the memo (a memo key is never null) and throws on the miss path as
   before.
-- Publication: the memo is written with `Volatile.Write` of a reference to an immutable holder. Two
-  threads filling an empty memo both write a holder from the same dictionary, so the race is benign.
-  The fill-once rule is `Interlocked.CompareExchange(ref memo, holder, null)`.
+- Publication: the memo is written with `Interlocked.CompareExchange(ref memo, holder, null)`, a
+  reference to an immutable holder. Two threads filling an empty memo hold a holder from the same
+  dictionary, so the race is benign, and the first writer wins.
 
 ### 5.3 Behaviour change
 
