@@ -31,29 +31,34 @@ public class TablePlaceholderAllocationTests
             TestContext.Current.TestOutputHelper?.WriteLine(
                 $"literal {literalBytes} B/call, placeholder {placeholderBytes} B/call");
 
-            placeholderBytes.Should().Be(literalBytes, "the resolved SQL is read from a field once warm");
+            placeholderBytes.Should().Be(literalBytes, "the resolved SQL comes from the memo or one cache lookup once warm");
             (await placeholder.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
         }
     }
 
+    // The memo is static and shared by the whole test process, so this test uses a table name no
+    // other test touches: its repository is the first to fill the memo, with the string at another
+    // address. Allocation cannot tell a memo hit from a dictionary hit, as both allocate nothing;
+    // the emit tests pin the hit check. This gate holds that the order costs no allocation, against the
+    // repository that filled the memo, which runs the same SQL on the same table.
     [Fact]
     public async Task EqualStringAtAnotherAddress_AllocatesSameBytesAsLiteralMethod()
     {
         var fx = await SeededAsync().ConfigureAwait(false);
         await using (fx.ConfigureAwait(false))
         {
-            var literal = new TableLiteralRepo(fx.Connection);
-            // The string at another address fills the memo first, then the literal-address one runs.
-            var distinct = new TablePlaceholderRepo(fx.Connection, new string("Widgets".AsSpan()));
-            var other = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            await fx.ExecuteDdlAsync("CREATE TABLE EqualStringWidgets (Id INTEGER PRIMARY KEY, Name TEXT NOT NULL); INSERT INTO EqualStringWidgets (Id, Name) VALUES (1, 'nut')").ConfigureAwait(false);
+            var distinct = new TablePlaceholderRepo(fx.Connection, new string("EqualStringWidgets".AsSpan()));
+            var other = new TablePlaceholderRepo(fx.Connection, new string("EqualStringWidgets".AsSpan()));
             (await distinct.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
 
-            var literalBytes = AllocationGate.MeasureBytesPerCallValueTask(
-                Iterations, () => literal.CountByIdAsync(1, CancellationToken.None));
+            var distinctBytes = AllocationGate.MeasureBytesPerCallValueTask(
+                Iterations, () => distinct.CountByIdAsync(1, CancellationToken.None));
             var otherBytes = AllocationGate.MeasureBytesPerCallValueTask(
                 Iterations, () => other.CountByIdAsync(1, CancellationToken.None));
 
-            otherBytes.Should().Be(literalBytes, "an equal string at another address still hits the memo");
+            otherBytes.Should().Be(distinctBytes, "an equal string at another address costs no allocation");
+            (await other.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
         }
     }
 

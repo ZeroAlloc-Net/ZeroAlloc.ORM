@@ -6164,10 +6164,11 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // The memo is static, so an instance costs no field: the accessor reads its members, and a
     // hit needs only those members to be equal to the strings, and the flag the value, the memo's
     // holder was built for. The strings compare with string.Equals, which is ordinal and tries the
-    // reference first, so an equal string at another address still hits. A repository built with other values misses, takes the dictionary and
-    // leaves the memo alone once it is filled; it is a fast path for the common single
-    // configuration, and the dictionary stays the source of truth for the rest. Only a miss
-    // validates the values: a hit means the memo was built from values that already passed.
+    // reference first, so an equal string at another address still hits. A repository built with
+    // other values misses, takes the dictionary and leaves the memo alone once it is filled; it is
+    // a fast path for the common single configuration, and the dictionary stays the source of
+    // truth for the rest. Only a miss validates the values: a hit means the memo was built from
+    // values that already passed.
     //
     // The memo holds one reference to an immutable holder that carries its key, published with a
     // compare-exchange into an empty memo and read with a volatile read, so a reader never sees
@@ -6284,9 +6285,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
             sb.Append("        var __v").Append(accesses.Count.ToString(inv))
                 .Append(" = @").Append(quoteColumnsAccess).AppendLine(";");
         }
-        // The memo answers while it was built for these very values. Strings compare by reference:
-        // a member holds the same string between calls, and an equal string in another instance
-        // only misses and takes the dictionary, which finds the same holder.
+        // The memo answers while it was built for these very values. Strings compare with
+        // string.Equals: ordinal, reference first, so the usual case of one string held between
+        // calls costs a pointer compare, and an equal string at another address still hits.
         var hit = new List<string> { "__m is not null" };
         for (var i = 0; i < accesses.Count; i++)
         {
