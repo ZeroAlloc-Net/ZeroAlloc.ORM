@@ -162,10 +162,10 @@ release is verified on NuGet, and the release itself is the owner's call.
 2. **Name ties.** Candidates are the string members whose name equals the placeholder, ignoring case and
    one leading underscore. `table` and `_table` are two candidates, so ZAO115 fires. Declaring both is
    ambiguous and the message names them.
-3. **Tokenizer.** The generator has `SqlStatementSplitter`, which already skips quotes and comments for
-   statement splitting. The builder extends it to report placeholder spans rather than writing a second
-   scanner, and covers `[..]`, backticks, `$$` and nested block comments with tests, so the masking and
-   the splitter cannot disagree.
+3. **Tokenizer.** `SqlStatementSplitter` is a public class in ZeroAlloc.TypeConversions and skips only
+   `'..'` and `".."`, not comments, `[..]`, backticks or `$$`. Extending it would add public API and could
+   change statement counts. So the generator gets its own internal `SqlPlaceholderScanner` that skips all
+   of those, and the splitter stays untouched. Placeholders hold no `;`, so splitting is unaffected.
 4. **Cache key.** It is the tuple of every distinct member value the method's SQL uses, in order of first
    appearance, plus the quote flag when `{col:}` appears. `{schema}` and `{table}` together is therefore
    allowed and keys on both. The emit builds the key struct per method, so the "no allocation" claim
@@ -179,3 +179,5 @@ release is verified on NuGet, and the release itself is the owner's call.
 7. **Allocation test.** It measures after warm-up on one instance, as `AllocationGate` does, and requires
    equal bytes to the literal version. A repository created per call pays one lookup and no allocation,
    since the cached string is shared; the test also covers that case.
+8. **Null table.** A null or blank `{table}` value throws `ArgumentException` on first use, as Outbox does
+   today, rather than failing inside the cache with a bare `NullReferenceException`.
