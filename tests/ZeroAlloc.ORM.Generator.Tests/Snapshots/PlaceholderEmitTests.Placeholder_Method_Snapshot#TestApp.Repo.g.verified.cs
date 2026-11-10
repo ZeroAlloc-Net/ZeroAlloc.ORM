@@ -6,18 +6,18 @@ namespace TestApp;
 
 partial class Repo
 {
-    private __ZaoPlaceholderSql? __sql0_CountAsync;
+    private static __ZaoPlaceholderSql? __sqlMemo0_CountAsync;
     private static readonly global::System.Collections.Concurrent.ConcurrentDictionary<string, __ZaoPlaceholderSql> __sqlCache0_CountAsync = new();
 
     private __ZaoPlaceholderSql __Sql0_CountAsync()
     {
-        var __sql = global::System.Threading.Volatile.Read(ref __sql0_CountAsync);
-        if (__sql is not null) return __sql;
         var __v0 = @table;
+        var __m = global::System.Threading.Volatile.Read(ref __sqlMemo0_CountAsync);
+        if (__m is not null && global::System.Object.ReferenceEquals(__m.Keys[0], __v0)) return __m;
         global::System.ArgumentException.ThrowIfNullOrWhiteSpace(__v0, "table");
-        __sql = __sqlCache0_CountAsync.GetOrAdd(__v0, static __k =>
-            new __ZaoPlaceholderSql("SELECT COUNT(*) FROM " + __k, new string[] { "SELECT COUNT(*) FROM " + __k }));
-        global::System.Threading.Volatile.Write(ref __sql0_CountAsync, __sql);
+        var __sql = __sqlCache0_CountAsync.GetOrAdd(__v0, static __k =>
+            new __ZaoPlaceholderSql("SELECT COUNT(*) FROM " + __k, new string[] { "SELECT COUNT(*) FROM " + __k }, new string[] { __k }, false));
+        global::System.Threading.Interlocked.CompareExchange(ref __sqlMemo0_CountAsync, __sql, null);
         return __sql;
     }
 
@@ -41,17 +41,24 @@ partial class Repo
     }
 
     // The resolved SQL of one method for one set of placeholder values: the full text,
-    // and each statement trimmed, for a batch. Immutable, so one reference publishes both.
+    // and each statement trimmed, for a batch, plus the key it was built for: the member strings
+    // and the quote flag. Immutable, so one reference publishes all of them.
     private sealed class __ZaoPlaceholderSql
     {
-        public __ZaoPlaceholderSql(string full, string[] parts)
+        public __ZaoPlaceholderSql(string full, string[] parts, string[] keys, bool quote)
         {
             Full = full;
             Parts = parts;
+            Keys = keys;
+            Quote = quote;
         }
 
         public string Full { get; }
 
         public string[] Parts { get; }
+
+        public string[] Keys { get; }
+
+        public bool Quote { get; }
     }
 }
