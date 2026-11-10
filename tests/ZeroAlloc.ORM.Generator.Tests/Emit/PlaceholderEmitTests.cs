@@ -435,6 +435,34 @@ public class PlaceholderEmitTests
         return count;
     }
 
+    // The statement splitter does not know comments, so a `;` in a comment cuts it. Brace text
+    // after that `;` is still comment text: Parts must keep it literal, as Full does.
+    [Theory]
+    [InlineData("connection", "Sqlite", "UPDATE T SET {col:A} = 1 /* see note; ref {ticket} */", "\"ref {ticket} */\"")]
+    [InlineData("connection", "Sqlite", "DELETE FROM T WHERE {col:Id} = 1 -- a; {b}", "\"{b}\"")]
+    [InlineData("connection, string table", "Sqlite", "UPDATE {table} SET a = 1 /* see note; ref {ticket} */", "\"ref {ticket} */\"")]
+    [InlineData("connection, string table", "Sqlite", "DELETE FROM {table} -- a; {b}", "\"{b}\"")]
+    [InlineData("connection, string schema, string table", "Sqlite", "UPDATE {schema}.{table} SET a = 1 /* see note; ref {ticket} */", "\"ref {ticket} */\"")]
+    [InlineData("connection, string schema, string table", "Sqlite", "DELETE FROM {schema}.{table} -- a; {b}", "\"{b}\"")]
+    [InlineData("connection, string table, bool quoteColumns", "SqlServer", "UPDATE {table} SET {col:A} = 1 /* x; {col:B} {y} */", "\"{col:B} {y} */\"")]
+    [InlineData("connection, bool quoteColumns", "SqlServer", "DELETE FROM T WHERE {col:Id} = 1 -- a; {col:B} {b}", "\"{col:B} {b}\"")]
+    public void BraceTextInACommentAfterASemicolon_StaysLiteralInParts(string ctor, string dialect, string sql, string literalPart)
+    {
+        var source = Usings + $$"""
+            [Dialect(SqlDialect.{{dialect}})]
+            public sealed partial class Repo(IAsyncDbConnection {{ctor}})
+            {
+                [Command("{{sql}}")]
+                public partial Task<int> RunAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains(", " + literalPart + " })", generated, StringComparison.Ordinal);
+        Assert.Contains("__cmd.CommandText = __Sql0_RunAsync().Full;", generated, StringComparison.Ordinal);
+    }
+
     private static string GeneratedSource(string source)
     {
         var result = GeneratorHarness.RunGenerator(source);

@@ -6180,8 +6180,10 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
 
         // The quote pair of the declared dialect, and the flag's place in the key. Without a
-        // declared dialect (the build already failed with ZAO118) columns stay bare. A dialect value
-        // outside SqlDialect quotes with double quotes, like Sqlite and PostgreSql.
+        // declared dialect columns stay bare, and a dialect value outside SqlDialect quotes with
+        // double quotes, like Sqlite and PostgreSql. Both branches are defensive: a real build
+        // never reaches them, because ZAO118 fires first for a missing or unknown dialect and the
+        // repository is not emitted. RenderRepository, which emit tests call directly, can.
         var quote = quoteColumnsAccess is not null
             && m.SqlPlaceholders.Any(sp => sp.Kind == SqlPlaceholderKind.Column)
             && dialect is not null
@@ -6205,12 +6207,28 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     + " : " + SymbolDisplay.FormatLiteral(columnName, quote: true) + ")"
                 : null;
 
-        var full = ResolvedSqlExpression(template, SqlPlaceholderScanner.Scan(template).Spans, KeyPart, ColumnPart);
+        var spans = SqlPlaceholderScanner.Scan(template).Spans;
+        var full = ResolvedSqlExpression(template, spans, KeyPart, ColumnPart);
         // Each statement is trimmed before it is resolved, as the batch emit trims a literal
-        // statement, so a batch can assign a part with no Trim at runtime.
-        var parts = SqlStatementSplitter.Split(template)
-            .Select(statement => statement.Trim())
-            .Select(statement => ResolvedSqlExpression(statement, SqlPlaceholderScanner.Scan(statement).Spans, KeyPart, ColumnPart));
+        // statement, so a batch can assign a part with no Trim at runtime. A statement resolves
+        // the spans of the full scan that fall inside it, never a scan of its own: the splitter
+        // does not know comments, so a `;` in a comment can cut one, and a scan of the piece
+        // would read brace text in that comment as a placeholder the full scan skipped.
+        var parts = new List<string>();
+        var statementStart = 0;
+        foreach (var piece in SqlStatementSplitter.Split(template))
+        {
+            var statement = piece.Trim();
+            var start = statementStart + (piece.Length - piece.TrimStart().Length);
+            var end = start + statement.Length;
+            var inside = spans
+                .Where(sp => sp.Start >= start && sp.Start + sp.Length <= end)
+                .Select(sp => sp with { Start = sp.Start - start })
+                .ToImmutableArray();
+            parts.Add(ResolvedSqlExpression(statement, inside, KeyPart, ColumnPart));
+            // Split drops the `;` after each piece, and the pieces follow each other in the template.
+            statementStart += piece.Length + 1;
+        }
         var holder = "new " + PlaceholderSqlHolder + "(" + full + ", new string[] { " + string.Join(", ", parts) + " })";
 
         // Only {col:Name} placeholders and no quote flag: the SQL does not depend on the instance,
