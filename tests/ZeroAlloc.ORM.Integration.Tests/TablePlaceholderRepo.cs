@@ -32,6 +32,11 @@ public sealed partial class TablePlaceholderRepo(IAsyncDbConnection connection, 
         Batch = BatchMode.Never)]
     public partial Task<(IReadOnlyList<PlaceholderRow> Low, IReadOnlyList<PlaceholderRow> High)> SplitJoinedAsync(int max, CancellationToken ct);
 
+    [Query(
+        "SELECT Id, Name FROM {table} WHERE Id < @max ORDER BY Id; SELECT Id, Name FROM {table} WHERE Id >= @max ORDER BY Id;",
+        Batch = BatchMode.Always)]
+    public partial Task<(IReadOnlyList<PlaceholderRow> Low, IReadOnlyList<PlaceholderRow> High)> SplitBatchAsync(int max, CancellationToken ct);
+
     [Command("INSERT INTO {table} (Id, Name) VALUES (@id, 'a'); INSERT INTO {table} (Id, Name) VALUES (@id + 1, 'b')")]
     public partial Task<int> InsertTwoAsync(int id, CancellationToken ct);
 }

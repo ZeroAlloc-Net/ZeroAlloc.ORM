@@ -2,10 +2,10 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using ZeroAlloc.TypeConversions;
 using Microsoft.CodeAnalysis;
 using Xunit;
 using ZeroAlloc.TestHelpers;
+using ZeroAlloc.TypeConversions;
 
 namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 
@@ -264,13 +264,24 @@ public class PlaceholderEmitTests
         AssertCompilesWithoutWarnings(source);
         var generated = GeneratedSource(source);
 
-        // BatchMode.Always: the accessor is read once, each statement takes its part.
-        Assert.Contains("var __parts = __Sql0_SplitAsync().Parts;", generated, StringComparison.Ordinal);
-        Assert.Contains("__cmd0.CommandText = __parts[0];", generated, StringComparison.Ordinal);
-        Assert.Contains("__cmd1.CommandText = __parts[1];", generated, StringComparison.Ordinal);
-        // BatchMode.Auto: the same inside the CanCreateBatch branch.
-        Assert.Contains("var __parts = __Sql1_SplitAutoAsync().Parts;", generated, StringComparison.Ordinal);
-        Assert.Contains("__cmd0.CommandText = __parts[0];", generated, StringComparison.Ordinal);
+        // Each method reads its accessor once, then every statement takes its own part. The Always
+        // method comes first in the source and the Auto method after it, so slicing at the Auto
+        // method's accessor read proves each emitted its own assignments.
+        var autoStart = generated.IndexOf("var __parts = __Sql1_SplitAutoAsync().Parts;", StringComparison.Ordinal);
+        var alwaysStart = generated.IndexOf("var __parts = __Sql0_SplitAsync().Parts;", StringComparison.Ordinal);
+        Assert.True(alwaysStart >= 0 && autoStart > alwaysStart);
+        var always = generated.Substring(alwaysStart, autoStart - alwaysStart);
+        var auto = generated.Substring(autoStart);
+
+        foreach (var section in new[] { always, auto })
+        {
+            // One local per statement, one part per local, and no other batch command.
+            Assert.Equal(1, Count(section, "var __parts = "));
+            Assert.Equal(2, Count(section, "= __batch.CreateBatchCommand();"));
+            Assert.Equal(2, Count(section, ".CommandText = __parts["));
+            Assert.Contains("__cmd0.CommandText = __parts[0];", section, StringComparison.Ordinal);
+            Assert.Contains("__cmd1.CommandText = __parts[1];", section, StringComparison.Ordinal);
+        }
         Assert.DoesNotContain("{table}", generated, StringComparison.Ordinal);
         Assert.DoesNotContain(".Trim()", generated, StringComparison.Ordinal);
     }
@@ -287,6 +298,7 @@ public class PlaceholderEmitTests
     [Theory]
     [InlineData("SELECT 1 FROM {table}; SELECT 2 FROM {table}")]
     [InlineData("SELECT ';' FROM {table}; SELECT 2 FROM {table};")]
+    // Deliberate: the splitter ignores a ';' inside a comment, and this locks that in for both texts.
     [InlineData("SELECT 1 FROM {table} -- a; b\n; SELECT 2")]
     [InlineData("SELECT '{table}' FROM {table}; SELECT /* ; */ 2")]
     public void MultiStatement_MaskedAndTemplateAgreeOnStatementCount(string template)
@@ -296,6 +308,14 @@ public class PlaceholderEmitTests
         Assert.Equal(
             SqlStatementSplitter.CountStatements(masked),
             SqlStatementSplitter.Split(template).Length);
+    }
+
+    private static int Count(string text, string value)
+    {
+        var count = 0;
+        for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
+            count++;
+        return count;
     }
 
     private static string GeneratedSource(string source)

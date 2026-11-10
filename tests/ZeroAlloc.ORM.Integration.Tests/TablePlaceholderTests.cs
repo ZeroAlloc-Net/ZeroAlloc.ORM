@@ -130,6 +130,32 @@ public class TablePlaceholderTests
         }
     }
 
+    // Sqlite has no batch, so a recording connection with CanCreateBatch = true takes the generated
+    // IAsyncDbBatch branch: each batch command must carry its own statement, resolved and trimmed,
+    // in order. Batch commands exist for [Query] tuples only; a [Command] with two statements runs
+    // as one joined command and has no batch path.
+    [Theory]
+    [InlineData("Auto")]
+    [InlineData("Always")]
+    public async Task MultiStatementQuery_Batch_EachCommandCarriesItsResolvedStatement(string mode)
+    {
+        var rows = new TableResult(["Id", "Name"], [[1, "a"]]);
+        var raw = new RecordingBatchDbConnection(rows, rows);
+        await using (raw.ConfigureAwait(false))
+        {
+            var repo = new TablePlaceholderRepo(raw.AsAsync(), "Gizmos");
+
+            if (string.Equals(mode, "Auto", StringComparison.Ordinal))
+                await repo.SplitAsync(3, CancellationToken.None).ConfigureAwait(false);
+            else
+                await repo.SplitBatchAsync(3, CancellationToken.None).ConfigureAwait(false);
+
+            raw.BatchCommandTexts.Should().Equal(
+                "SELECT Id, Name FROM Gizmos WHERE Id < @max ORDER BY Id",
+                "SELECT Id, Name FROM Gizmos WHERE Id >= @max ORDER BY Id");
+        }
+    }
+
     [Fact]
     public async Task ConcurrentFirstUse_AllCallsSucceed()
     {
