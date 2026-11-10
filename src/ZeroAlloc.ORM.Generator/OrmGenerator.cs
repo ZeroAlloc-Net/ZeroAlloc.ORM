@@ -6161,11 +6161,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         }
 
         // The quote pair of the declared dialect, and the flag's place in the key. Without a
-        // declared dialect (the build already failed with ZAO118) columns stay bare.
+        // declared dialect (the build already failed with ZAO118) columns stay bare. A dialect value
+        // outside SqlDialect quotes with double quotes, like Sqlite and PostgreSql.
         var quote = quoteColumnsAccess is not null
             && m.SqlPlaceholders.Any(sp => sp.Kind == SqlPlaceholderKind.Column)
-            && dialect is { } declaredDialect && Enum.IsDefined(typeof(SqlDialectModel), declaredDialect)
-                ? ColumnQuotes((SqlDialectModel)declaredDialect)
+            && dialect is not null
+                ? ColumnQuotes(dialect is { } declaredDialect && Enum.IsDefined(typeof(SqlDialectModel), declaredDialect)
+                    ? (SqlDialectModel)declaredDialect
+                    : SqlDialectModel.Sqlite)
                 : ((string Open, string Close)?)null;
 
         var keyTypes = accesses.Select(_ => "string").ToList();

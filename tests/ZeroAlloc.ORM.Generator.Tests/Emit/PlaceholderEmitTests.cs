@@ -179,8 +179,8 @@ public class PlaceholderEmitTests
                 public partial Task<(IReadOnlyList<int> A, IReadOnlyList<int> B)> GetAsync(CancellationToken ct);
             }
             """;
-        var (runResult, _) = GeneratorHarness.RunGeneratorAndGetCompilation(source);
-        var generated = Assert.Single(runResult.Results[0].GeneratedSources).SourceText.ToString();
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
 
         Assert.Contains("ConcurrentDictionary<bool, __ZaoPlaceholderSql> __sqlCache0_GetAsync", generated, StringComparison.Ordinal);
         Assert.Contains("var __v0 = @_quoteColumns;", generated, StringComparison.Ordinal);
@@ -188,6 +188,53 @@ public class PlaceholderEmitTests
         Assert.Contains("(__k ? \"[Id]\" : \"Id\")", generated, StringComparison.Ordinal);
         Assert.Contains("(__k ? \"[Name]\" : \"Name\")", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("ThrowIfNullOrWhiteSpace(__v0", generated, StringComparison.Ordinal);
+        // The split Parts hold the same expression for each statement.
+        Assert.Contains("new string[] { \"SELECT \" + (__k ? \"[Id]\" : \"Id\") + \", \" + (__k ? \"[Name]\" : \"Name\") + \" FROM T\", \"SELECT \" + (__k ? \"[Id]\" : \"Id\") + \" FROM T\" }", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Column_TwoStringMembersAndFlag_KeysOnATripleWithFlagAsItem3()
+    {
+        var source = Usings + """
+            [Dialect(SqlDialect.PostgreSql)]
+            public sealed partial class Repo(IAsyncDbConnection connection, string schema, string table, bool quoteColumns)
+            {
+                [Query("SELECT {col:Id} FROM {schema}.{table}")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        AssertCompilesWithoutWarnings(source);
+        var generated = GeneratedSource(source);
+
+        Assert.Contains("ConcurrentDictionary<(string, string, bool), __ZaoPlaceholderSql> __sqlCache0_GetAsync", generated, StringComparison.Ordinal);
+        Assert.Contains("var __v2 = @quoteColumns;", generated, StringComparison.Ordinal);
+        Assert.Contains("GetOrAdd((__v0, __v1, __v2), static __k =>", generated, StringComparison.Ordinal);
+        Assert.Contains("(__k.Item3 ? \"\\\"Id\\\"\" : \"Id\")", generated, StringComparison.Ordinal);
+        Assert.Contains("__k.Item1 + \".\" + __k.Item2", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Column_UnknownDialectValue_FallsBackToDoubleQuotes_AndCompiles()
+    {
+        var source = Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection, bool quoteColumns)
+            {
+                [Query("SELECT {col:Id} FROM T")]
+                public partial Task<int> GetAsync(CancellationToken ct);
+            }
+            """;
+        var repo = Model.PlaceholderResolutionTests.RunRepository(source);
+
+        var generated = ZeroAlloc.ORM.Generator.OrmGenerator.RenderRepository(repo, 99);
+
+        Assert.Contains("(__k ? \"\\\"Id\\\"\" : \"Id\")", generated, StringComparison.Ordinal);
+        var compilation = GeneratorHarness.CreateCompilation(new[]
+        {
+            Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(source),
+            Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(generated),
+        });
+        Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity >= DiagnosticSeverity.Warning && string.Equals(d.Location.SourceTree?.ToString(), generated, StringComparison.Ordinal)).Select(d => d.ToString()));
+        Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.ToString()));
     }
 
     [Fact]
