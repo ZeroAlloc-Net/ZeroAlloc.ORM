@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.16.0...v2.16.1) (2026-11-11)
+
+
+### Performance Improvements
+
+* keep placeholder SQL in a static memo, not per instance ([#471](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/471)) ([3acb98a](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/3acb98a38ed39f9432d83d76f07421c9b175d9a2))
+
 ## [2.16.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.15.0...v2.16.0) (2026-11-10)
 
 
