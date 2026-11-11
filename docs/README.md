@@ -31,7 +31,7 @@ To write PostgreSQL queries, updates and deletes as LINQ, also add `ZeroAlloc.OR
 | [`ZeroAlloc.ORM.Generator`](https://www.nuget.org/packages/ZeroAlloc.ORM.Generator) | Roslyn incremental source generator and the `ZAO` diagnostics. Build-time only; bundles `ZeroAlloc.TypeConversions`. |
 | [`ZeroAlloc.TypeConversions`](https://www.nuget.org/packages/ZeroAlloc.TypeConversions) | Build-time type-conversion and convention-discovery catalog used by the generator. You do not reference it directly. |
 
-The runtime packages target `net10.0` and set `IsAotCompatible`. The generator and TypeConversions target `netstandard2.0` and only run inside the compiler.
+The runtime packages target `net10.0` and `net11.0` and set `IsAotCompatible`. The generator and TypeConversions target `netstandard2.0` and only run inside the compiler.
 
 ## Repository shapes
 

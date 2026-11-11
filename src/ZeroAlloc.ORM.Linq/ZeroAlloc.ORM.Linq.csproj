@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <RootNamespace>ZeroAlloc.ORM.Linq</RootNamespace>
     <PackageId>ZeroAlloc.ORM.Linq</PackageId>
     <Title>ZeroAlloc.ORM.Linq</Title>

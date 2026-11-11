@@ -83,3 +83,7 @@ jobs:
   # baseline. See ZeroAlloc-Net/.github#30.
   api-compat:
     uses: ZeroAlloc-Net/.github/.github/workflows/api-compat.yml@main
+    with:
+      dotnet-version: |
+        10.0.x
+        11.0.x
