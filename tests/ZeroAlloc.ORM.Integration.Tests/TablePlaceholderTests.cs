@@ -261,6 +261,81 @@ public class TablePlaceholderTests
         }
     }
 
+    [Fact]
+    public async Task EqualButDistinctStringReference_ResolvesToSameSql()
+    {
+        var fx = await SeededAsync("Widgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var first = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            var second = new TablePlaceholderRepo(fx.Connection, new string("Widgets".AsSpan()));
+            await first.InsertAsync(1, "bolt", CancellationToken.None).ConfigureAwait(false);
+
+            (await second.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await first.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            // The distinct-address instance filled the memo first; the original address still resolves.
+            (await first.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            (await second.CountByIdAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+        }
+    }
+
+    [Fact]
+    public async Task ChangedMember_IsHonouredOnNextCall()
+    {
+        var fx = await SeededAsync("Widgets", "Gadgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var widgets = new TablePlaceholderRepo(fx.Connection, "Widgets");
+            var gadgets = new TablePlaceholderRepo(fx.Connection, "Gadgets");
+            await widgets.InsertAsync(1, "bolt", CancellationToken.None).ConfigureAwait(false);
+            await gadgets.InsertAsync(1, "gear", CancellationToken.None).ConfigureAwait(false);
+            await gadgets.InsertAsync(2, "lever", CancellationToken.None).ConfigureAwait(false);
+            var repo = new ChangingTableRepo(fx.Connection) { Table = "Widgets" };
+
+            (await repo.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(1);
+            repo.Table = "Gadgets";
+            (await repo.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(2);
+        }
+    }
+
+    [Fact]
+    public async Task NullOrBlankMember_ThrowsEvenWhenMemoIsFilled()
+    {
+        var fx = await SeededAsync("Widgets").ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            var filled = new ChangingTableRepo(fx.Connection) { Table = "Widgets" };
+            (await filled.CountAsync(CancellationToken.None).ConfigureAwait(false)).Should().Be(0);
+
+            var nullRepo = new ChangingTableRepo(fx.Connection) { Table = null };
+            var blankRepo = new ChangingTableRepo(fx.Connection) { Table = "  " };
+
+            var nullAct = async () => await nullRepo.CountAsync(CancellationToken.None).ConfigureAwait(false);
+            var blankAct = async () => await blankRepo.CountAsync(CancellationToken.None).ConfigureAwait(false);
+            await nullAct.Should().ThrowAsync<ArgumentException>().ConfigureAwait(false);
+            await blankAct.Should().ThrowAsync<ArgumentException>().ConfigureAwait(false);
+        }
+    }
+
+    [Fact]
+    public async Task QuoteFlagFlippedBetweenInstances_GetsOwnQuoting()
+    {
+        var fx = new SqliteFixture();
+        await fx.InitializeAsync().ConfigureAwait(false);
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.ExecuteDdlAsync("CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Name TEXT)").ConfigureAwait(false);
+            var quoted = new ColumnPlaceholderRepo(fx.Connection, "Orders", quoteColumns: true);
+            var bare = new ColumnPlaceholderRepo(fx.Connection, "Orders", quoteColumns: false);
+
+            await quoted.InsertNameAsync(1, "bolt", CancellationToken.None).ConfigureAwait(false);
+            await bare.InsertNameAsync(2, "gear", CancellationToken.None).ConfigureAwait(false);
+
+            (await quoted.GetNameAsync(2, CancellationToken.None).ConfigureAwait(false)).Should().Be("gear");
+            (await bare.GetNameAsync(1, CancellationToken.None).ConfigureAwait(false)).Should().Be("bolt");
+        }
+    }
+
     private static async Task<SqliteFixture> SeededAsync(params string[] tables)
     {
         var fx = new SqliteFixture();
