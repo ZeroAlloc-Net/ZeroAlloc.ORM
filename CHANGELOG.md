@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.17.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.16.1...v2.17.0) (2026-11-11)
+
+
+### Features
+
+* add net11.0 target and pin SDK 11 ([#474](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/474)) ([03933db](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/03933dbe4feb29c65d817e5c99a8266ff16afe25))
+
+
+### Documentation
+
+* add context7.json to claim the library on Context7 ([#473](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/473)) ([783fd02](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/783fd02abb158dc9067ee51a7cda1a485663dfa0))
+
 ## [2.16.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.16.0...v2.16.1) (2026-11-11)
 
 
