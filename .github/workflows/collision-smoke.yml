@@ -39,7 +39,7 @@ jobs:
           # that SDK at all and only works when the runner image happens to ship one
           # satisfying the pin, which is how a publish failed on a lagging image.
           global-json-file: global.json
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
 
       - name: Restore
         run: dotnet restore tests/ZeroAlloc.ORM.GeneratorCollision.AotSmoke/ZeroAlloc.ORM.GeneratorCollision.AotSmoke.csproj
@@ -82,7 +82,7 @@ jobs:
           # that SDK at all and only works when the runner image happens to ship one
           # satisfying the pin, which is how a publish failed on a lagging image.
           global-json-file: global.json
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
 
       - name: Restore
         run: dotnet restore tests/ZeroAlloc.ORM.TelemetryCollision.AotSmoke/ZeroAlloc.ORM.TelemetryCollision.AotSmoke.csproj
