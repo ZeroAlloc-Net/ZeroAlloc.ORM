@@ -29,7 +29,7 @@ ZA.ORM takes on Npgsql. Allocations are reported in bytes.
 
 ## How to run
 
-The benchmarks use the .NET SDK pinned in [`global.json`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/global.json), currently 10.0.401 with `rollForward: latestFeature`.
+The benchmarks use the .NET SDK pinned in [`global.json`](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/global.json) with `rollForward: latestFeature`.
 BenchmarkDotNet only produces meaningful numbers in `Release` configuration.
 
 ### Sqlite (default, fast, CI-safe, no Docker required)
