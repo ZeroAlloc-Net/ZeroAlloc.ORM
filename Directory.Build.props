@@ -104,6 +104,19 @@
     <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
+  <!-- Debugging into the package: Go to Definition and step-into show the original source.
+       The PDB is embedded in each DLL, so consumers need no symbol server setting; Source Link,
+       built into the .NET SDK, maps it to this commit on GitHub. ContinuousIntegrationBuild
+       makes CI builds deterministic and writes /_/ paths instead of the runner's. It applies to
+       the shipped projects under src/ only: in a test project it would also turn CallerFilePath
+       into /_/..., and the snapshot tests use that path to find their files on disk. -->
+  <PropertyGroup>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true' and $(MSBuildProjectDirectory.StartsWith('$(MSBuildThisFileDirectory)src$([System.IO.Path]::DirectorySeparatorChar)'))">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
     <None Include="$(MSBuildThisFileDirectory)assets\icon.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)assets\icon.png')" />
