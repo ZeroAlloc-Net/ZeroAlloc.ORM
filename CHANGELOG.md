@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.17.0...v2.17.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* embed PDBs so Go to Definition shows the package source ([#497](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/497)) ([9d99cb7](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/9d99cb72c3c436b1f08de124ae7bd05854794a40))
+
 ## [2.17.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.16.1...v2.17.0) (2026-11-11)
 
 
