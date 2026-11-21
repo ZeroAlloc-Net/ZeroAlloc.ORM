@@ -95,6 +95,8 @@ such as `Task<int>`, `Task<Guid>`, `Task<string>` or a PostgreSQL array `Task<in
 Stored procedure 'usp_GetOrderIds' called by 'MyApp.OrderRepo.GetOrderIdsAsync' returned NULL at row index 3, but its list element type is the non-nullable 'int'. Declare the element as 'int?' to receive null.
 ```
 
-The exception type, `ZeroAllocOrmMaterializationException`, does not change, and neither do the
-`[Query]` and `[LinqQuery]` messages. Update code that matches the message text of a stored
-procedure call, such as a test that asserts on `Exception.Message` or a log filter.
+This section changes only the message text. Every non-nullable scalar except the five types in
+the section above already threw `ZeroAllocOrmMaterializationException` in v2 and still does; for
+`int`, `long`, `bool`, `double` and `decimal`, the exception change itself is described above. The
+`[Query]` and `[LinqQuery]` messages do not change. Update code that matches the message text of a
+stored procedure call, such as a test that asserts on `Exception.Message` or a log filter.
