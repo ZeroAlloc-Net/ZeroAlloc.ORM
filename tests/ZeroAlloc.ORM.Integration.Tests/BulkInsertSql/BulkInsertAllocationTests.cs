@@ -13,6 +13,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.BulkInsertSql;
 // SQL and names built once up front, and fails if the emitted loop allocates
 // more. 900 rows are two full chunks of 450, so the SQL a full chunk would
 // rebuild and the 1,800 names it would concatenate are both in the measurement.
+[Collection(AllocationGates.AllocationGateGroup.Name)]
 public class BulkInsertAllocationTests
 {
     private const int ChunkSize = 450;
