@@ -6456,6 +6456,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // InvalidCastException. A [LinqQuery] Average, Min or Max throws
     // InvalidOperationException on either instead, as LINQ's non-nullable
     // overload does on no values; see QueryMethodModel.LinqThrowsOnNoElements.
+    // The subject of a non-nullable scalar's no-row and NULL messages. A [StoredProcedure]
+    // names the procedure, as its output-parameter messages do, and the method that called
+    // it; a [Query] or [LinqQuery] names the method.
+    private static string ScalarSubject(QueryMethodModel m, string method)
+        => m.IsStoredProcedure
+            ? $"Stored procedure '{m.ProcedureName}' called by '{method}'"
+            : $"Query '{method}'";
+
     private static void EmitScalarConvert(
         StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod, string typeKeyword)
     {
@@ -6477,9 +6485,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         else
         {
             var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
-            var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+            var noRow = $"{ScalarSubject(m, method)} returned no row, but its return type is the non-nullable " +
                 $"'{typeKeyword}'. Declare it as '{typeKeyword}?' to receive null.";
-            var nullValue = $"Query '{method}' returned NULL, but its return type is the non-nullable " +
+            var nullValue = $"{ScalarSubject(m, method)} returned NULL, but its return type is the non-nullable " +
                 $"'{typeKeyword}'. Declare it as '{typeKeyword}?' to receive null.";
             sb.AppendLine("            if (__result is null)");
             sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
@@ -7706,7 +7714,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
             var typeDisplay = DisplayTypeName(col.TypeName);
-            var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+            var noRow = $"{ScalarSubject(m, method)} returned no row, but its return type is the non-nullable " +
                 $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
             sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
             var checks = new List<NullCheck>
@@ -7741,9 +7749,9 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         var col = mat.Columns[0];
         var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
         var typeDisplay = DisplayTypeName(col.TypeName);
-        var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+        var noRow = $"{ScalarSubject(m, method)} returned no row, but its return type is the non-nullable " +
             $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
-        var nullValue = $"Query '{method}' returned NULL, but its return type is the non-nullable " +
+        var nullValue = $"{ScalarSubject(m, method)} returned NULL, but its return type is the non-nullable " +
             $"'{typeDisplay}'. Declare it as '{typeDisplay}?' to receive null.";
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -7823,7 +7831,7 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         {
             var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
             var typeDisplay = DisplayTypeName(col.TypeName);
-            var head = $"Query '{method}' returned NULL at row index ";
+            var head = $"{ScalarSubject(m, method)} returned NULL at row index ";
             var tail = $", but its list element type is the non-nullable '{typeDisplay}'. " +
                 $"Declare the element as '{typeDisplay}?' to receive null.";
             sb.AppendLine("                try");

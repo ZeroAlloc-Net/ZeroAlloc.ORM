@@ -42,6 +42,30 @@ public class StoredProcedureEmitTests
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
     }
 
+    // #409 — a non-nullable scalar outside the Convert-based shapes reads through
+    // ExecuteReaderAsync, as a [Query] does, and its no-row and NULL messages name
+    // the procedure and the calling method.
+    [Fact]
+    public void StoredProcedure_Task_Guid_names_the_procedure_in_its_no_row_and_null_messages()
+    {
+        var source = """
+            using System;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_GetTraceId")]
+                public partial Task<Guid> GetTraceIdAsync(int orderId, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
     [Fact]
     public void StoredProcedure_Task_record_emits_CommandType_and_ExecuteReader()
     {

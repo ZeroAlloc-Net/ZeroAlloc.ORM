@@ -162,4 +162,17 @@ public sealed partial class SqlServerStoredProcedureRepo(IAsyncDbConnection conn
         int doubled,
         int amount,
         CancellationToken ct);
+
+    // #409 — a scalar [StoredProcedure] follows the [Query] rule: a non-nullable int,
+    // long, bool, double or decimal throws for no row and for NULL, and the nullable
+    // form receives null. dbo.scalar_proc returns @value as its one column, or no
+    // result set at all when @mode is 0.
+    [StoredProcedure("dbo.scalar_proc")]
+    public partial Task<int> ScalarIntAsync(int mode, int? value, CancellationToken ct);
+
+    [StoredProcedure("dbo.scalar_proc")]
+    public partial ValueTask<long> ScalarLongAsync(int mode, int? value, CancellationToken ct);
+
+    [StoredProcedure("dbo.scalar_proc")]
+    public partial Task<int?> ScalarNullableIntAsync(int mode, int? value, CancellationToken ct);
 }
