@@ -53,6 +53,15 @@ The same single-row, list, and multi-result-set conventions used by `[Query]`
 apply here — see [`multi-result-set.md`](multi-result-set.md) for the full
 shape matrix.
 
+A scalar return follows the `[Query]` scalar rule too. `Task<int?>` and the other
+nullable scalars receive `null` when the procedure returns no row or a NULL
+value. A non-nullable scalar such as `Task<int>`, `Task<long>`, `Task<bool>`,
+`Task<double>` or `Task<decimal>`, or the `ValueTask` form, throws
+`ZeroAllocOrmMaterializationException` for both, naming the procedure and the
+method. A procedure that returns no result set at all counts as no row. Before
+v3 these five types returned `0` or `false` for no row; see
+[`migrating-to-v3.md`](../migrating-to-v3.md).
+
 ## Recipe 2 — Sproc with output parameters
 
 Procedures with `OUTPUT` parameters surface them through a **named-tuple return

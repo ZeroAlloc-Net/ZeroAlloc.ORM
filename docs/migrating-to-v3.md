@@ -1,16 +1,20 @@
 # Migrating to ZeroAlloc.ORM v3
 
 v3 has one breaking change, in the code the generator emits for five scalar return types.
-Everything else in v2.x carries forward unchanged. The runtime packages target `net10.0` and
-`net11.0`, as they did in v2.
+Everything else in v2.x carries forward unchanged.
+
+The runtime packages target `net10.0` and `net11.0`. v2.17.0 added the `net11.0` target and
+v2.17.1 embedded the PDBs, but neither release reached nuget.org, where the newest v2 is 2.16.1.
+If you upgrade from 2.16.1, v3 is the first package you get with `net11.0` assets and with PDBs
+embedded for Go to Definition. Neither needs a change in your code.
 
 ## A non-nullable `int`, `long`, `bool`, `double` or `decimal` scalar throws on no row
 
 ### Why
 
-[#409](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/409): a `[Query]` returning
-`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>` or `Task<decimal>`, or the `ValueTask`
-form, read its value with `ExecuteScalarAsync` and `System.Convert`. When the query returned no
+[#409](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/409): a `[Query]` or
+`[StoredProcedure]` returning `Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>` or
+`Task<decimal>`, or the `ValueTask` form, read its value with `ExecuteScalarAsync` and `System.Convert`. When the query returned no
 row, `Convert` turned the missing value into `0` or `false`, so the method answered as if a row
 held that value. A NULL value threw a bare `InvalidCastException` that named nothing. Every other
 non-nullable scalar, such as `Task<Guid>`, `Task<string>` or `Task<DateTimeOffset>`, already threw
@@ -23,10 +27,21 @@ v3 holds the five types to the same rule. No row and NULL each throw
 Query 'MyApp.OrderRepo.GetTotalAsync' returned no row, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.
 ```
 
+For a `[StoredProcedure]` the message names the procedure and the method that called it:
+
+```text
+Stored procedure 'usp_GetCount' called by 'MyApp.OrderRepo.GetCountAsync' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.
+```
+
 ### Who is affected
 
 Callers of a non-nullable `int`, `long`, `bool`, `double` or `decimal` `[Query]` whose SQL can
 return no row or NULL, and code that catches `InvalidCastException` from one.
+
+Callers of a `[StoredProcedure]` with the same return types are affected in the same way. A
+procedure that returns no result set, or an empty one, used to give `0` or `false` and now
+throws. The same migration applies: declare the nullable type, or make the procedure always
+`SELECT` a value.
 
 Not affected:
 
