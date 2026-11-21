@@ -383,6 +383,20 @@ public class ArrayParameterEmitTests
             """);
     }
 
+    // #409 — a [StoredProcedure] returning a non-nullable array names the procedure and
+    // the calling method in its no-row message, as the single-scalar messages do.
+    [Fact]
+    public void Stored_procedure_returning_array_names_the_procedure_in_its_no_row_message()
+    {
+        VerifyCompiled(Usings + """
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("get_post_scores")]
+                public partial Task<int[]> GetScoresAsync(Guid id, CancellationToken ct);
+            }
+            """);
+    }
+
     [Fact]
     public void Scalar_command_returning_array_casts_the_result()
     {

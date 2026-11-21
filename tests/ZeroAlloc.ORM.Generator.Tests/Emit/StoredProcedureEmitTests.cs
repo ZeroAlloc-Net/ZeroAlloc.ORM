@@ -17,9 +17,8 @@ namespace ZeroAlloc.ORM.Generator.Tests.Emit;
 // parameter binding shape with their [Query] counterparts; the only difference
 // in the emit is the two-line block that sets `__cmd.CommandText = "usp_..."`
 // followed immediately by `__cmd.CommandType = CommandType.StoredProcedure;`.
-// Standalone Task<List<T>> is not yet a supported single-result-set shape (it
-// only appears as a tuple element inside the MultiResultSet path, which Phase
-// D.3 covers via the existing dispatch).
+// A standalone scalar list, such as Task<IReadOnlyList<int>>, reads through the
+// same ScalarList emit as a [Query]; its NULL-element message names the procedure.
 public class StoredProcedureEmitTests
 {
     [Fact]
@@ -61,6 +60,29 @@ public class StoredProcedureEmitTests
             {
                 [StoredProcedure("usp_GetTraceId")]
                 public partial Task<Guid> GetTraceIdAsync(int orderId, CancellationToken ct);
+            }
+            """;
+        GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
+    }
+
+    // #409 — a non-nullable scalar list names the procedure and the calling method in
+    // its "returned NULL at row index" message, as the single-scalar messages do.
+    [Fact]
+    public void StoredProcedure_Task_IReadOnlyList_int_names_the_procedure_in_its_null_element_message()
+    {
+        var source = """
+            using System.Collections.Generic;
+            using System.Data.Async;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using ZeroAlloc.ORM;
+
+            namespace TestApp;
+
+            public sealed partial class Repo(IAsyncDbConnection connection)
+            {
+                [StoredProcedure("usp_GetOrderIds")]
+                public partial Task<IReadOnlyList<int>> GetOrderIdsAsync(int customerId, CancellationToken ct);
             }
             """;
         GeneratorSnapshot.Verify(GeneratorHarness.RunGenerator(source));
