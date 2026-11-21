@@ -77,4 +77,31 @@ internal static class ScalarNullAssertions
         Assert.Null(await repo.NullableStringAsync(CancellationToken.None).ConfigureAwait(false));
         Assert.Null(await repo.NullableIntAsync(CancellationToken.None).ConfigureAwait(false));
     }
+
+    // #409 — a non-nullable int, long, bool, double or decimal [Query] throws
+    // ZeroAllocOrmMaterializationException for no row and for NULL, with the
+    // messages every other non-nullable [Query] scalar uses.
+    public static async Task QueryConvertScalarsThrowOnNoRowAndNullAsync(ScalarNullRepo repo)
+    {
+        await AssertQueryThrowsAsync(() => repo.QueryNoRowIntAsync(CancellationToken.None), "QueryNoRowIntAsync", "no row", "int").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNoRowLongAsync(CancellationToken.None), "QueryNoRowLongAsync", "no row", "long").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNoRowBoolAsync(CancellationToken.None), "QueryNoRowBoolAsync", "no row", "bool").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNoRowDoubleAsync(CancellationToken.None).AsTask(), "QueryNoRowDoubleAsync", "no row", "double").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNoRowDecimalAsync(CancellationToken.None), "QueryNoRowDecimalAsync", "no row", "decimal").ConfigureAwait(false);
+
+        await AssertQueryThrowsAsync(() => repo.QueryNullIntAsync(CancellationToken.None), "QueryNullIntAsync", "NULL", "int").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNullLongAsync(CancellationToken.None), "QueryNullLongAsync", "NULL", "long").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNullBoolAsync(CancellationToken.None), "QueryNullBoolAsync", "NULL", "bool").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNullDoubleAsync(CancellationToken.None), "QueryNullDoubleAsync", "NULL", "double").ConfigureAwait(false);
+        await AssertQueryThrowsAsync(() => repo.QueryNullDecimalAsync(CancellationToken.None).AsTask(), "QueryNullDecimalAsync", "NULL", "decimal").ConfigureAwait(false);
+    }
+
+    private static async Task AssertQueryThrowsAsync<T>(Func<Task<T>> call, string method, string returned, string type)
+    {
+        var thrown = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(call).ConfigureAwait(false);
+        Assert.Equal(
+            $"Query 'ZeroAlloc.ORM.Integration.Tests.ScalarNullRepo.{method}' returned {returned}, " +
+            $"but its return type is the non-nullable '{type}'. Declare it as '{type}?' to receive null.",
+            thrown.Message);
+    }
 }

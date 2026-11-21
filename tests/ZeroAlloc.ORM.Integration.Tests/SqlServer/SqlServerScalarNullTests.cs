@@ -21,4 +21,8 @@ public sealed class SqlServerScalarNullTests : IAsyncLifetime
     [Fact]
     public Task Null_into_a_nullable_scalar_returns_null()
         => ScalarNullAssertions.NullableTargetsReceiveNullAsync(new ScalarNullRepo(_fx.Connection));
+
+    [Fact]
+    public Task Query_int_long_bool_double_decimal_throw_on_no_row_and_null()
+        => ScalarNullAssertions.QueryConvertScalarsThrowOnNoRowAndNullAsync(new ScalarNullRepo(_fx.Connection));
 }

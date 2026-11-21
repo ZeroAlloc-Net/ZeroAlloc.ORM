@@ -19,6 +19,10 @@ partial class Repository
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT 1";
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'App.Feature.OuterOne.Repository.GetOneAsync' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'App.Feature.OuterOne.Repository.GetOneAsync' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

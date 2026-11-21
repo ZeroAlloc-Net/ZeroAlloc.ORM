@@ -5914,16 +5914,16 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
                     EmitScalarInt(sb, m, repo.ConnectionAccess);
                     break;
                 case EmitShape.ScalarBool:
-                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToBoolean");
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToBoolean", "bool");
                     break;
                 case EmitShape.ScalarLong:
-                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToInt64");
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToInt64", "long");
                     break;
                 case EmitShape.ScalarDouble:
-                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDouble");
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDouble", "double");
                     break;
                 case EmitShape.ScalarDecimal:
-                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDecimal");
+                    EmitScalarConvert(sb, m, repo.ConnectionAccess, "ToDecimal", "decimal");
                     break;
                 case EmitShape.NullableScalar:
                     EmitNullableScalar(sb, m, repo.ConnectionAccess);
@@ -6445,15 +6445,19 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // of the consumer's `using` directives; `__`-prefixed locals avoid collision
     // with user parameter names; ConfigureAwait(false) consistently — library code.
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
-        => EmitScalarConvert(sb, m, connectionAccess, "ToInt32");
+        => EmitScalarConvert(sb, m, connectionAccess, "ToInt32", "int");
 
     // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble /
     // ScalarDecimal: ExecuteScalarAsync then System.Convert.<convertMethod> with
-    // the invariant culture. A no-row result (null) converts to the default
-    // value; a DBNull throws InvalidCastException. A [LinqQuery] Average, Min or Max
-    // throws InvalidOperationException on either instead, as LINQ's non-nullable
+    // the invariant culture. #409 — no row (null) and a NULL value (DBNull) each
+    // throw ZeroAllocOrmMaterializationException, as EmitRequiredScalar does for
+    // every other non-nullable primitive, with the same messages. Before the
+    // guard, Convert read no row as the default value and DBNull threw a bare
+    // InvalidCastException. A [LinqQuery] Average, Min or Max throws
+    // InvalidOperationException on either instead, as LINQ's non-nullable
     // overload does on no values; see QueryMethodModel.LinqThrowsOnNoElements.
-    private static void EmitScalarConvert(StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod)
+    private static void EmitScalarConvert(
+        StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod, string typeKeyword)
     {
         var paramList = BuildParameterList(m.MethodParameters);
         var ct = FormatCancellationTokenReference(m.CancellationTokenParameterName);
@@ -6469,6 +6473,18 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
         if (m.LinqThrowsOnNoElements)
         {
             sb.AppendLine("            if (__result is null or global::System.DBNull) throw new global::System.InvalidOperationException(\"Sequence contains no elements\");");
+        }
+        else
+        {
+            var method = DisplayTypeName(m.ContainingTypeFullName) + "." + m.MethodName;
+            var noRow = $"Query '{method}' returned no row, but its return type is the non-nullable " +
+                $"'{typeKeyword}'. Declare it as '{typeKeyword}?' to receive null.";
+            var nullValue = $"Query '{method}' returned NULL, but its return type is the non-nullable " +
+                $"'{typeKeyword}'. Declare it as '{typeKeyword}?' to receive null.";
+            sb.AppendLine("            if (__result is null)");
+            sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(noRow, quote: true)});");
+            sb.AppendLine("            if (__result is global::System.DBNull)");
+            sb.AppendLine($"                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException({SymbolDisplay.FormatLiteral(nullValue, quote: true)});");
         }
         sb.AppendLine($"            return global::System.Convert.{convertMethod}(__result, global::System.Globalization.CultureInfo.InvariantCulture);");
         BuildConnectionEpilogue(sb, "        ");

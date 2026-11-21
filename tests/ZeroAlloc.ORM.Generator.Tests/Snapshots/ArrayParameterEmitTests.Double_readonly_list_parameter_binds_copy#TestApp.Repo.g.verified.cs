@@ -21,6 +21,10 @@ partial class Repo
             __p_weights.Value = @weights is null ? global::System.DBNull.Value : (object?)(@weights as double[]) ?? (object?)(@weights as global::System.Collections.Generic.List<double>) ?? (double[])[.. @weights];
             __cmd.Parameters.Add(__p_weights);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.CountAsync' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.CountAsync' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

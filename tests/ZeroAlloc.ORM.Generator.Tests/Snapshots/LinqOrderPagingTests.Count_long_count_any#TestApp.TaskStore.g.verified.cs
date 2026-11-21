@@ -25,6 +25,10 @@ partial class TaskStore
             __p_min.Value = @min;
             __cmd.Parameters.Add(__p_min);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountOpen' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountOpen' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -53,6 +57,10 @@ partial class TaskStore
             __p_min.Value = @min;
             __cmd.Parameters.Add(__p_min);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountOpenInTransaction' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountOpenInTransaction' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -75,6 +83,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql2_CountAll;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountAll' returned no row, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.CountAll' returned NULL, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
             return global::System.Convert.ToInt64(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -102,6 +114,10 @@ partial class TaskStore
             __p_title.Value = @title;
             __cmd.Parameters.Add(__p_title);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.AnyFeature' returned no row, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.AnyFeature' returned NULL, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
             return global::System.Convert.ToBoolean(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -129,6 +145,10 @@ partial class TaskStore
             __p_title.Value = @title;
             __cmd.Parameters.Add(__p_title);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.AnyFeatureNow' returned no row, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.AnyFeatureNow' returned NULL, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
             return global::System.Convert.ToBoolean(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

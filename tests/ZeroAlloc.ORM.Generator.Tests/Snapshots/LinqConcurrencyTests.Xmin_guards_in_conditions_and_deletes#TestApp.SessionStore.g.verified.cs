@@ -30,6 +30,10 @@ partial class SessionStore
             if (__p_seen is global::Npgsql.NpgsqlParameter __np_seen) __np_seen.NpgsqlDbType = global::NpgsqlTypes.NpgsqlDbType.Xid;
             __cmd.Parameters.Add(__p_seen);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.SessionStore.Changed' returned no row, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.SessionStore.Changed' returned NULL, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
             return global::System.Convert.ToBoolean(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

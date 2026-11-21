@@ -47,4 +47,37 @@ public sealed partial class ScalarNullRepo(IAsyncDbConnection connection)
 
     [Command("SELECT 1 WHERE 1 = 0", Kind = CommandKind.Scalar)]
     public partial Task<int?> NoRowNullableIntAsync(CancellationToken ct);
+
+    // #409 — the five Convert-based [Query] scalars, int, long, bool, double and
+    // decimal, throw for no row and for NULL as every other non-nullable [Query]
+    // scalar does, instead of reading no row as 0 or false.
+    [Query("SELECT 1 WHERE 1 = 0")]
+    public partial Task<int> QueryNoRowIntAsync(CancellationToken ct);
+
+    [Query("SELECT 1 WHERE 1 = 0")]
+    public partial Task<long> QueryNoRowLongAsync(CancellationToken ct);
+
+    [Query("SELECT 1 WHERE 1 = 0")]
+    public partial Task<bool> QueryNoRowBoolAsync(CancellationToken ct);
+
+    [Query("SELECT 1 WHERE 1 = 0")]
+    public partial ValueTask<double> QueryNoRowDoubleAsync(CancellationToken ct);
+
+    [Query("SELECT 1 WHERE 1 = 0")]
+    public partial Task<decimal> QueryNoRowDecimalAsync(CancellationToken ct);
+
+    [Query("SELECT NULL")]
+    public partial Task<int> QueryNullIntAsync(CancellationToken ct);
+
+    [Query("SELECT NULL")]
+    public partial Task<long> QueryNullLongAsync(CancellationToken ct);
+
+    [Query("SELECT NULL")]
+    public partial Task<bool> QueryNullBoolAsync(CancellationToken ct);
+
+    [Query("SELECT NULL")]
+    public partial Task<double> QueryNullDoubleAsync(CancellationToken ct);
+
+    [Query("SELECT NULL")]
+    public partial ValueTask<decimal> QueryNullDecimalAsync(CancellationToken ct);
 }
