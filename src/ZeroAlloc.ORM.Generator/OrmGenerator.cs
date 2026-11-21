@@ -6447,6 +6447,14 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     private static void EmitScalarInt(StringBuilder sb, QueryMethodModel m, string connectionAccess)
         => EmitScalarConvert(sb, m, connectionAccess, "ToInt32", "int");
 
+    // The subject of a non-nullable scalar's no-row and NULL messages. A [StoredProcedure]
+    // names the procedure, as its output-parameter messages do, and the method that called
+    // it; a [Query] or [LinqQuery] names the method.
+    private static string ScalarSubject(QueryMethodModel m, string method)
+        => m.IsStoredProcedure
+            ? $"Stored procedure '{m.ProcedureName}' called by '{method}'"
+            : $"Query '{method}'";
+
     // Shared body for ScalarInt / ScalarBool / ScalarLong / ScalarDouble /
     // ScalarDecimal: ExecuteScalarAsync then System.Convert.<convertMethod> with
     // the invariant culture. #409 — no row (null) and a NULL value (DBNull) each
@@ -6456,14 +6464,6 @@ public sealed partial class OrmGenerator : IIncrementalGenerator
     // InvalidCastException. A [LinqQuery] Average, Min or Max throws
     // InvalidOperationException on either instead, as LINQ's non-nullable
     // overload does on no values; see QueryMethodModel.LinqThrowsOnNoElements.
-    // The subject of a non-nullable scalar's no-row and NULL messages. A [StoredProcedure]
-    // names the procedure, as its output-parameter messages do, and the method that called
-    // it; a [Query] or [LinqQuery] names the method.
-    private static string ScalarSubject(QueryMethodModel m, string method)
-        => m.IsStoredProcedure
-            ? $"Stored procedure '{m.ProcedureName}' called by '{method}'"
-            : $"Query '{method}'";
-
     private static void EmitScalarConvert(
         StringBuilder sb, QueryMethodModel m, string connectionAccess, string convertMethod, string typeKeyword)
     {
