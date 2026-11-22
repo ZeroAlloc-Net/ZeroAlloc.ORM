@@ -87,7 +87,8 @@ jobs:
             if [ "$want" = "$now" ]; then echo "Latest is $now"; exit 0; fi
             [ "$round" -lt 4 ] || break
             echo "Latest is $now; giving the flag to $want"
-            gh release edit "$want" --latest
+            # A failed edit, such as a transient API error, is retried by the next round.
+            gh release edit "$want" --latest || echo "::warning::Could not give Latest to $want; retrying"
             sleep 10
           done
           echo "::error::Latest did not settle on the highest release"; exit 1
