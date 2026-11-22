@@ -12,7 +12,7 @@
 
     The parent folder's global.json pins the 10.0.1xx band with rollForward latestPatch, so a
     newer band cannot stand in for it. Run locally with a 10.0.1xx SDK installed:
-      v=9.9.9-local.sha$(git rev-parse HEAD | cut -c1-7).$(date +%s).$$
+      v=9.9.9-local.sha$(git rev-parse HEAD | cut -c1-7).$(date +%s).r$(od -An -N4 -tx4 /dev/urandom | tr -d " ")
       dotnet pack ZeroAlloc.ORM.slnx -c Release -o artifacts -p:Version=$v
       cd tests/ZeroAlloc.ORM.Sdk10Smoke/Consumer
       dotnet run -c Release -p:ZeroAllocORMVersion=$v
