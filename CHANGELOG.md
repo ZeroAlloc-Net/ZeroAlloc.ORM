@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.0](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.17.1...v3.0.0) (2026-11-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* a non-nullable int, long, bool, double or decimal [Query] or [StoredProcedure] now throws ZeroAllocOrmMaterializationException for no row, including a procedure that returns no result set, instead of returning 0 or false, and for a NULL value instead of throwing InvalidCastException; the no-row and NULL messages of a non-nullable [StoredProcedure] scalar and scalar list now name the procedure instead of starting with Query. See the Behaviour change section of the PR and docs/migrating-to-v3.md for the migration steps.
+
+### Features
+
+* ship net11.0 assets on nuget.org, added in 2.17.0, which never reached nuget.org ([e79ece2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e79ece28d6c2b0688bf8d48930e8cec22b238cd1))
+* throw ZeroAllocOrmMaterializationException when a non-nullable int, long, bool, double or decimal query or stored procedure returns no row ([e79ece2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e79ece28d6c2b0688bf8d48930e8cec22b238cd1))
+
+
+### Bug Fixes
+
+* embed PDBs so Go to Definition shows the package source, added in 2.17.1, which never reached nuget.org ([e79ece2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e79ece28d6c2b0688bf8d48930e8cec22b238cd1))
+* name the stored procedure and the calling method in a non-nullable stored procedure scalar's and scalar list's no-row and NULL messages ([e79ece2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e79ece28d6c2b0688bf8d48930e8cec22b238cd1))
+* report a NULL value from a non-nullable int, long, bool, double or decimal query or stored procedure as ZeroAllocOrmMaterializationException naming the method instead of a bare InvalidCastException ([e79ece2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/e79ece28d6c2b0688bf8d48930e8cec22b238cd1))
+
 ## [2.17.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v2.17.0...v2.17.1) (2026-11-16)
 
 
