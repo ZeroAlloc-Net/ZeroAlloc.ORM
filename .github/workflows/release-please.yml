@@ -43,16 +43,6 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
 
-      # GitHub marks every new release Latest, because release-please sets no make_latest.
-      # A release from release/N.x patches an older major, so remember the Latest release
-      # here and hand the flag back once release-please has published.
-      - name: Remember the Latest release
-        id: latest
-        if: github.ref_name != 'main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: echo "tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
-
       - uses: googleapis/release-please-action@v5
         id: release
         with:
@@ -68,12 +58,38 @@ jobs:
           config-file: release-please-config.json
           target-branch: ${{ github.ref_name }}
 
-      - name: Keep the main-line release Latest
-        if: github.ref_name != 'main' && steps.release.outputs.releases_created == 'true' && steps.latest.outputs.tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.latest.outputs.tag }}
-        run: gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --latest
+  # GitHub marks every new release Latest, because release-please sets no make_latest. A release
+  # from release/N.x patches an older major, so it took the flag from the newest main-line release.
+  # This job gives the flag back to the highest released version. It is a job of its own so that a
+  # failure here never holds up publish, and it reads the releases instead of this run's outputs,
+  # so a re-run repairs the flag whatever failed before. It runs even when release-please failed
+  # after creating the release.
+  keep-latest:
+    needs: release-please
+    if: ${{ !cancelled() && github.ref_name != 'main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Give Latest back to the highest released version
+        run: |
+          set -euo pipefail
+          # Checked again after each edit: a main-line release published in the meantime is
+          # higher, so the next round gives the flag to it.
+          for round in 1 2 3; do
+            want=$(gh release list --exclude-drafts --exclude-pre-releases --limit 500 --json tagName -q '.[].tagName' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            [ -n "$want" ] || { echo "No stable release yet"; exit 0; }
+            now=$(gh release view --json tagName -q .tagName 2>/dev/null || echo none)
+            if [ "$want" = "$now" ]; then echo "Latest is $now"; exit 0; fi
+            echo "Latest is $now; giving the flag to $want"
+            gh release edit "$want" --latest
+            sleep 10
+          done
+          echo "::error::Latest did not settle on the highest release"; exit 1
 
   # Marks the analyzer rules and public API that the pending release adds as shipped,
   # by committing the move onto the release PR branch. Merging that PR then lands the
