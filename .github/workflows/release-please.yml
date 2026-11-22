@@ -43,6 +43,16 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
 
+      # GitHub marks every new release Latest, because release-please sets no make_latest.
+      # A release from release/N.x patches an older major, so remember the Latest release
+      # here and hand the flag back once release-please has published.
+      - name: Remember the Latest release
+        id: latest
+        if: github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+
       - uses: googleapis/release-please-action@v5
         id: release
         with:
@@ -57,6 +67,13 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           target-branch: ${{ github.ref_name }}
+
+      - name: Keep the main-line release Latest
+        if: github.ref_name != 'main' && steps.release.outputs.releases_created == 'true' && steps.latest.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --latest
 
   # Marks the analyzer rules and public API that the pending release adds as shipped,
   # by committing the move onto the release PR branch. Merging that PR then lands the
