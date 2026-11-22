@@ -1,6 +1,6 @@
 # ZeroAlloc.ORM reference
 
-The capability reference for ZeroAlloc.ORM 2.x: packages, every supported return and parameter shape,
+The capability reference for ZeroAlloc.ORM 3.x: packages, every supported return and parameter shape,
 migrations, NativeAOT guarantees, diagnostics and the documentation index. For the overview and a
 first example, see the [README](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/README.md).
 
@@ -14,7 +14,7 @@ dotnet add package ZeroAlloc.ORM.Generator
 Reference the generator as a build-time analyzer so it does not flow to downstream projects:
 
 ```xml
-<PackageReference Include="ZeroAlloc.ORM.Generator" Version="2.*" PrivateAssets="all" />
+<PackageReference Include="ZeroAlloc.ORM.Generator" Version="3.*" PrivateAssets="all" />
 ```
 
 Then add your ADO.NET provider, such as `Microsoft.Data.Sqlite`, `Npgsql` or `Microsoft.Data.SqlClient`, and wrap its connection with AdoNet.Async's `AsAsync()`.
@@ -94,7 +94,7 @@ The argument passed for an output parameter is not sent. Mark it `[Param(Directi
 
 **Return shapes**
 
-- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>`, `Task<decimal>`, `Task<T?>`; as with `Task<int>`, no row gives `false` or `0` and a NULL value throws; every other primitive, such as `Task<Guid>`, `Task<string>` or `Task<DateTimeOffset>`, throws `ZeroAllocOrmMaterializationException` for no row and for NULL; an enum, `Task<Status>` or `Task<Status?>`, reads through its integral value or, with `[StoreAsString]`, its name), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) of rows or of one scalar or enum column, and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form. An unsupported shape is a build error, ZAO022, that names the shape to use instead.
+- Scalars (`Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>`, `Task<decimal>`, `Task<Guid>`, `Task<string>`, `Task<DateTimeOffset>` and every other primitive, and `Task<T?>`; a non-nullable `[Query]` or `[StoredProcedure]` scalar throws `ZeroAllocOrmMaterializationException` for no row and for NULL, and the nullable form returns null for both, a rule that since v3 also covers `int`, `long`, `bool`, `double` and `decimal`, which v2 read as `0` or `false`, see [Migrating to v3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v3.md); a non-nullable `[LinqQuery]` `Average`, `Min` or `Max` over no rows throws `InvalidOperationException`, as LINQ does; an enum, `Task<Status>` or `Task<Status?>`, reads through its integral value or, with `[StoreAsString]`, its name), single rows (`Task<TRow?>`), lists (`List<T>`, `IList<T>`, `IReadOnlyList<T>`) of rows or of one scalar or enum column, and streams (`IAsyncEnumerable<T>`); every `Task<T>` shape also has a `ValueTask<T>` form. An unsupported shape is a build error, ZAO022, that names the shape to use instead.
 - Multi-result-set tuples, such as `Task<(OrderRow Head, IReadOnlyList<OrderLineRow> Lines)?>`, map one tuple element to each `;`-separated statement. `[Query(Batch = BatchMode.Auto)]`, the default, runs one `;`-joined command with `NextResultAsync` on PostgreSQL, and elsewhere uses `IAsyncDbBatch` when the provider supports it, falling back to the joined command. Tuple/statement arity mismatches are build errors (ZAO032, ZAO033). On PostgreSQL a `[LinqQuery]` companion can return the same tuple from LINQ chains, which replaces EF Core's `Include`; see [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md#parents-with-children).
 - A list result, `Task<List<T>>` or `Task<IReadOnlyList<T>>`, grows as rows arrive. `[Query("...", ExpectedRows = 50)]` creates the list with that capacity, so a result of up to 50 rows never grows it and the call allocates the list once. The hint is capped at 1024. A `[LinqQuery]` with a literal `Take(n)` sizes its list the same way without a hint.
 
@@ -199,13 +199,14 @@ These pages are the documentation. They also render at [orm.zeroalloc.net](https
 | [linq.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/linq.md) | `[LinqQuery]` and `[LinqCommand]`: map classes, the method and companion pattern, operators and their SQL, parents with children, children of a paged parent set, owned types, scalar aggregates, `GroupBy`, inner joins, keyset paging, set-based writes, optimistic concurrency with `xmin`, row locks, diagnostics |
 | [observability.md](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/cookbook/observability.md) | Composing with ZeroAlloc.Telemetry's `[Instrument]` |
 
+- [Migrating to v3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v3.md) — a non-nullable `int`, `long`, `bool`, `double` or `decimal` scalar throws on no row and on NULL, and a `[StoredProcedure]` scalar's no-row and NULL messages name the procedure.
 - [Migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md) — parameter names without the `@` prefix, `[Param(DbType)]` on inputs, and the `IMigrationDialect` change.
 - [CHANGELOG](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/CHANGELOG.md) — what shipped in each release.
 - [Design](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/design/2026-05-30-v1.0-design.md) — the v1.0 architecture, generator surface and convention discovery.
 
 ## Versioning
 
-ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards the public surface of `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, `ZeroAlloc.ORM.Linq` and `ZeroAlloc.TypeConversions`, so 2.x releases are additive and a breaking change needs a new major.
+ZeroAlloc.ORM follows SemVer. `Microsoft.CodeAnalysis.PublicApiAnalyzers` guards the public surface of `ZeroAlloc.ORM`, `ZeroAlloc.ORM.Abstractions`, `ZeroAlloc.ORM.Linq` and `ZeroAlloc.TypeConversions`, so 3.x releases are additive and a breaking change needs a new major.
 
 ## Not supported yet
 

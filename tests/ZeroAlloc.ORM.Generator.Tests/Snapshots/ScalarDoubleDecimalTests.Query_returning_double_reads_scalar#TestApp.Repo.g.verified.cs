@@ -17,6 +17,10 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT avg(x) FROM t";
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.AverageAsync' returned no row, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.AverageAsync' returned NULL, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

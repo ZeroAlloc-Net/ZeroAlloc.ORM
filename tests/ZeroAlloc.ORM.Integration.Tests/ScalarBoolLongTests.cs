@@ -36,7 +36,7 @@ public class ScalarBoolLongTests
     }
 
     [Fact]
-    public async Task No_row_returns_false_and_zero()
+    public async Task No_row_throws()
     {
         var fx = new SqliteFixture();
         await using (fx.ConfigureAwait(false))
@@ -44,8 +44,13 @@ public class ScalarBoolLongTests
             await fx.InitializeAsync().ConfigureAwait(false);
             var repo = new ScalarBoolLongRepo(fx.Connection);
 
-            Assert.False(await repo.NoRowBoolAsync(CancellationToken.None).ConfigureAwait(false));
-            Assert.Equal(0L, await repo.NoRowLongAsync(CancellationToken.None).ConfigureAwait(false));
+            // #409 — no row is not false or 0.
+            var noBool = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+                () => repo.NoRowBoolAsync(CancellationToken.None)).ConfigureAwait(false);
+            Assert.Contains("returned no row", noBool.Message, StringComparison.Ordinal);
+            var noLong = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+                () => repo.NoRowLongAsync(CancellationToken.None)).ConfigureAwait(false);
+            Assert.Contains("returned no row", noLong.Message, StringComparison.Ordinal);
         }
     }
 }

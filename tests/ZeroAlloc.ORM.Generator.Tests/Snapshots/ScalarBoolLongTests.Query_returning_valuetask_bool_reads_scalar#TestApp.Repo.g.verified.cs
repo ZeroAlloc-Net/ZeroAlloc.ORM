@@ -21,6 +21,10 @@ partial class Repo
             __p_id.Value = @id;
             __cmd.Parameters.Add(__p_id);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.ExistsAsync' returned no row, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.ExistsAsync' returned NULL, but its return type is the non-nullable 'bool'. Declare it as 'bool?' to receive null.");
             return global::System.Convert.ToBoolean(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

@@ -17,6 +17,10 @@ partial class Repo
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = "SELECT sum(d) FROM t";
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.SumAsync' returned no row, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.SumAsync' returned NULL, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
             return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

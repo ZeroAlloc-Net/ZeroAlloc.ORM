@@ -28,16 +28,13 @@ public class ScalarDoubleDecimalTests
     }
 
     [Fact]
-    public async Task No_row_returns_zero()
+    public async Task No_row_throws()
     {
         var fx = new SqliteFixture();
         await using (fx.ConfigureAwait(false))
         {
             await fx.InitializeAsync().ConfigureAwait(false);
-            var repo = new ScalarDoubleDecimalRepo(fx.Connection);
-
-            Assert.Equal(0d, await repo.NoRowDoubleAsync(CancellationToken.None).ConfigureAwait(false));
-            Assert.Equal(0m, await repo.NoRowDecimalAsync(CancellationToken.None).ConfigureAwait(false));
+            await ScalarDoubleDecimalAssertions.NoRowThrowsAsync(new ScalarDoubleDecimalRepo(fx.Connection)).ConfigureAwait(false);
         }
     }
 
@@ -49,12 +46,7 @@ public class ScalarDoubleDecimalTests
         {
             await fx.InitializeAsync().ConfigureAwait(false);
             await fx.ExecuteDdlAsync(Schema).ConfigureAwait(false);
-            var repo = new ScalarDoubleDecimalRepo(fx.Connection);
-
-            await Assert.ThrowsAsync<InvalidCastException>(
-                () => repo.NullDoubleAsync(CancellationToken.None)).ConfigureAwait(false);
-            await Assert.ThrowsAsync<InvalidCastException>(
-                () => repo.NullDecimalAsync(CancellationToken.None)).ConfigureAwait(false);
+            await ScalarDoubleDecimalAssertions.NullAggregateThrowsAsync(new ScalarDoubleDecimalRepo(fx.Connection)).ConfigureAwait(false);
         }
     }
 }

@@ -461,6 +461,47 @@ public sealed class SqlServerStoredProcedureTests : IAsyncLifetime
         END
         """);
 
+    [Fact]
+    public async Task Non_nullable_scalar_procedure_throws_on_no_row_and_null()
+    {
+        await ExecuteAsync("""
+            CREATE PROCEDURE dbo.scalar_proc @mode INT, @value INT
+            AS
+            BEGIN
+                IF @mode = 1 SELECT @value;
+            END
+            """);
+
+        var repo = new SqlServerStoredProcedureRepo(_fx.Connection);
+
+        Assert.Equal(42, await repo.ScalarIntAsync(1, 42, CancellationToken.None));
+        Assert.Equal(42L, await repo.ScalarLongAsync(1, 42, CancellationToken.None));
+
+        // No result set at all: before #409 this returned 0.
+        var noRow = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.ScalarIntAsync(0, null, CancellationToken.None));
+        Assert.Equal(
+            "Stored procedure 'dbo.scalar_proc' called by 'ZeroAlloc.ORM.Integration.Tests.SqlServer.SqlServerStoredProcedureRepo.ScalarIntAsync' " +
+            "returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.",
+            noRow.Message);
+        await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.ScalarLongAsync(0, null, CancellationToken.None).AsTask());
+
+        // A NULL value: before #409 this was a bare InvalidCastException.
+        var nullValue = await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.ScalarIntAsync(1, null, CancellationToken.None));
+        Assert.Equal(
+            "Stored procedure 'dbo.scalar_proc' called by 'ZeroAlloc.ORM.Integration.Tests.SqlServer.SqlServerStoredProcedureRepo.ScalarIntAsync' " +
+            "returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.",
+            nullValue.Message);
+        await Assert.ThrowsAsync<ZeroAllocOrmMaterializationException>(
+            () => repo.ScalarLongAsync(1, null, CancellationToken.None).AsTask());
+
+        // The nullable form receives null for both.
+        Assert.Null(await repo.ScalarNullableIntAsync(0, null, CancellationToken.None));
+        Assert.Null(await repo.ScalarNullableIntAsync(1, null, CancellationToken.None));
+    }
+
     private async Task ExecuteAsync(string sql)
     {
         var cmd = _fx.Connection.CreateCommand();

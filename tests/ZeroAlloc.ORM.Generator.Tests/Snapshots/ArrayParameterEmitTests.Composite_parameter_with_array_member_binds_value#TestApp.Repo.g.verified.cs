@@ -27,6 +27,10 @@ partial class Repo
             __p_filter_Tags.Value = __p_filter_Tags_value is null ? global::System.DBNull.Value : (object?)(__p_filter_Tags_value as string[]) ?? (object?)(__p_filter_Tags_value as global::System.Collections.Generic.List<string>) ?? (string[])[.. __p_filter_Tags_value];
             __cmd.Parameters.Add(__p_filter_Tags);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.CountAsync' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.Repo.CountAsync' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

@@ -25,6 +25,10 @@ partial class TaskStore
             __p_take.Value = @take;
             __cmd.Parameters.Add(__p_take);
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumEarliest' returned no row, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumEarliest' returned NULL, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
             return global::System.Convert.ToInt64(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally

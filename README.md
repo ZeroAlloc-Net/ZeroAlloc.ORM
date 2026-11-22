@@ -210,7 +210,8 @@ and [PostgreSQL](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/b
 
 - Documentation site: [orm.zeroalloc.net](https://orm.zeroalloc.net)
 - [Documentation source](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs): the [reference](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/README.md), [cookbook](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/tree/main/docs/cookbook),
-  [diagnostics](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md) and [migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md).
+  [diagnostics](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/diagnostics/README.md), [migrating to v2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v2.md)
+  and [migrating to v3](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/blob/main/docs/migrating-to-v3.md).
 - Related packages: [AdoNet.Async](https://github.com/MarcelRoozekrans/AdoNet.Async),
   [ZeroAlloc.ValueObjects](https://github.com/ZeroAlloc-Net/ZeroAlloc.ValueObjects),
   [ZeroAlloc.Telemetry](https://github.com/ZeroAlloc-Net/ZeroAlloc.Telemetry) and

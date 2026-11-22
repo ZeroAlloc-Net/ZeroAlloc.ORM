@@ -37,4 +37,15 @@ public sealed class ScalarNullTests
             await ScalarNullAssertions.NullableTargetsReceiveNullAsync(new ScalarNullRepo(fx.Connection)).ConfigureAwait(false);
         }
     }
+
+    [Fact]
+    public async Task Query_int_long_bool_double_decimal_throw_on_no_row_and_null()
+    {
+        var fx = new SqliteFixture();
+        await using (fx.ConfigureAwait(false))
+        {
+            await fx.InitializeAsync().ConfigureAwait(false);
+            await ScalarNullAssertions.QueryConvertScalarsThrowOnNoRowAndNullAsync(new ScalarNullRepo(fx.Connection)).ConfigureAwait(false);
+        }
+    }
 }

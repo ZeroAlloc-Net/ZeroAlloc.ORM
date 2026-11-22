@@ -1,0 +1,102 @@
+# Migrating to ZeroAlloc.ORM v3
+
+v3 has two breaking changes, both in the code the generator emits for scalar return types: a
+non-nullable `int`, `long`, `bool`, `double` or `decimal` scalar throws on no row and on NULL, and
+the no-row and NULL messages of a `[StoredProcedure]` scalar name the procedure. Everything else
+in v2.x carries forward unchanged.
+
+The runtime packages target `net10.0` and `net11.0`. v2.17.0 added the `net11.0` target and
+v2.17.1 embedded the PDBs, but neither release reached nuget.org, where the newest v2 is 2.16.1.
+If you upgrade from 2.16.1, v3 is the first package you get with `net11.0` assets and with PDBs
+embedded for Go to Definition. Neither needs a change in your code.
+
+## A non-nullable `int`, `long`, `bool`, `double` or `decimal` scalar throws on no row
+
+### Why
+
+[#409](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/409): a `[Query]` or
+`[StoredProcedure]` returning `Task<int>`, `Task<long>`, `Task<bool>`, `Task<double>` or
+`Task<decimal>`, or the `ValueTask` form, read its value with `ExecuteScalarAsync` and `System.Convert`. When the query returned no
+row, `Convert` turned the missing value into `0` or `false`, so the method answered as if a row
+held that value. A NULL value threw a bare `InvalidCastException` that named nothing. Every other
+non-nullable scalar, such as `Task<Guid>`, `Task<string>` or `Task<DateTimeOffset>`, already threw
+`ZeroAllocOrmMaterializationException` for both.
+
+v3 holds the five types to the same rule. No row and NULL each throw
+`ZeroAllocOrmMaterializationException`, and the message names the method and the type:
+
+```text
+Query 'MyApp.OrderRepo.GetTotalAsync' returned no row, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.
+```
+
+For a `[StoredProcedure]` the message names the procedure and the method that called it:
+
+```text
+Stored procedure 'usp_GetCount' called by 'MyApp.OrderRepo.GetCountAsync' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.
+```
+
+### Who is affected
+
+Callers of a non-nullable `int`, `long`, `bool`, `double` or `decimal` `[Query]` whose SQL can
+return no row or NULL, and code that catches `InvalidCastException` from one.
+
+Callers of a `[StoredProcedure]` with the same return types are affected in the same way. A
+procedure that returns no result set, or an empty one, used to give `0` or `false` and now
+throws. The same migration applies: declare the nullable type, or make the procedure always
+`SELECT` a value.
+
+Not affected:
+
+- `SELECT COUNT(*)`, `SELECT EXISTS (...)` and other SQL that always returns one non-NULL value.
+- `[LinqQuery]` `Count`, `LongCount` and `Any`, which always return a row, and `Sum`, which is
+  COALESCEd to `0`. `Average`, `Min` and `Max` already threw `InvalidOperationException`, as LINQ
+  does, and still do.
+- `[Command(Kind = Scalar)]` and `[Command(Kind = Identity)]`, which already threw.
+
+### Before (v2.x)
+
+```csharp
+[Query("SELECT total FROM orders WHERE id = @id")]
+public partial Task<decimal> GetTotalAsync(int id, CancellationToken ct);
+
+var total = await repo.GetTotalAsync(missingId, ct); // 0m
+```
+
+### After (v3)
+
+Declare the nullable type when no row is an expected answer, and map null where you need a
+default:
+
+```csharp
+[Query("SELECT total FROM orders WHERE id = @id")]
+public partial Task<decimal?> GetTotalAsync(int id, CancellationToken ct);
+
+var total = await repo.GetTotalAsync(missingId, ct) ?? 0m;
+```
+
+Or make the SQL return a value for every input, for example with `COALESCE`:
+
+```sql
+SELECT COALESCE((SELECT total FROM orders WHERE id = @id), 0)
+```
+
+Keep the non-nullable type when a missing row is a bug, and catch
+`ZeroAllocOrmMaterializationException` where you used to catch `InvalidCastException`.
+
+## Stored procedure scalar messages name the procedure
+
+Every no-row and NULL message of a non-nullable `[StoredProcedure]` scalar or scalar list now
+starts with `Stored procedure '<name>' called by '<method>'` instead of `Query '<method>'`, as the
+procedure's output-parameter messages already did. This covers every non-nullable scalar return,
+such as `Task<int>`, `Task<Guid>`, `Task<string>` or a PostgreSQL array `Task<int[]>`, and the
+"returned NULL at row index" message of a scalar list, such as `Task<IReadOnlyList<int>>`:
+
+```text
+Stored procedure 'usp_GetOrderIds' called by 'MyApp.OrderRepo.GetOrderIdsAsync' returned NULL at row index 3, but its list element type is the non-nullable 'int'. Declare the element as 'int?' to receive null.
+```
+
+This section changes only the message text. Every non-nullable scalar except the five types in
+the section above already threw `ZeroAllocOrmMaterializationException` in v2 and still does; for
+`int`, `long`, `bool`, `double` and `decimal`, the exception change itself is described above. The
+`[Query]` and `[LinqQuery]` messages do not change. Update code that matches the message text of a
+stored procedure call, such as a test that asserts on `Exception.Message` or a log filter.

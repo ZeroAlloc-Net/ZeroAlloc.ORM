@@ -20,6 +20,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql0_SumOrder;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrder' returned no row, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrder' returned NULL, but its return type is the non-nullable 'int'. Declare it as 'int?' to receive null.");
             return global::System.Convert.ToInt32(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -42,6 +46,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql1_SumSize;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumSize' returned no row, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumSize' returned NULL, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
             return global::System.Convert.ToInt64(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -64,6 +72,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql2_SumOrderWide;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrderWide' returned no row, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrderWide' returned NULL, but its return type is the non-nullable 'long'. Declare it as 'long?' to receive null.");
             return global::System.Convert.ToInt64(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -86,6 +98,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql3_SumPrice;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumPrice' returned no row, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumPrice' returned NULL, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
             return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -108,6 +124,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql4_SumOrderAsDecimal;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrderAsDecimal' returned no row, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumOrderAsDecimal' returned NULL, but its return type is the non-nullable 'decimal'. Declare it as 'decimal?' to receive null.");
             return global::System.Convert.ToDecimal(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -130,6 +150,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql5_SumRatio;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumRatio' returned no row, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumRatio' returned NULL, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
@@ -152,6 +176,10 @@ partial class TaskStore
             await using var __cmd = __conn.CreateCommand();
             __cmd.CommandText = __sql6_SumWeight;
             var __result = await __cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (__result is null)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumWeight' returned no row, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
+            if (__result is global::System.DBNull)
+                throw new global::ZeroAlloc.ORM.ZeroAllocOrmMaterializationException("Query 'TestApp.TaskStore.SumWeight' returned NULL, but its return type is the non-nullable 'double'. Declare it as 'double?' to receive null.");
             return global::System.Convert.ToDouble(__result, global::System.Globalization.CultureInfo.InvariantCulture);
         }
         finally
