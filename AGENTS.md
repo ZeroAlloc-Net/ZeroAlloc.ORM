@@ -78,7 +78,27 @@ SHA=$(git rev-parse --short HEAD)
 dotnet pack src/ZeroAlloc.ORM.Generator -c Release -p:Version=9.9.9-local.$SHA -o /tmp/orm-pack
 ```
 
+CI job `sdk10-consumer` needs a 10.0.1xx SDK; `tests/ZeroAlloc.ORM.Sdk10Smoke/global.json` pins
+10.0.100 with `rollForward: latestPatch`, so a newer band cannot stand in for it. It builds and runs a
+consumer of the packed packages with Roslyn 5.0:
+
+```bash
+dotnet pack src/ZeroAlloc.ORM -c Release -o artifacts -p:Version=9.9.9-local.sha$(git rev-parse --short HEAD)
+dotnet pack src/ZeroAlloc.ORM.Abstractions -c Release -o artifacts -p:Version=9.9.9-local.sha$(git rev-parse --short HEAD)
+dotnet pack src/ZeroAlloc.ORM.Generator -c Release -o artifacts -p:Version=9.9.9-local.sha$(git rev-parse --short HEAD)
+cd tests/ZeroAlloc.ORM.Sdk10Smoke/Consumer
+dotnet run -c Release -p:ZeroAllocORMVersion=9.9.9-local.sha$(git rev-parse --short HEAD)
+```
+
+CI job `roslyn-floor` calls the shared `roslyn-floor.yml` from ZeroAlloc-Net/.github: it packs the
+solution and fails when a packed DLL references Roslyn above 5.0.0.
+
 ## Conventions and gotchas
+- `ZeroAlloc.ORM.Generator` and `ZeroAlloc.TypeConversions` reference `Microsoft.CodeAnalysis.CSharp` 5.0.0,
+  the compiler of SDK band 10.0.1xx, the oldest supported SDK. A compiler older than the Roslyn the
+  generator references skips it with `CS9057`, and nothing is generated. The shared Renovate preset holds
+  it below 5.1. If a newer Roslyn API is needed, change the code; raise the floor only together with the
+  minimum SDK. Test projects may use a newer Roslyn.
 
 - Do not pass `-p:PublishAot=true` on a command line. `PublishAot` is set inside the smoke csprojs, and
   a global property flows to the `netstandard2.0` generator and TypeConversions projects and fails with
