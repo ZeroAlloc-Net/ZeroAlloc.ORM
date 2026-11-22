@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Builds a consumer of the packed ZeroAlloc.ORM,ZeroAlloc.ORM.Abstractions,ZeroAlloc.ORM.Generator packages with the oldest supported
+    .NET SDK band, 10.0.1xx, whose compiler is Roslyn 5.0. The ZeroAlloc.ORM.Generator package ships the generator and ZeroAlloc.TypeConversions.dll in analyzers/dotnet/cs.
+    A generator built against a newer Roslyn than the compiler that loads it is skipped with
+    CS9057, and the build then fails because the generated code is missing.
+
+    CS9057 itself is not an error here: ZeroAlloc.AsyncEvents 1.1.11, a transitive dependency of
+    ZeroAlloc.ORM through AdoNet.Async.Adapters, ships a generator built against Roslyn 5.9, which
+    this SDK skips with that warning. It stays visible in the build log and is tracked in
+    ZeroAlloc-Net/.github#77.
+
+    The parent folder's global.json pins the 10.0.1xx band with rollForward latestPatch, so a
+    newer band cannot stand in for it. Run locally with a 10.0.1xx SDK installed:
+      dotnet pack ZeroAlloc.ORM.slnx -c Release -o artifacts -p:Version=9.9.9-local.sha$(git rev-parse HEAD | cut -c1-7)
+      cd tests/ZeroAlloc.ORM.Sdk10Smoke/Consumer
+      dotnet run -c Release -p:ZeroAllocORMVersion=9.9.9-local.sha$(git rev-parse HEAD | cut -c1-7)
+    Not part of the solution; the sdk10-consumer job in ci.yml runs it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <WarningsAsErrors>$(WarningsAsErrors);CS8032</WarningsAsErrors>
+  </PropertyGroup>
+
+  <Target Name="RequireZeroAllocORMVersion" BeforeTargets="CollectPackageReferences">
+    <Error Condition="'$(ZeroAllocORMVersion)' == ''"
+           Text="Pass the version of the packed packages: -p:ZeroAllocORMVersion=..." />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="ZeroAlloc.ORM" Version="[$(ZeroAllocORMVersion)]" />
+    <PackageReference Include="ZeroAlloc.ORM.Abstractions" Version="[$(ZeroAllocORMVersion)]" />
+    <PackageReference Include="ZeroAlloc.ORM.Generator" Version="[$(ZeroAllocORMVersion)]" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+  </ItemGroup>
+</Project>
