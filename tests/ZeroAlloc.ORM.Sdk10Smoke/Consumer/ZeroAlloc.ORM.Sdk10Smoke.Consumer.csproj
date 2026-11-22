@@ -35,6 +35,6 @@
     <PackageReference Include="ZeroAlloc.ORM" Version="[$(ZeroAllocORMVersion)]" />
     <PackageReference Include="ZeroAlloc.ORM.Abstractions" Version="[$(ZeroAllocORMVersion)]" />
     <PackageReference Include="ZeroAlloc.ORM.Generator" Version="[$(ZeroAllocORMVersion)]" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
   </ItemGroup>
 </Project>
