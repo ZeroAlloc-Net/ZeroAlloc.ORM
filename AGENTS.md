@@ -83,7 +83,7 @@ CI job `sdk10-consumer` needs a 10.0.1xx SDK; `tests/ZeroAlloc.ORM.Sdk10Smoke/gl
 consumer of the packed packages with Roslyn 5.0:
 
 ```bash
-v=9.9.9-local.sha$(git rev-parse --short HEAD).$(date +%s)
+v=9.9.9-local.sha$(git rev-parse --short HEAD).$(date +%s).$$
 dotnet pack src/ZeroAlloc.ORM -c Release -o artifacts -p:Version="$v"
 dotnet pack src/ZeroAlloc.ORM.Abstractions -c Release -o artifacts -p:Version="$v"
 dotnet pack src/ZeroAlloc.ORM.Generator -c Release -o artifacts -p:Version="$v"
