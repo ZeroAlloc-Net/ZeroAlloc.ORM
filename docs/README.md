@@ -11,6 +11,8 @@ dotnet add package ZeroAlloc.ORM
 dotnet add package ZeroAlloc.ORM.Generator
 ```
 
+The generator needs the .NET 10 SDK 10.0.100 or later, or Visual Studio 2026 or later. It is built against Roslyn 5.0, and an older compiler skips it with warning CS9057, after which the generated query methods are missing. Version 3.0.0 was built against Roslyn 5.12 and loads only in the .NET 11 SDK; on .NET 10, use 3.0.1 or later.
+
 Reference the generator as a build-time analyzer so it does not flow to downstream projects:
 
 ```xml

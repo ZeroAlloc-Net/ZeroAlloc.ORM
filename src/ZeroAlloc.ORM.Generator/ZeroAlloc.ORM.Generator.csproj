@@ -27,12 +27,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Pinned to the Roslyn version shipped by our minimum-supported SDK (.NET 10
-         SDK 10.0.x ships Roslyn 4.14). Bump when a future SDK ships a newer Roslyn
-         AND we want to consume new APIs; otherwise leave alone — generators run
-         inside the consumer's Roslyn host, not against this referenced version, so
-         floating ahead buys us nothing but risk. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0" PrivateAssets="all" />
+    <!-- Pinned to 5.0.0, the Roslyn of SDK 10.0.1xx, the oldest supported SDK. A generator runs in
+         the consumer's compiler, and a compiler older than the Roslyn this DLL references skips
+         it with CS9057. Do not raise it without raising the minimum SDK; the shared Renovate
+         preset holds it below 5.1 and the roslyn-floor CI job checks the packed DLLs.
+         See ZeroAlloc-Net/.github#77. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" PrivateAssets="all" />
     <!-- The generator depends on ZeroAlloc.TypeConversions at analyzer load time. We
          reference it with ReferenceOutputAssembly="true" so the compiler resolves the
          reference, but the analyzer load context (Roslyn) only loads assemblies that
