@@ -8,6 +8,7 @@ namespace ZeroAlloc.ORM.Integration.Tests;
 // Sqlite query does, allocates exactly one Task<int> less than the same query
 // declared as Task<T>. Everything else either call allocates is the provider's,
 // and the two calls make the same provider calls.
+[Collection(AllocationGates.AllocationGateGroup.Name)]
 public class ValueTaskQueryAllocationTests
 {
     private const int Iterations = 200;

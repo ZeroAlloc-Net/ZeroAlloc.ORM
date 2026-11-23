@@ -2,7 +2,9 @@ name: Release Please
 
 on:
   push:
-    branches: [main]
+    # release/N.x holds maintenance patches of an earlier major. Each such branch has its own
+    # manifest, and target-branch below makes release-please open its release PR there.
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,7 @@ permissions:
 # ship-release-tracking concurrently against the same release PR branch. Queued, not
 # cancelled: a cancelled run could drop a release or its publish.
 concurrency:
-  group: release-please
+  group: release-please-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -54,6 +56,42 @@ jobs:
           # not expire and does not act as a person.
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
+          target-branch: ${{ github.ref_name }}
+
+  # GitHub marks every new release Latest, because release-please sets no make_latest. A release
+  # from release/N.x patches an older major, so it took the flag from the newest main-line release.
+  # This job gives the flag back to the highest released version. It is a job of its own so that a
+  # failure here never holds up publish, and it reads the releases instead of this run's outputs,
+  # so a re-run repairs the flag whatever failed before. It runs even when release-please failed
+  # after creating the release.
+  keep-latest:
+    needs: release-please
+    if: ${{ !cancelled() && github.ref_name != 'main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Give Latest back to the highest released version
+        run: |
+          set -euo pipefail
+          # Checked again after each edit: a main-line release published in the meantime is
+          # higher, so the next round gives the flag to it. Three edits, four checks.
+          for round in 1 2 3 4; do
+            want=$(gh release list --exclude-drafts --exclude-pre-releases --limit 500 --json tagName -q '.[].tagName' \
+              | sed -nE '/^v[0-9]+\.[0-9]+\.[0-9]+$/p' | sort -V | tail -1)
+            [ -n "$want" ] || { echo "No stable release yet"; exit 0; }
+            now=$(gh release view --json tagName -q .tagName 2>/dev/null || echo none)
+            if [ "$want" = "$now" ]; then echo "Latest is $now"; exit 0; fi
+            [ "$round" -lt 4 ] || break
+            echo "Latest is $now; giving the flag to $want"
+            # A failed edit, such as a transient API error, is retried by the next round.
+            gh release edit "$want" --latest || echo "::warning::Could not give Latest to $want; retrying"
+            sleep 10
+          done
+          echo "::error::Latest did not settle on the highest release"; exit 1
 
   # Marks the analyzer rules and public API that the pending release adds as shipped,
   # by committing the move onto the release PR branch. Merging that PR then lands the

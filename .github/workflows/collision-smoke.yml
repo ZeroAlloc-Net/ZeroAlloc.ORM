@@ -20,9 +20,9 @@ name: Collision Smoke
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 jobs:
   collision-smoke:

@@ -9,9 +9,9 @@ name: AOT Smoke
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 jobs:
   aot-publish-smoke:

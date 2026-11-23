@@ -17,7 +17,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 // The hand-written baselines bind bare names, which Npgsql resolves without a Substring, and
 // read the multi-result workload as one `;`-joined command, as the generated code does on a
 // PostgreSQL repository since #427.
-[Collection(PostgresAllocationGateGroup.Name)]
+[Collection(AllocationGateGroup.Name)]
 public class PostgresWorkloadAllocationGateTests
 {
     private const int Iterations = 200;

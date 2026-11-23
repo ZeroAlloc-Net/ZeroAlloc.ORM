@@ -17,6 +17,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 //   * Total gap: generated minus hand-written over SqliteConnection. The generator gap
 //     plus AdoNet.Async's own cost, which MarcelRoozekrans/AdoNet.Async#365 works on.
 // A gap that shrinks passes; tighten its budget then. A gap that grows fails.
+[Collection(AllocationGateGroup.Name)]
 public class SqliteWorkloadAllocationGateTests
 {
     private const int Iterations = 200;

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 jobs:
   build-test:
@@ -81,6 +81,43 @@ jobs:
   # repo in the org with zero coverage. No inputs: the workflow discovers every
   # packable project under src/ and compares each against its own published
   # baseline. See ZeroAlloc-Net/.github#30.
+  # The generator runs in the consumer's compiler. A generator built against a newer Roslyn
+  # than that compiler is skipped with CS9057, and the code it emits goes missing.
+  # The ZeroAlloc.ORM.Generator package ships the generator and ZeroAlloc.TypeConversions.dll.
+  # This builds a net10.0 consumer of the packed packages with the oldest supported SDK band,
+  # 10.0.1xx, whose compiler is Roslyn 5.0. See ZeroAlloc-Net/.github#77.
+  sdk10-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          # global.json's SDK packs the repository; the smoke folder's own global.json pins
+          # 10.0.100 with rollForward latestPatch, so a newer band cannot stand in for 10.0.1xx.
+          global-json-file: global.json
+          dotnet-version: 10.0.1xx
+
+      - name: Pack
+        run: |
+          version="9.9.9-local.sha${GITHUB_SHA::7}"
+          echo "SMOKE_VERSION=$version" >> "$GITHUB_ENV"
+          dotnet pack src/ZeroAlloc.ORM/ZeroAlloc.ORM.csproj -c Release -o artifacts -p:Version="$version"
+          dotnet pack src/ZeroAlloc.ORM.Abstractions/ZeroAlloc.ORM.Abstractions.csproj -c Release -o artifacts -p:Version="$version"
+          dotnet pack src/ZeroAlloc.ORM.Generator/ZeroAlloc.ORM.Generator.csproj -c Release -o artifacts -p:Version="$version"
+
+      - name: Build and run the consumer
+        working-directory: tests/ZeroAlloc.ORM.Sdk10Smoke/Consumer
+        run: |
+          dotnet --version
+          dotnet run -c Release -p:ZeroAllocORMVersion="$SMOKE_VERSION"
+
+  # Fails when a packed DLL references Roslyn above 5.0.0, the compiler of SDK 10.0.1xx.
+  roslyn-floor:
+    uses: ZeroAlloc-Net/.github/.github/workflows/roslyn-floor.yml@main
+
   api-compat:
     uses: ZeroAlloc-Net/.github/.github/workflows/api-compat.yml@main
     with:

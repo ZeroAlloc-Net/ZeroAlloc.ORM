@@ -8,6 +8,7 @@ namespace ZeroAlloc.ORM.Integration.Tests.AllocationGates;
 // the table written into the SQL does: the resolved SQL comes from a static memo or one cache
 // lookup. A repository created per call allocates nothing beyond the repository object. Every call
 // completes synchronously on in-memory Sqlite, so AllocationGate counts the calling thread's bytes.
+[Collection(AllocationGateGroup.Name)]
 public class TablePlaceholderAllocationTests
 {
     private const int Iterations = 200;
