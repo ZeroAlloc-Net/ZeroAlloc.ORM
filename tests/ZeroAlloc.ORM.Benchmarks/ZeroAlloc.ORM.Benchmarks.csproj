@@ -42,7 +42,7 @@
          "Postgres" benchmark category - the default `dotnet run` invocation
          only triggers Sqlite workloads. Run Postgres locally with
          `dotnet run -c Release [args] *Postgres*` (Docker required). -->
-    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Npgsql" Version="10.0.4" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.17.0" />
   </ItemGroup>
 
