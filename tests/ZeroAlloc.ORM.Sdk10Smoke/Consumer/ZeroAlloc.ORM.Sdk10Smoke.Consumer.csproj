@@ -5,10 +5,10 @@
     A generator built against a newer Roslyn than the compiler that loads it is skipped with
     CS9057, and the build then fails because the generated code is missing.
 
-    CS9057 itself is not an error here: ZeroAlloc.AsyncEvents 1.1.11, a transitive dependency of
-    ZeroAlloc.ORM through AdoNet.Async.Adapters, ships a generator built against Roslyn 5.9, which
-    this SDK skips with that warning. It stays visible in the build log and is tracked in
-    ZeroAlloc-Net/.github#77.
+    CS9057 is an error here, so a generator anywhere in the dependency graph that this SDK
+    cannot load fails the build. Before AdoNet.Async 1.6.2 it had to stay a warning:
+    AdoNet.Async.Adapters 1.5.6 pulled in ZeroAlloc.AsyncEvents 1.1.11, whose generator
+    was built against Roslyn 5.9. See ZeroAlloc-Net/.github#77.
 
     The parent folder's global.json pins the 10.0.1xx band with rollForward latestPatch, so a
     newer band cannot stand in for it. Run locally with a 10.0.1xx SDK installed:
@@ -24,7 +24,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
-    <WarningsAsErrors>$(WarningsAsErrors);CS8032</WarningsAsErrors>
+    <WarningsAsErrors>$(WarningsAsErrors);CS8032;CS9057</WarningsAsErrors>
   </PropertyGroup>
 
   <Target Name="RequireZeroAllocORMVersion" BeforeTargets="CollectPackageReferences">
