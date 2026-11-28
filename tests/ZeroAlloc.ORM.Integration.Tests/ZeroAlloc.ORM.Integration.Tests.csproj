@@ -52,7 +52,7 @@
          forwarding, native NUMERIC, CREATE PROCEDURE round-trips) — resolves
          deferrals accumulated from v0.3 (CLN3), v0.4 (sproc integration),
          v0.5 (Materialize factory on a non-Sqlite decimal provider). -->
-    <PackageReference Include="Npgsql" Version="10.0.4" />
+    <PackageReference Include="Npgsql" Version="11.0.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.17.0" />
     <!-- SQL Server integration fixture. The 2022 image needs ACCEPT_EULA, which
          Testcontainers.MsSql sets for us. -->
