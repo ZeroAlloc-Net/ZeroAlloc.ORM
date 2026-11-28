@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v3.0.1...v3.0.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* require AdoNet.Async 1.6.2 so no transitive generator needs Roslyn above 5.0 ([#520](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/issues/520)) ([cd82a7f](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/commit/cd82a7f02d2d4cc117a2dd214e9fc261d1c38627))
+
 ## [3.0.1](https://github.com/ZeroAlloc-Net/ZeroAlloc.ORM/compare/v3.0.0...v3.0.1) (2026-11-22)
 
 
