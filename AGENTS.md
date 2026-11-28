@@ -104,9 +104,10 @@ solution and fails when a packed DLL references Roslyn above 5.0.0.
 - Do not pass `-p:PublishAot=true` on a command line. `PublishAot` is set inside the smoke csprojs, and
   a global property flows to the `netstandard2.0` generator and TypeConversions projects and fails with
   NETSDK1207.
-- `Directory.Build.props` pins `AdoNetAsyncVersion` to 1.5.6 on purpose: it is the dependency floor of
-  generated code, and a floating version would record whatever was latest at build time. Raise it only
-  when emitted code needs a newer AdoNet.Async API.
+- `Directory.Build.props` pins `AdoNetAsyncVersion` to 1.6.2 on purpose: it is the dependency floor of
+  generated code, and a floating version would record whatever was latest at build time. Raise it when
+  emitted code needs a newer AdoNet.Async API, or when the floor's dependency graph ships a generator
+  built against Roslyn above 5.0: 1.5.6 pulled in ZeroAlloc.AsyncEvents 1.1.11, built against 5.9.
 - A new diagnostic needs four things: a descriptor in `Diagnostics/DiagnosticDescriptors.cs`, a page
   `docs/diagnostics/ZAOnnn.md`, a row in `docs/diagnostics/README.md` and an entry in
   `AnalyzerReleases.Unshipped.md`. `DiagnosticHelpLinkTests` and the build fail without them. IDs are
